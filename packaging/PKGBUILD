@@ -1,31 +1,22 @@
 # Maintainer: Zohaib Baig <zohaibbaig144@gmail.com>
+# PKGBUILD for zohara-ai. CI (.github/workflows/build.yml) compiles first, copies this file to the repository root and
+# runs makepkg, which only packages the finished binaries. Version: _PKGVER from CI, else Cargo's.
 pkgname=zohara-ai
-pkgver=0.1.0
+pkgver=${_PKGVER:-0.1.0}
 pkgrel=1
 pkgdesc="ZO-AI: the AI built into Zohara OS, with an MCP server that lets any MCP client control the system"
 arch=('x86_64')
-url="https://github.com/Zohaib8090/zohara-ai"
+url="https://github.com/Zohaib8090/ZO-AI"
 license=('GPL-3.0-or-later')
-depends=('gtk4' 'libadwaita')
+depends=('gtk4' 'libadwaita' 'libsecret')   # libsecret: secret-tool keeps API keys in the system keyring
 makedepends=('cargo')
 optdepends=('android-tools: control Android devices over adb'
             'waydroid: control Android apps'
-            'spectacle: screenshots')
-source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('SKIP')
-
-build() {
-  cd "$pkgname-$pkgver"
-  cargo build --release --locked -p zo-ai -p zo-mcp
-}
-
-check() {
-  cd "$pkgname-$pkgver"
-  cargo test --release --locked -p zo-core
-}
+            'spectacle: screenshots'
+            'claude-code: Claude Code mode (or install it with npm)')
 
 package() {
-  cd "$pkgname-$pkgver"
+  cd "$startdir"
   local d=crates/zo-ai/data
   install -Dm755 target/release/zo-ai  "$pkgdir/usr/bin/zo-ai"
   install -Dm755 target/release/zo-mcp "$pkgdir/usr/bin/zo-mcp"

@@ -1,0 +1,33 @@
+name: Publish to alpha
+
+# Every finished ZO-AI build on main goes to the ALPHA channel by itself. The channel is fixed to alpha, so this
+# workflow cannot publish anywhere else; beta and stable are chosen on purpose on the release admin site.
+# It asks zohara-packages/publish.yml to publish the build (that only accepts a run that has completed).
+
+on:
+  workflow_run:
+    workflows: [Build & Publish Zohara AI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  to-alpha:
+    name: Send the build to alpha
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask zohara-packages to publish this build to alpha
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGES_DISPATCH_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "::warning::PACKAGES_DISPATCH_TOKEN is not set; build #$RUN_ID was not published."; exit 0; }
+          jq -n --arg run "$RUN_ID" '{event_type: "package-published",
+            client_payload: {run_id: $run, source_repo: "Zohaib8090/ZO-AI", channel: "alpha"}}' \
+            | gh api repos/Zohaib8090/zohara-packages/dispatches --method POST --input -
+          echo "::notice::ZO-AI build #$RUN_ID sent to the alpha channel"

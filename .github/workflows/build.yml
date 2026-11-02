@@ -1,0 +1,69 @@
+name: Build & Publish Zohara AI
+
+# Builds ZO-AI (cargo build --release), runs the tests, packages it as an Arch package with makepkg and uploads it as
+# the run's artifact (zohara-ai-arch-x86_64). It publishes nothing itself: publish-alpha.yml sends every finished build
+# on main to the alpha channel. Beta and stable are chosen on purpose from the release admin site.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build + package
+    runs-on: ubuntu-latest
+    container:
+      image: mirror.gcr.io/library/archlinux:latest  # Google's mirror of the Docker Hub image (Docker Hub rate-limits the shared runners)
+    steps:
+      - name: Install Arch build dependencies
+        run: |
+          # Build against the same Arch day users are pinned to, so the binaries link against the libraries users have.
+          D=$(curl -fsSL https://raw.githubusercontent.com/Zohaib8090/zohara-pipeline/main/manifest.json | sed -n 's/.*"approved_date": *"\([0-9/]*\)".*/\1/p')
+          [ -n "$D" ] || { echo "::error::could not read approved_date from zohara-pipeline"; exit 1; }
+          echo "Building against Arch as of $D"
+          echo "Server = https://archive.archlinux.org/repos/$D/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
+          pacman -Syuu --noconfirm
+          pacman -S --noconfirm --needed base-devel git rust gtk4 libadwaita libsecret pkgconf sudo
+          useradd -m -G wheel builder || true
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Test
+        run: |
+          chown -R builder:builder .
+          sudo -u builder env CARGO_TARGET_DIR=/home/builder/target cargo test --locked -p zo-core
+
+      - name: Build release binaries
+        run: sudo -u builder env CARGO_TARGET_DIR=/home/builder/target cargo build --release --locked -p zo-ai -p zo-mcp
+
+      - name: Compute version
+        id: version
+        run: |
+          BASE=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          [ -n "$BASE" ] || BASE=$(grep -m1 '^version' crates/zo-ai/Cargo.toml | cut -d'"' -f2)
+          [ -n "$BASE" ] || BASE=0.1.0
+          # build time makes every build newer than the last, so pacman sees an update
+          echo "version=$BASE.$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: Run makepkg
+        run: |
+          cp packaging/PKGBUILD PKGBUILD
+          rm -rf target
+          ln -s /home/builder/target target
+          chown -R builder:builder .
+          chown -h builder:builder target
+          sudo -u builder env _PKGVER="${{ steps.version.outputs.version }}" makepkg --nocheck --skippgpcheck --nodeps
+          ls -lh *.pkg.tar.zst
+          echo "package_file=$(ls zohara-ai-*.pkg.tar.zst | head -1)" >> "$GITHUB_ENV"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: zohara-ai-arch-x86_64
+          path: ${{ env.package_file }}
