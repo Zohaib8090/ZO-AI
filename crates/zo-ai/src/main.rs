@@ -1059,7 +1059,7 @@ fn build_ui(app: &adw::Application) {
     spacer.set_hexpand(true);
     topbar.append(&spacer);
 
-    topbar.append(&lbl("work@zohaib", "topbar-user"));
+    topbar.append(&lbl(&std::env::var("USER").unwrap_or_default(), "topbar-user"));
     let granted = gtk::Button::with_label("Granted");
     granted.add_css_class("granted");
     topbar.append(&granted);

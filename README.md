@@ -1,51 +1,73 @@
-# Zohara AI (ZO-AI)
+# ZO-AI
 
-The AI built into Zohara OS. All Rust
+The AI assistant built into Zohara OS. It chats with the model you choose and can look at and control your computer through a set of tools, always under your permission settings. Written in Rust with GTK4 and libadwaita.
 
+![ZO-AI chat](crates/zo-ai/docs/screenshots/01-chat.png)
 
-| Crate | What |
+## What is in the box
+
+| Crate | What it does |
 |---|---|
-| `crates/zo-core` | The tools that control the machine (files, shell, screenshots, processes, snapshots, Android/Waydroid), the permission policy, the audit log, the approval socket and the MCP protocol |
-| `crates/zo-mcp` | Stdio MCP server: any MCP client (Claude Code, …) can control this computer through it |
-| `crates/zo-ai` | The app (GTK4 + libadwaita): full window, quick popup, approval dialogs, global shortcut |
+| `crates/zo-core` | The tools (files, shell, screenshots, processes, snapshots, Android and Waydroid), the permission policy, the audit log, model providers and the MCP protocol |
+| `crates/zo-mcp` | A stdio MCP server. Any MCP client, such as Claude Code, can control this computer through it |
+| `crates/zo-ai` | The app: chat window, projects, quick popup, approval dialogs and the global shortcut |
 
-## Use
+## Install
+
+On Zohara OS, install it from Settings, or:
 
 ```bash
-./install.sh                                  # build and install to ~/.local
-zo-ai --background                            # start it (autostart does this after sign-in)
-claude mcp add zohara -- ~/.local/bin/zo-mcp  # let Claude Code control this computer
+sudo pacman -S zohara-ai
 ```
 
-- **Copilot key** or **Ctrl+Super+C** opens the quick popup (change it in System Settings > Shortcuts > ZO-AI). Press again or Esc to close.
-- `zo-ai` opens the full window; `zo-ai --quick` toggles the popup.
+From source:
 
-## Models
+```bash
+./install.sh        # builds a release and installs to ~/.local
+zo-ai --background  # starts it (it also starts after sign-in)
+```
 
-Pick a provider and model with the model button in the chat. Keys are kept in the system keyring (`secret-tool`), never in a file.
+`zo-ai` opens the full window. `zo-ai --quick` toggles the quick popup, which is also opened by the Copilot key or **Ctrl+Super+C** (change it in System Settings → Shortcuts).
 
-- **Anthropic (Claude)**, **OpenAI**, **Google Gemini**, and 17 OpenAI-compatible hosts (OpenRouter, DeepSeek, Groq, Mistral, Kimi, …). Any address can be edited.
-- **Local servers** need no key: Ollama, LM Studio, llama.cpp, vLLM, SGLang, or a custom address.
-- **Claude Code (experimental)** runs the `claude` program you installed and signed in to yourself and connects it to `zo-mcp`. ZO-AI never sees or stores your Claude login, and Claude's own file and shell tools are switched off so every action goes through ZO-AI's permission modes. Anthropic's terms say third-party apps must not offer Claude.ai login or route requests through subscription credentials; this mode only launches the unmodified program the person signed in to. If you ship a product that runs Claude Code for others, read the "Can customers offer Claude Code in their products?" section of Anthropic's legal page first.
-- `cargo run -p zo-core --example mock-model` is a fake model server for testing the chat without a key.
+## Choosing a model
+
+Click the model button in the chat to pick a provider and model. API keys are stored in the system keyring (`secret-tool`), never in a plain file.
+
+- **Anthropic (Claude), OpenAI, Google Gemini**
+- **OpenAI-compatible hosts**: OpenRouter, DeepSeek, Groq, Mistral, Together, Fireworks, Cerebras, Perplexity, Kimi, z.ai, Qwen, MiniMax, NVIDIA, Hugging Face and others. The address of every provider can be edited.
+- **Local models** need no key: Ollama, LM Studio, llama.cpp, vLLM, SGLang, or any custom address.
+- **Claude Code (experimental)** uses the `claude` program installed and signed in on your computer. ZO-AI starts it and connects it to `zo-mcp`; it never reads or stores your Claude login. Claude Code's own file and shell tools are turned off, so every action goes through ZO-AI's tools and permission modes. Claude Code has to be installed separately.
 
 ## Permissions
 
-The mode pill in the app (Auto / Manual / Bypass) is saved to `~/.config/zo-ai/mode` and applies to the app and to every MCP client.
+The mode button in the chat (Auto, Manual or Bypass) applies to the app and to every MCP client.
 
-- **Auto**: reads and plain look-commands (`ls`, `df`, …) run; changes and other commands ask.
-- **Manual**: reads run; every change and every command asks.
-- **Bypass**: nothing asks.
+| Mode | Behaviour |
+|---|---|
+| Auto | Reads and plain look-commands (`ls`, `df`, …) run. Changes and other commands ask first. |
+| Manual | Reads run. Every change and every command asks first. |
+| Bypass | Nothing asks. |
 
-Asking = a dialog in the ZO-AI app. If the app is not running, a tool that needs approval is refused. Everything is logged to `~/.local/share/zo-ai/audit.jsonl`.
-No password is stored anywhere; Waydroid root commands use polkit (`pkexec`).
+A question appears as a dialog in the ZO-AI app. If the app is not running, anything that needs approval is refused. Every tool call is logged to `~/.local/share/zo-ai/audit.jsonl`. No password is stored; Waydroid root commands use polkit (`pkexec`).
+
+## Use it from other tools
+
+```bash
+claude mcp add zohara -- ~/.local/bin/zo-mcp   # let Claude Code control this computer
+```
+
+Any MCP client that can start a stdio server works the same way.
 
 ## Develop
 
 ```bash
-cargo test -p zo-core       # tools, policy, MCP protocol
+cargo test -p zo-core          # tools, policy, providers, MCP protocol
 cargo build --release
+cargo run -p zo-core --example mock-model   # a fake model server, to try the chat without an API key
 ```
 
-`packaging/PKGBUILD` is the Arch package (`zohara-ai`) for the Zohara repo, so Settings can offer it as an installable module.
-`docs/design/zo-ai-design.html` is the original design reference.
+`packaging/PKGBUILD` builds the Arch package, and CI (`.github/workflows`) builds it on every push to `main`. `docs/design/zo-ai-design.html` is the design reference.
+
+## License
+
+GPL-3.0-or-later.
