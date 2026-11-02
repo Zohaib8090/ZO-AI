@@ -100,6 +100,9 @@ pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approv
 
 /// The models a provider offers right now (its own list), or the built-in suggestions if it cannot be asked.
 pub fn list_models(p: &Provider, base_url: &str, key: Option<&str>) -> Result<Vec<String>, String> {
+    if p.protocol == Protocol::ClaudeCode {
+        return Ok(p.models.iter().map(|m| m.to_string()).collect());
+    }
     let base = base_url.trim_end_matches('/');
     let mut r = agent().get(&format!("{base}/models"));
     match (p.protocol, key) {
@@ -114,7 +117,7 @@ pub fn list_models(p: &Provider, base_url: &str, key: Option<&str>) -> Result<Ve
 
 /// Which local model servers are answering on this computer right now.
 pub fn detect_local() -> Vec<&'static Provider> {
-    providers::all().iter().filter(|p| p.local).filter(|p| {
+    providers::all().iter().filter(|p| p.local && p.protocol != Protocol::ClaudeCode).filter(|p| {
         ureq::AgentBuilder::new().timeout(Duration::from_millis(400)).build().get(&format!("{}/models", p.base_url)).call().is_ok()
     }).collect()
 }

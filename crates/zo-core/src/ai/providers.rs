@@ -8,6 +8,8 @@ pub enum Protocol {
     OpenAi,
     /// Google Gemini generateContent.
     Gemini,
+    /// Not a web protocol: the Claude Code program the person installed and signed in to.
+    ClaudeCode,
 }
 
 pub struct Provider {
@@ -59,6 +61,7 @@ static ALL: &[Provider] = &[
     local("llamacpp", "llama.cpp (this computer)", "http://127.0.0.1:8080/v1"),
     local("vllm", "vLLM (this computer)", "http://127.0.0.1:8000/v1"),
     local("sglang", "SGLang (this computer)", "http://127.0.0.1:30000/v1"),
+    Provider { id: "claude-code", name: "Claude Code (your subscription, experimental)", protocol: ClaudeCode, base_url: "", local: true, models: &["sonnet", "opus", "haiku"] },
     // any other OpenAI-compatible server: the person types the address
     Provider { id: "custom", name: "Custom endpoint", protocol: OpenAi, base_url: "http://127.0.0.1:8000/v1", local: false, models: &[] },
 ];

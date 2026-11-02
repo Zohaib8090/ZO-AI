@@ -142,6 +142,7 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
             let headers = key.map(|k| vec![("x-goog-api-key".to_string(), k.to_string())]).unwrap_or_default();
             Request { url: format!("{base}/models/{model}:generateContent"), headers, body }
         }
+        Protocol::ClaudeCode => Request { url: String::new(), headers: Vec::new(), body: Value::Null },
     }
 }
 
@@ -151,6 +152,7 @@ pub fn parse(protocol: Protocol, v: &Value) -> Result<Reply, String> {
     }
     let mut reply = Reply::default();
     match protocol {
+        Protocol::ClaudeCode => return Err("Claude Code mode does not use a web protocol.".into()),
         Protocol::Anthropic => {
             for b in v["content"].as_array().ok_or("The answer had no content.")? {
                 match b["type"].as_str() {

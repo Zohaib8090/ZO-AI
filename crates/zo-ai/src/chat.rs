@@ -11,7 +11,9 @@ use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::Duration;
 use zo_core::ai::agent::{self, Config, Event};
+use zo_core::ai::claude_code;
 use zo_core::ai::wire::Turn;
+use zo_core::ai::providers::Protocol;
 use zo_core::ai::{keys, providers, Selection};
 
 pub struct Ctl {
@@ -20,12 +22,14 @@ pub struct Ctl {
     thread: gtk::Box,
     scroll: gtk::ScrolledWindow,
     history: RefCell<Vec<Turn>>,
+    /// Claude Code mode keeps its own conversation; this is its session id.
+    session: RefCell<Option<String>>,
     busy: Cell<bool>,
 }
 
 enum Msg {
     Ev(Event),
-    Done(Result<(), String>, Vec<Turn>),
+    Done(Result<(), String>, Vec<Turn>, Option<String>),
 }
 
 impl Ctl {
@@ -41,7 +45,7 @@ impl Ctl {
         scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         scroll.set_visible(false);
         chat.insert_child_after(&scroll, Some(hero));
-        Rc::new(Ctl { chat: chat.clone(), hero: hero.clone(), thread, scroll, history: RefCell::new(Vec::new()), busy: Cell::new(false) })
+        Rc::new(Ctl { chat: chat.clone(), hero: hero.clone(), thread, scroll, history: RefCell::new(Vec::new()), session: RefCell::new(None), busy: Cell::new(false) })
     }
 
     pub fn new_conversation(&self) {
@@ -49,6 +53,7 @@ impl Ctl {
             return;
         }
         self.history.borrow_mut().clear();
+        *self.session.borrow_mut() = None;
         while let Some(c) = self.thread.first_child() {
             self.thread.remove(&c);
         }
@@ -85,25 +90,35 @@ impl Ctl {
         prompt.set_text("");
         self.add(&text, "msg-user");
 
-        let cfg = match Config::from_selection(&sel, agent::SYSTEM_PROMPT) {
-            Ok(c) => c,
-            Err(e) => {
-                self.add(&e, "msg-error");
-                return;
+        let claude = sel.provider == "claude-code";
+        let cfg = if claude {
+            None
+        } else {
+            match Config::from_selection(&sel, agent::SYSTEM_PROMPT) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    self.add(&e, "msg-error");
+                    return;
+                }
             }
         };
+        let model = if sel.model.is_empty() { "sonnet".to_string() } else { sel.model.clone() };
         self.busy.set(true);
         prompt.set_sensitive(false);
         let thinking = self.add("Thinking…", "msg-tool");
         let (tx, rx) = mpsc::channel::<Msg>();
         let mut history = std::mem::take(&mut *self.history.borrow_mut());
+        let mut session = self.session.borrow().clone();
         std::thread::spawn(move || {
-            let mode = zo_core::Mode::load();
             let tx2 = tx.clone();
-            let r = agent::run(&cfg, &mut history, &text, mode, &zo_core::approval::AppApprover, &mut |e| {
+            let mut emit = |e: Event| {
                 let _ = tx2.send(Msg::Ev(e));
-            });
-            let _ = tx.send(Msg::Done(r, history));
+            };
+            let r = match &cfg {
+                None => claude_code::run(&model, &mut session, &text, &mut emit),
+                Some(cfg) => agent::run(cfg, &mut history, &text, zo_core::Mode::load(), &zo_core::approval::AppApprover, &mut emit),
+            };
+            let _ = tx.send(Msg::Done(r, history, session));
         });
         let me = self.clone();
         let prompt = prompt.clone();
@@ -123,9 +138,10 @@ impl Ctl {
                         let short: String = output.chars().take(300).collect();
                         me.add(&format!("{} {}", if ok { "✓" } else { "✗" }, short), if ok { "msg-tool-out" } else { "msg-error" });
                     }
-                    Ok(Msg::Done(result, history)) => {
+                    Ok(Msg::Done(result, history, session)) => {
                         thinking.set_visible(false);
                         *me.history.borrow_mut() = history;
+                        *me.session.borrow_mut() = session;
                         if let Err(e) = result {
                             me.add(&e, "msg-error");
                         }
@@ -172,7 +188,8 @@ pub fn models_sheet(ui: &Rc<Ui>) {
 
     let url = gtk::Entry::new();
     url.add_css_class("field-input");
-    body.append(&crate::field("Address", &url));
+    let url_field = crate::field("Address", &url);
+    body.append(&url_field);
 
     let model = gtk::Entry::new();
     model.add_css_class("field-input");
@@ -198,16 +215,19 @@ pub fn models_sheet(ui: &Rc<Ui>) {
 
     // fill the fields for the provider that is selected
     let refresh = {
-        let (key, key_field, url, model, status, sel) = (key.clone(), key_field.clone(), url.clone(), model.clone(), status.clone(), Rc::new(RefCell::new(sel.clone())));
+        let (key, key_field, url_field, url, model, status, sel) = (key.clone(), key_field.clone(), url_field.clone(), url.clone(), model.clone(), status.clone(), Rc::new(RefCell::new(sel.clone())));
         move |dd: &gtk::DropDown| {
             let p = current(dd);
             let s = sel.borrow();
             url.set_text(&s.base_url_for(p));
             key_field.set_visible(!p.local);
+            url_field.set_visible(p.protocol != Protocol::ClaudeCode);
             key.set_text("");
             key.set_placeholder_text(Some(if keys::get(p.id).is_some() { "Saved in the keyring — type to replace" } else { "Paste the key" }));
             model.set_text(if s.provider == p.id { &s.model } else { p.models.first().copied().unwrap_or("") });
-            status.set_text(if p.local { "Runs on this computer. No key, and nothing leaves it." } else if keys::available() { "The key is stored in the system keyring." } else { "The keyring tool (secret-tool) is missing, so keys cannot be saved." });
+            status.set_text(if p.protocol == Protocol::ClaudeCode {
+                if claude_code::binary().is_some() { "Uses the Claude Code program you installed and signed in to yourself (claude auth login). ZO-AI never sees your login. Experimental." } else { "Claude Code is not installed. Install it with: npm install -g @anthropic-ai/claude-code, then sign in with: claude auth login" }
+            } else if p.local { "Runs on this computer. No key, and nothing leaves it." } else if keys::available() { "The key is stored in the system keyring." } else { "The keyring tool (secret-tool) is missing, so keys cannot be saved." });
         }
     };
     refresh(&provider_dd);

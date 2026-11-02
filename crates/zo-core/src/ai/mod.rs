@@ -1,6 +1,7 @@
 //! The model side of ZO-AI: providers, API keys, the wire formats and the tool-calling loop.
 
 pub mod agent;
+pub mod claude_code;
 pub mod keys;
 pub mod providers;
 pub mod wire;
@@ -64,7 +65,7 @@ mod tests {
     fn provider_ids_are_unique_and_urls_look_like_urls() {
         let all = providers::all();
         for (i, p) in all.iter().enumerate() {
-            assert!(p.base_url.starts_with("http"), "{}", p.id);
+            assert!(p.base_url.starts_with("http") || p.protocol == providers::Protocol::ClaudeCode, "{}", p.id);
             assert!(all[i + 1..].iter().all(|q| q.id != p.id), "duplicate {}", p.id);
         }
     }
