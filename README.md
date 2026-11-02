@@ -1,6 +1,7 @@
 # Zohara AI (ZO-AI)
 
-The AI built into Zohara OS. All Rust, no Python.
+The AI built into Zohara OS. All Rust
+
 
 | Crate | What |
 |---|---|
