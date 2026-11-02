@@ -2,8 +2,6 @@
 
 The AI assistant built into Zohara OS. It chats with the model you choose and can look at and control your computer through a set of tools, always under your permission settings. Written in Rust with GTK4 and libadwaita.
 
-![ZO-AI chat](crates/zo-ai/docs/screenshots/01-chat.png)
-
 ## What is in the box
 
 | Crate | What it does |
