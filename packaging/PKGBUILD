@@ -1,0 +1,37 @@
+# Maintainer: Zohaib Baig <zohaibbaig144@gmail.com>
+pkgname=zohara-ai
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="ZO-AI: the AI built into Zohara OS, with an MCP server that lets any MCP client control the system"
+arch=('x86_64')
+url="https://github.com/Zohaib8090/zohara-ai"
+license=('GPL-3.0-or-later')
+depends=('gtk4' 'libadwaita')
+makedepends=('cargo')
+optdepends=('android-tools: control Android devices over adb'
+            'waydroid: control Android apps'
+            'spectacle: screenshots')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  cargo build --release --locked -p zo-ai -p zo-mcp
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  cargo test --release --locked -p zo-core
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  local d=crates/zo-ai/data
+  install -Dm755 target/release/zo-ai  "$pkgdir/usr/bin/zo-ai"
+  install -Dm755 target/release/zo-mcp "$pkgdir/usr/bin/zo-mcp"
+  install -Dm644 $d/zo-ai.desktop            "$pkgdir/usr/share/applications/zo-ai.desktop"
+  install -Dm644 $d/zo-ai-quick.desktop      "$pkgdir/usr/share/applications/zo-ai-quick.desktop"
+  install -Dm644 $d/zo-ai-background.desktop "$pkgdir/etc/xdg/autostart/zo-ai-background.desktop"
+  install -Dm644 $d/org.zohara.ZoAi.metainfo.xml "$pkgdir/usr/share/metainfo/org.zohara.ZoAi.metainfo.xml"
+  install -Dm644 $d/zo-ai.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/zo-ai.svg"
+}

@@ -1,0 +1,10 @@
+[package]
+name = "zo-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Stdio MCP server that exposes Zohara OS controls to any MCP client"
+
+[dependencies]
+zo-core = { path = "../zo-core" }
+serde_json.workspace = true

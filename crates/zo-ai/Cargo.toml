@@ -1,0 +1,18 @@
+[package]
+name = "zo-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ZO-AI — the OS-level AI module for Zohara OS"
+
+[[bin]]
+name = "zo-ai"
+path = "src/main.rs"
+
+[dependencies]
+zo-core = { path = "../zo-core" }
+gtk4 = { version = "0.9", features = ["v4_12"] }
+libadwaita = { version = "0.7", package = "libadwaita", features = ["v1_6"] }
+glib = "0.20"
+serde.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,2150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZO-AI — OS AI Module</title>
+<style>
+  :root {
+    --bg: #0B0E14;
+    --surface: #11151F;
+    --surface-2: #1A1F2A;
+    --surface-3: #242C3B;
+    --fg: #E8ECF1;
+    --muted: #8A9AA8;
+    --dim: #5C6779;
+    --accent: #5FD4D4;
+    --border: #1E2532;
+    --radius: 10px;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app {
+    display: flex;
+    height: 100vh;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  /* ============ SIDEBAR ============ */
+  .sidebar {
+    width: 248px;
+    flex: 0 0 248px;
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 12px 10px;
+    overflow-y: auto;
+    transition: margin-left .18s ease;
+  }
+
+  .app.sidebar-closed .sidebar {
+    margin-left: -248px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 9px 12px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+    transition: background .12s;
+  }
+
+  .nav-item:hover { background: var(--surface-2); }
+  .nav-item.active { background: var(--surface-2); }
+
+  .nav-item svg {
+    flex: 0 0 18px;
+    color: var(--muted);
+  }
+
+  .nav-item.active svg { color: var(--fg); }
+
+  .badge {
+    margin-left: auto;
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #06121A;
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  .sidebar-spacer { flex: 1; }
+
+  /* ============ MAIN ============ */
+  .main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .topbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 56px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: background .12s, color .12s;
+  }
+
+  .icon-btn:hover {
+    background: var(--surface-2);
+    color: var(--fg);
+  }
+
+  .brand {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: .01em;
+  }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-left: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 7px;
+    border-radius: 50%;
+    background: #22C55E;
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, .12);
+  }
+
+  .topbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .user {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .granted {
+    padding: 5px 11px;
+    font-size: 12px;
+    color: var(--fg);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    cursor: pointer;
+  }
+
+  .granted:hover { background: var(--surface-3); }
+
+  /* ============ CENTER ============ */
+  .canvas {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 24px 28px;
+  }
+
+  .hero {
+    text-align: center;
+    margin-bottom: 26px;
+  }
+
+  .hero h1 {
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: -.01em;
+    color: var(--fg);
+  }
+
+  .hero p {
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--dim);
+  }
+
+  /* ============ COMPOSER ============ */
+  .composer-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 760px;
+  }
+
+  .composer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 8px 8px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    transition: border-color .15s;
+  }
+
+  .composer:focus-within { border-color: #2E3A4D; }
+
+  .composer input {
+    flex: 1;
+    min-width: 0;
+    height: 36px;
+    background: transparent;
+    border: 0;
+    outline: none;
+    color: var(--fg);
+    font: inherit;
+    font-size: 14px;
+  }
+
+  .composer input::placeholder { color: var(--dim); }
+
+  .composer-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .tool-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    min-width: 32px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .12s, color .12s;
+  }
+
+  .tool-btn:hover {
+    background: var(--surface-3);
+    color: var(--fg);
+  }
+
+  .tool-btn.pill {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--fg);
+  }
+
+  .tool-btn.pill:hover { background: var(--surface-3); }
+
+  .tool-btn.send {
+    background: var(--accent);
+    color: #06121A;
+  }
+
+  .tool-btn.send:hover { background: #7EE0E0; }
+
+  /* ============ POPUPS ============ */
+  .popup {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 10px);
+    width: 320px;
+    max-height: min(560px, 72vh);
+    flex-direction: column;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, .55);
+    z-index: 50;
+  }
+
+  .popup.open { display: flex; }
+
+  .popup.left  { left: 0; }
+  .popup.right { right: 0; }
+
+  .popup-head {
+    flex: 0 0 auto;
+    padding: 11px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .popup-body {
+    flex: 1;
+    min-height: 0;
+    padding: 6px;
+    overflow-y: auto;
+  }
+
+  .popup-foot {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 6px;
+    padding: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .foot-chip {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .foot-chip:hover { color: var(--fg); background: var(--surface-3); }
+  .foot-chip strong { color: var(--accent); font-weight: 600; }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .row:hover { background: var(--surface-3); }
+
+  .row .row-icon {
+    flex: 0 0 16px;
+    display: inline-flex;
+    color: var(--muted);
+  }
+
+  .row .row-main { flex: 1; min-width: 0; }
+
+  .row .row-sub {
+    display: block;
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--dim);
+  }
+
+  .row .row-kbd {
+    font-size: 10px;
+    color: var(--dim);
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+  }
+
+  .tag {
+    padding: 2px 7px;
+    border-radius: 9px;
+    font-size: 10px;
+    font-weight: 600;
+    background: var(--surface-3);
+    color: var(--muted);
+  }
+
+  .tag.on  { background: var(--accent); color: #06121A; }
+  .tag.sel { background: #22303F; color: var(--accent); }
+
+  .sep-row {
+    height: 1px;
+    margin: 6px 8px;
+    background: var(--border);
+  }
+
+  .perm-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .perm-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    padding: 11px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .perm-card:hover { background: var(--surface-3); }
+
+  .perm-card.selected {
+    border-color: var(--accent);
+    background: #14262B;
+  }
+
+  .perm-card .perm-icon { color: var(--muted); margin-bottom: 2px; }
+  .perm-card.selected .perm-icon { color: var(--accent); }
+
+  .perm-card .perm-name { font-size: 12px; font-weight: 600; }
+  .perm-card .perm-desc { font-size: 10px; color: var(--dim); line-height: 1.35; }
+
+  /* ============ VIEWS ============ */
+  .view { display: none; }
+  .view.active { display: flex; }
+
+  /* ============ PROJECTS ============ */
+  .projects {
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 34px 44px 60px;
+  }
+
+  .projects-inner {
+    width: 100%;
+    max-width: 1060px;
+    margin: 0 auto;
+  }
+
+  .page-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 34px;
+  }
+
+  .page-title {
+    font-size: 27px;
+    font-weight: 600;
+    letter-spacing: -.02em;
+  }
+
+  .page-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .pbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 15px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface-2);
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+
+  .pbtn:hover { background: var(--surface-3); }
+
+  .pbtn.primary {
+    background: #E8ECF1;
+    border-color: #E8ECF1;
+    color: #0B0E14;
+    font-weight: 600;
+  }
+
+  .pbtn.primary:hover { background: #FFFFFF; }
+
+  .search-field {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: #0F131B;
+  }
+
+  .search-field.open { display: flex; }
+
+  .search-field input {
+    width: 180px;
+    background: transparent;
+    border: 0;
+    outline: none;
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+  }
+
+  .search-field input::placeholder { color: var(--dim); }
+
+  .sort-wrap { position: relative; }
+
+  .menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: 236px;
+    padding: 6px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, .6);
+    z-index: 70;
+  }
+
+  .menu.open { display: block; }
+
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .menu-item:hover { background: var(--surface-3); }
+
+  .menu-item .check {
+    margin-left: auto;
+    display: inline-flex;
+    color: var(--accent);
+    opacity: 0;
+  }
+
+  .menu-item.selected .check { opacity: 1; }
+
+  .project-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .project-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 15px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--fg);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+
+  .project-card:hover {
+    background: var(--surface-2);
+    border-color: #2A3444;
+  }
+
+  .pc-icon {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+    background: var(--surface-2);
+    color: var(--muted);
+  }
+
+  .pc-main { flex: 1; min-width: 0; }
+
+  .pc-name {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .pc-meta {
+    display: block;
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--dim);
+  }
+
+  .pc-pin {
+    flex: 0 0 auto;
+    display: inline-flex;
+    padding: 5px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--dim);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity .12s, background .12s, color .12s;
+  }
+
+  .project-card:hover .pc-pin { opacity: 1; }
+
+  .pc-pin:hover { background: var(--surface-3); color: var(--fg); }
+
+  .pc-pin.pinned {
+    opacity: 1;
+    color: var(--accent);
+  }
+
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 76px 20px;
+    border: 1px dashed #232B39;
+    border-radius: 14px;
+    text-align: center;
+  }
+
+  .empty h3 { font-size: 15px; font-weight: 600; }
+  .empty p { font-size: 13px; color: var(--dim); max-width: 380px; line-height: 1.5; }
+  .empty .pbtn { margin-top: 10px; }
+
+  /* ============ PROJECT WORKSPACE ============ */
+  .projectview {
+    flex: 1;
+    min-height: 0;
+    flex-direction: row;
+  }
+
+  .pv-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 26px 38px 30px;
+    overflow-y: auto;
+  }
+
+  .pv-title {
+    font-size: 25px;
+    font-weight: 600;
+    letter-spacing: -.02em;
+    margin-bottom: 20px;
+  }
+
+  .pv-composer {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 14px 10px;
+    transition: border-color .15s;
+  }
+
+  .pv-composer:focus-within { border-color: #2E3A4D; }
+
+  .pv-composer input {
+    width: 100%;
+    height: 30px;
+    background: transparent;
+    border: 0;
+    outline: none;
+    color: var(--fg);
+    font: inherit;
+    font-size: 14px;
+  }
+
+  .pv-composer input::placeholder { color: var(--dim); }
+
+  .pv-composer-foot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+  }
+
+  .pv-composer-foot .foot-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .pv-meta {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px;
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .pv-meta button {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    padding: 2px 0;
+  }
+
+  .pv-meta button:hover { color: var(--fg); }
+
+  .pv-hint {
+    margin-top: auto;
+    padding: 48px 20px 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    text-align: center;
+    color: var(--dim);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .pv-hint svg { color: #2E3A4D; }
+
+  /* right rail */
+  .pv-rail {
+    flex: 0 0 296px;
+    width: 296px;
+    display: flex;
+    flex-direction: column;
+    padding: 22px 16px;
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+  }
+
+  .rail-row {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    padding: 15px 6px;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .rail-row:hover { background: rgba(255, 255, 255, .02); }
+
+  .rail-row svg { flex: 0 0 16px; color: var(--muted); }
+  .rail-row:hover svg { color: var(--fg); }
+
+  .rail-label { flex: 1; }
+
+  .rail-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .rail-row:hover .rail-action { color: var(--fg); }
+
+  .rail-count {
+    min-width: 18px;
+    padding: 1px 5px;
+    border-radius: 9px;
+    background: var(--surface-3);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  .rail-count.has {
+    background: var(--accent);
+    color: #06121A;
+  }
+
+  .rail-note {
+    margin-top: auto;
+    padding: 18px 6px 0;
+    font-size: 12px;
+    color: var(--dim);
+  }
+
+  /* sheets */
+  .sheet-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .sheet-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    font-size: 12px;
+  }
+
+  .sheet-item .si-main { flex: 1; min-width: 0; }
+
+  .sheet-item .si-name {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sheet-item .si-sub {
+    display: block;
+    margin-top: 2px;
+    font-size: 10px;
+    color: var(--dim);
+  }
+
+  .sheet-empty {
+    padding: 26px 12px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--dim);
+    border: 1px dashed #232B39;
+    border-radius: 10px;
+  }
+
+  .ghost-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface-2);
+    color: var(--fg);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .ghost-btn:hover { background: var(--surface-3); }
+
+  .row-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  @media (max-width: 980px) {
+    .projectview { flex-direction: column; }
+    .pv-rail {
+      flex: 0 0 auto;
+      width: 100%;
+      border-left: 0;
+      border-top: 1px solid var(--border);
+    }
+    .pv-main { padding: 22px 20px; }
+  }
+
+  /* ============ MODAL ============ */
+  .overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 300;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(4, 6, 10, .72);
+    backdrop-filter: blur(2px);
+  }
+
+  .overlay.open { display: flex; }
+
+  .modal {
+    width: 100%;
+    max-width: 600px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    background: #12161F;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, .65);
+    overflow: hidden;
+  }
+
+  .modal-head {
+    display: flex;
+    align-items: center;
+    padding: 18px 20px 0;
+  }
+
+  .modal-title { font-size: 17px; font-weight: 600; }
+
+  .modal-close {
+    margin-left: auto;
+    display: inline-flex;
+    padding: 6px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .modal-close:hover { background: var(--surface-3); color: var(--fg); }
+
+  .modal-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    padding: 18px 20px 4px;
+  }
+
+  .field label {
+    display: block;
+    margin-bottom: 7px;
+    font-size: 13px;
+    color: var(--fg);
+  }
+
+  .field label .opt {
+    margin-left: 6px;
+    font-size: 12px;
+    color: var(--dim);
+    font-weight: 400;
+  }
+
+  .input {
+    width: 100%;
+    padding: 11px 13px;
+    background: #0F131B;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+    outline: none;
+    transition: border-color .12s;
+  }
+
+  .input::placeholder { color: var(--dim); }
+  .input:focus { border-color: #2E3A4D; }
+
+  textarea.input {
+    height: 92px;
+    resize: none;
+    line-height: 1.5;
+  }
+
+  .add-context {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    width: fit-content;
+    padding: 8px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    color: var(--fg);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .add-context:hover { background: var(--surface-3); }
+
+  .modal-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 18px 20px 20px;
+  }
+
+  .btn {
+    padding: 9px 16px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface-2);
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .btn:hover { background: var(--surface-3); }
+
+  .btn.primary {
+    background: #E8ECF1;
+    border-color: #E8ECF1;
+    color: #0B0E14;
+    font-weight: 600;
+  }
+
+  .btn.primary:hover { background: #FFFFFF; }
+
+  .btn.primary:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+  }
+
+  @media (max-width: 860px) {
+    .project-grid { grid-template-columns: 1fr; }
+    .projects { padding: 26px 20px 48px; }
+  }
+
+  /* ============ SCROLLBARS ============ */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb {
+    background: #232B39;
+    border-radius: 8px;
+  }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  @media (max-width: 720px) {
+    .sidebar { position: absolute; inset: 0 auto 0 0; z-index: 60; box-shadow: 0 0 40px rgba(0,0,0,.6); }
+    .app.sidebar-closed .sidebar { margin-left: -248px; }
+    .hero h1 { font-size: 21px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app sidebar-closed" id="app">
+
+  <!-- ================= SIDEBAR ================= -->
+  <aside class="sidebar" id="sidebar">
+    <button class="nav-item active" data-view="chat">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      New
+    </button>
+    <button class="nav-item" data-view="chat" data-focus-search="1">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      Search
+    </button>
+    <button class="nav-item" data-view="projects">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      Projects
+    </button>
+    <button class="nav-item" data-view="place" data-title="Artifacts">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Artifacts
+    </button>
+    <button class="nav-item" data-view="place" data-title="Scheduled">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Scheduled
+      <span class="badge">3</span>
+    </button>
+
+    <div class="sidebar-spacer"></div>
+  </aside>
+
+  <!-- ================= MAIN ================= -->
+  <div class="main">
+
+    <header class="topbar">
+      <button class="icon-btn" id="toggleSidebar" title="Toggle sidebar" aria-label="Toggle sidebar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+
+      <span class="brand">ZO-AI</span>
+
+      <span class="status">
+        <span class="dot"></span>
+        Running — agentd v0.1.0
+      </span>
+
+      <div class="topbar-right">
+        <span class="user">work@zohaib</span>
+        <button class="granted">Granted</button>
+      </div>
+    </header>
+
+    <main class="canvas view active" id="viewChat">
+      <div class="hero">
+        <h1>It’s a late-night jam session.</h1>
+        <p>Ask anything, or type / for skills.</p>
+      </div>
+
+      <div class="composer-wrap">
+        <div class="composer">
+          <button class="tool-btn" id="plusBtn" title="Add files, skills, connectors">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+
+          <input type="text" id="prompt" placeholder="Type / for skills" autocomplete="off">
+
+          <div class="composer-actions">
+            <button class="tool-btn pill" id="modelBtn" title="Model">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9h6v6H9z"/></svg>
+              <span id="modelLabel">Haiku 5.5 Low</span>
+            </button>
+
+            <button class="tool-btn pill" id="permBtn" title="Permission mode">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <span id="permLabel">Auto</span>
+            </button>
+
+            <button class="tool-btn" id="micBtn" title="Voice">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+            </button>
+
+            <button class="tool-btn send" title="Send">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- ---------- PLUS MENU ---------- -->
+        <div class="popup left" id="plusPop">
+          <div class="popup-body">
+            <button class="row">
+              <span class="row-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+              <span class="row-main">Upload or add files<span class="row-sub">Attach documents, images, code</span></span>
+              <span class="row-kbd">Ctrl+U</span>
+            </button>
+            <button class="row">
+              <span class="row-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 6.9L21 11l-6.6 2.1L12 20l-2.4-6.9L3 11l6.6-2.1z"/></svg></span>
+              <span class="row-main">Skills<span class="row-sub">Run a saved procedure</span></span>
+              <span class="row-kbd">›</span>
+            </button>
+            <button class="row">
+              <span class="row-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg></span>
+              <span class="row-main">Connectors<span class="row-sub">GitHub, Slack, Drive</span></span>
+              <span class="row-kbd">›</span>
+            </button>
+            <button class="row">
+              <span class="row-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></span>
+              <span class="row-main">Design system<span class="row-sub">Tokens and components</span></span>
+              <span class="row-kbd">›</span>
+            </button>
+            <button class="row">
+              <span class="row-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 16V8a2 2 0 0 0-1-1.7l-6-3.5a2 2 0 0 0-2 0l-6 3.5A2 2 0 0 0 4 8v8a2 2 0 0 0 1 1.7l6 3.5a2 2 0 0 0 2 0l6-3.5A2 2 0 0 0 20 16z"/></svg></span>
+              <span class="row-main">Plugins<span class="row-sub">MCP servers and extensions</span></span>
+              <span class="row-kbd">›</span>
+            </button>
+            <button class="row">
+              <span class="row-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="12" rx="2"/><line x1="8" y1="20" x2="16" y2="20"/></svg></span>
+              <span class="row-main">Devices<span class="row-sub">This machine, Waydroid, phone</span></span>
+              <span class="row-kbd">›</span>
+            </button>
+
+            <div class="sep-row"></div>
+
+            <button class="row">
+              <span class="row-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+              <span class="row-main">Research<span class="row-sub">Live web with citations</span></span>
+              <span class="row-kbd">›</span>
+            </button>
+            <button class="row">
+              <span class="row-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0-3 11v3h6v-3a6 6 0 0 0-3-11z"/><line x1="9" y1="21" x2="15" y2="21"/></svg></span>
+              <span class="row-main">Memory<span class="row-sub">4 tiers · 12 / 5,000 chars</span></span>
+              <span class="tag on">On</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- ---------- MODEL POPUP ---------- -->
+        <div class="popup right" id="modelPop">
+          <div class="popup-head">Model</div>
+          <div class="popup-body">
+            <button class="row" data-model="Fable 5.1 High">
+              <span class="row-main">Fable 5.1<span class="row-sub">Most challenging tasks · needs credits</span></span>
+              <span class="tag">Locked</span>
+            </button>
+            <button class="row" data-model="Opus 5.5 High">
+              <span class="row-main">Opus 5.5<span class="row-sub">Complex work, everyday tasks</span></span>
+            </button>
+            <button class="row" data-model="Sonnet 5.5 Medium">
+              <span class="row-main">Sonnet 5.5<span class="row-sub">Optimized for simpler tasks</span></span>
+            </button>
+            <button class="row selected" data-model="Haiku 5.5 Low">
+              <span class="row-main">Haiku 5.5<span class="row-sub">Fastest for quick answers</span></span>
+              <span class="tag sel">Current</span>
+            </button>
+          </div>
+          <div class="popup-foot">
+            <button class="foot-chip">Effort: <strong>Low</strong></button>
+            <button class="foot-chip">More models →</button>
+          </div>
+        </div>
+
+        <!-- ---------- PERMISSION POPUP ---------- -->
+        <div class="popup right" id="permPop">
+          <div class="popup-head">Permission mode</div>
+          <div class="perm-grid">
+            <button class="perm-card selected" data-perm="Auto">
+              <span class="perm-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+              <span class="perm-name">Auto</span>
+              <span class="perm-desc">Runs anything safe, asks for the rest</span>
+            </button>
+            <button class="perm-card" data-perm="Manual">
+              <span class="perm-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11V6a2 2 0 1 1 4 0v5"/><path d="M13 11V4a2 2 0 1 1 4 0v7"/><path d="M17 11V6a2 2 0 1 1 4 0v8a8 8 0 0 1-16 0v-3a2 2 0 1 1 4 0"/></svg></span>
+              <span class="perm-name">Manual</span>
+              <span class="perm-desc">Asks before every edit and command</span>
+            </button>
+            <button class="perm-card" data-perm="Bypass">
+              <span class="perm-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg></span>
+              <span class="perm-name">Bypass</span>
+              <span class="perm-desc">Skips approval entirely · destructive</span>
+            </button>
+            <button class="perm-card" data-perm="History">
+              <span class="perm-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v6h6"/><path d="M3.5 9a9 9 0 1 0 2-5.7L3 9"/><polyline points="12 7 12 12 16 14"/></svg></span>
+              <span class="perm-name">History</span>
+              <span class="perm-desc">Keep the last mode per session</span>
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </main>
+
+    <!-- ================= PROJECTS VIEW ================= -->
+    <section class="projects view" id="viewProjects">
+      <div class="projects-inner">
+        <div class="page-head">
+          <h2 class="page-title">Projects</h2>
+
+          <div class="page-actions">
+            <div class="search-field" id="projSearch">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A9AA8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="projSearchInput" placeholder="Search projects">
+            </div>
+
+            <button class="icon-btn" id="projSearchBtn" title="Search">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </button>
+
+            <div class="sort-wrap">
+              <button class="icon-btn" id="sortBtn" title="Sort">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="3" x2="7" y2="17"/><polyline points="3 7 7 3 11 7"/><line x1="17" y1="21" x2="17" y2="7"/><polyline points="21 17 17 21 13 17"/></svg>
+              </button>
+
+              <div class="menu" id="sortMenu">
+                <button class="menu-item selected" data-sort="updated">
+                  Last updated
+                  <span class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+                </button>
+                <button class="menu-item" data-sort="created">
+                  Date created
+                  <span class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+                </button>
+                <button class="menu-item" data-sort="alpha">
+                  Alphabetical
+                  <span class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+                </button>
+                <div class="sep-row"></div>
+                <button class="menu-item" data-sort="type">
+                  Group by type
+                  <span class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+                </button>
+              </div>
+            </div>
+
+            <button class="pbtn primary" id="newProjectBtn">New project</button>
+          </div>
+        </div>
+
+        <div id="projectGrid"></div>
+      </div>
+    </section>
+
+    <!-- ================= PLACEHOLDER VIEW ================= -->
+    <section class="projects view" id="viewPlace">
+      <div class="projects-inner">
+        <div class="page-head">
+          <h2 class="page-title" id="placeTitle">Artifacts</h2>
+        </div>
+        <div class="empty">
+          <h3 id="placeEmptyTitle">Nothing here yet</h3>
+          <p id="placeEmptyText">This area fills up as ZO-AI produces things for you.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= PROJECT WORKSPACE ================= -->
+    <section class="projectview view" id="viewProject">
+
+      <div class="pv-main">
+        <h1 class="pv-title" id="pvTitle">Project</h1>
+
+        <div class="pv-composer">
+          <input type="text" id="pvPrompt" placeholder="New session" autocomplete="off">
+          <div class="pv-composer-foot">
+            <button class="tool-btn" title="Add files, skills, connectors">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <div class="foot-right">
+              <button class="tool-btn" title="Voice">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+              </button>
+              <button class="tool-btn" title="Expand">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <button class="tool-btn" title="Waveform">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="4" y2="15"/><line x1="8" y1="5" x2="8" y2="19"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="16" y1="7" x2="16" y2="17"/><line x1="20" y1="10" x2="20" y2="14"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="pv-meta">
+          <button id="pvModel">Haiku 5.5 Low</button>
+          <button id="pvPerm">Auto</button>
+        </div>
+
+        <div class="pv-hint">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>
+          <span id="pvHintText">ZO-AI remembers the same knowledge every time you talk to it in this project.</span>
+        </div>
+      </div>
+
+      <aside class="pv-rail">
+        <button class="rail-row" data-sheet="instructions">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+          <span class="rail-label">Instructions</span>
+          <span class="rail-action" id="railInstructions">Add</span>
+        </button>
+
+        <button class="rail-row" data-sheet="context">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          <span class="rail-label">Context</span>
+          <span class="rail-action" id="railContext">Add</span>
+        </button>
+
+        <button class="rail-row" data-sheet="memory">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0-3 11v3h6v-3a6 6 0 0 0-3-11z"/><line x1="9" y1="21" x2="15" y2="21"/></svg>
+          <span class="rail-label">Memory</span>
+          <span class="rail-action" id="railMemory">View</span>
+        </button>
+
+        <button class="rail-row" data-sheet="scheduled">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span class="rail-label">Scheduled</span>
+          <span class="rail-action" id="railScheduled">Add</span>
+        </button>
+
+        <div class="rail-note" id="railPrivacy">Private</div>
+      </aside>
+
+    </section>
+
+  </div>
+</div>
+
+<!-- ================= CREATE PROJECT MODAL ================= -->
+<div class="overlay" id="projectModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="projectModalTitle">
+    <div class="modal-head">
+      <span class="modal-title" id="projectModalTitle">Create a project</span>
+      <button class="modal-close" id="projectModalClose" aria-label="Close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <div class="field">
+        <label for="projectName">What are you working on?</label>
+        <input class="input" id="projectName" type="text" placeholder="Name your project" autocomplete="off">
+      </div>
+
+      <div class="field">
+        <label for="projectGoal">What are you trying to achieve?</label>
+        <textarea class="input" id="projectGoal" placeholder="Describe your project, goals, subject, etc..."></textarea>
+      </div>
+
+      <div class="field">
+        <label>Context<span class="opt">optional</span></label>
+        <button class="add-context" id="addContextBtn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add context
+        </button>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn" id="projectCancel">Cancel</button>
+      <button class="btn primary" id="projectCreate" disabled>Create project</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= PROJECT SHEET (instructions / context / memory / scheduled) ================= -->
+<div class="overlay" id="sheetModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="modal-head">
+      <span class="modal-title" id="sheetTitle">Instructions</span>
+      <button class="modal-close" id="sheetClose" aria-label="Close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-body" id="sheetBody"></div>
+
+    <div class="modal-foot">
+      <button class="btn" id="sheetCancel">Cancel</button>
+      <button class="btn primary" id="sheetSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const app = document.getElementById('app');
+  const sidebar = document.getElementById('sidebar');
+  const toggleBtn = document.getElementById('toggleSidebar');
+
+  const plusBtn = document.getElementById('plusBtn');
+  const modelBtn = document.getElementById('modelBtn');
+  const permBtn = document.getElementById('permBtn');
+  const micBtn = document.getElementById('micBtn');
+  const prompt = document.getElementById('prompt');
+
+  const plusPop = document.getElementById('plusPop');
+  const modelPop = document.getElementById('modelPop');
+  const permPop = document.getElementById('permPop');
+
+  const modelLabel = document.getElementById('modelLabel');
+  const permLabel = document.getElementById('permLabel');
+
+  const popups = [
+    { btn: plusBtn, pop: plusPop },
+    { btn: modelBtn, pop: modelPop },
+    { btn: permBtn, pop: permPop }
+  ];
+
+  function closeAll(except) {
+    popups.forEach(p => {
+      if (p.pop !== except) p.pop.classList.remove('open');
+    });
+  }
+
+  function togglePopup(btn, pop) {
+    const willOpen = !pop.classList.contains('open');
+    closeAll(willOpen ? pop : null);
+    pop.classList.toggle('open', willOpen);
+  }
+
+  popups.forEach(({ btn, pop }) => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      togglePopup(btn, pop);
+    });
+    pop.addEventListener('click', e => e.stopPropagation());
+  });
+
+  document.addEventListener('click', () => closeAll(null));
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeAll(null);
+  });
+
+  /* ---------- sidebar: hover peeks, click pins ---------- */
+  let pinned = false;
+  let hideTimer = null;
+
+  function openSidebar() {
+    clearTimeout(hideTimer);
+    app.classList.remove('sidebar-closed');
+  }
+
+  function closeSidebar() {
+    if (!pinned) app.classList.add('sidebar-closed');
+  }
+
+  toggleBtn.addEventListener('mouseenter', openSidebar);
+  sidebar.addEventListener('mouseenter', openSidebar);
+
+  sidebar.addEventListener('mouseleave', () => {
+    hideTimer = setTimeout(closeSidebar, 160);
+  });
+  toggleBtn.addEventListener('mouseleave', () => {
+    hideTimer = setTimeout(closeSidebar, 160);
+  });
+
+  toggleBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    pinned = !pinned;
+    app.classList.toggle('sidebar-closed', !pinned);
+  });
+
+  /* ---------- model picker ---------- */
+  modelPop.addEventListener('click', e => {
+    const row = e.target.closest('[data-model]');
+    if (!row) return;
+    modelPop.querySelectorAll('.row').forEach(r => {
+      r.classList.remove('selected');
+      const tag = r.querySelector('.tag.sel');
+      if (tag) tag.remove();
+    });
+    row.classList.add('selected');
+    const badge = document.createElement('span');
+    badge.className = 'tag sel';
+    badge.textContent = 'Current';
+    row.appendChild(badge);
+    modelLabel.textContent = row.dataset.model;
+    closeAll(null);
+  });
+
+  /* ---------- permission picker ---------- */
+  permPop.addEventListener('click', e => {
+    const card = e.target.closest('[data-perm]');
+    if (!card) return;
+    permPop.querySelectorAll('.perm-card').forEach(c => c.classList.remove('selected'));
+    card.classList.add('selected');
+    permLabel.textContent = card.dataset.perm;
+    closeAll(null);
+  });
+
+  /* ---------- voice (hooks into Zohara settings engine) ---------- */
+  let listening = false;
+  micBtn.addEventListener('click', () => {
+    listening = !listening;
+    micBtn.style.color = listening ? 'var(--accent)' : '';
+    if (listening) prompt.placeholder = 'Listening… press the mic to stop';
+    else prompt.placeholder = 'Type / for skills';
+  });
+
+  /* ---------- send ---------- */
+  prompt.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && prompt.value.trim()) {
+      prompt.value = '';
+    }
+  });
+
+  /* ================= VIEWS ================= */
+  const views = {
+    chat: document.getElementById('viewChat'),
+    projects: document.getElementById('viewProjects'),
+    project: document.getElementById('viewProject'),
+    place: document.getElementById('viewPlace')
+  };
+
+  const navItems = Array.from(document.querySelectorAll('.nav-item[data-view]'));
+  const placeTitle = document.getElementById('placeTitle');
+  const placeEmptyTitle = document.getElementById('placeEmptyTitle');
+  const placeEmptyText = document.getElementById('placeEmptyText');
+
+  function showView(name, title) {
+    Object.values(views).forEach(v => v.classList.remove('active'));
+    const target = views[name] || views.chat;
+    target.classList.add('active');
+
+    if (name === 'place') {
+      placeTitle.textContent = title || 'Artifacts';
+      placeEmptyTitle.textContent = 'Nothing here yet';
+      placeEmptyText.textContent =
+        title === 'Scheduled'
+          ? 'Scheduled runs show up here once you create one.'
+          : 'This area fills up as ZO-AI produces things for you.';
+    }
+  }
+
+  navItems.forEach(item => {
+    item.addEventListener('click', () => {
+      navItems.forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+
+      const view = item.dataset.view;
+      showView(view, item.dataset.title);
+
+      if (item.dataset.focusSearch) {
+        closeProjSearch();
+        prompt.focus();
+      }
+      if (view !== 'projects') closeSortMenu();
+    });
+  });
+
+  /* ================= PROJECTS (state-driven, nothing hardcoded) ================= */
+  const projects = [];
+
+  const grid = document.getElementById('projectGrid');
+  const sortBtn = document.getElementById('sortBtn');
+  const sortMenu = document.getElementById('sortMenu');
+  const projSearchBtn = document.getElementById('projSearchBtn');
+  const projSearch = document.getElementById('projSearch');
+  const projSearchInput = document.getElementById('projSearchInput');
+  const newProjectBtn = document.getElementById('newProjectBtn');
+
+  let sortMode = 'updated';
+  let query = '';
+
+  function closeSortMenu() { sortMenu.classList.remove('open'); }
+  function closeProjSearch() {
+    projSearch.classList.remove('open');
+    projSearchInput.value = '';
+    query = '';
+  }
+
+  function relativeDate(ts) {
+    const diff = Date.now() - ts;
+    const day = 86400000;
+    if (diff < 60000) return 'just now';
+    if (diff < day) {
+      const h = Math.max(1, Math.round(diff / 3600000));
+      return h + (h === 1 ? ' hour ago' : ' hours ago');
+    }
+    const d = Math.round(diff / day);
+    if (d < 30) return d + (d === 1 ? ' day ago' : ' days ago');
+    return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  const folderIcon = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+  const pinIcon = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1 6 4 4v2H6v-2l4-4z"/><line x1="12" y1="16" x2="12" y2="21"/></svg>';
+
+  function sortedProjects() {
+    let list = projects.slice();
+
+    if (query.trim()) {
+      const q = query.trim().toLowerCase();
+      list = list.filter(p => p.name.toLowerCase().includes(q));
+    }
+
+    if (sortMode === 'alpha') list.sort((a, b) => a.name.localeCompare(b.name));
+    else if (sortMode === 'created') list.sort((a, b) => b.created - a.created);
+    else if (sortMode === 'type') list.sort((a, b) => (a.type || '').localeCompare(b.type || ''));
+    else list.sort((a, b) => b.updated - a.updated);
+
+    return list.sort((a, b) => Number(b.pinned) - Number(a.pinned));
+  }
+
+  function renderProjects() {
+    const list = sortedProjects();
+    grid.innerHTML = '';
+
+    if (!projects.length) {
+      grid.innerHTML =
+        '<div class="empty">' +
+          '<h3>No projects yet</h3>' +
+          '<p>Projects keep one long-running thing together — its files, notes and context — so ZO-AI keeps working inside it.</p>' +
+          '<button class="pbtn primary" id="emptyNewProject">New project</button>' +
+        '</div>';
+      const b = document.getElementById('emptyNewProject');
+      if (b) b.addEventListener('click', openProjectModal);
+      return;
+    }
+
+    if (!list.length) {
+      grid.innerHTML = '<div class="empty"><h3>No matches</h3><p>Try another name.</p></div>';
+      return;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'project-grid';
+
+    list.forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'project-card';
+      card.innerHTML =
+        '<span class="pc-icon">' + folderIcon + '</span>' +
+        '<span class="pc-main">' +
+          '<span class="pc-name"></span>' +
+          '<span class="pc-meta"></span>' +
+        '</span>' +
+        '<button class="pc-pin' + (p.pinned ? ' pinned' : '') + '" title="Pin">' + pinIcon + '</button>';
+
+      card.querySelector('.pc-name').textContent = p.name;
+      card.querySelector('.pc-meta').textContent = relativeDate(p.updated);
+
+      card.querySelector('.pc-pin').addEventListener('click', e => {
+        e.stopPropagation();
+        p.pinned = !p.pinned;
+        renderProjects();
+      });
+
+      card.addEventListener('click', () => openProject(p));
+
+      wrap.appendChild(card);
+    });
+
+    grid.appendChild(wrap);
+  }
+
+  sortBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    sortMenu.classList.toggle('open');
+  });
+
+  sortMenu.addEventListener('click', e => {
+    e.stopPropagation();
+    const item = e.target.closest('[data-sort]');
+    if (!item) return;
+    sortMode = item.dataset.sort;
+    sortMenu.querySelectorAll('.menu-item').forEach(i => i.classList.remove('selected'));
+    item.classList.add('selected');
+    closeSortMenu();
+    renderProjects();
+  });
+
+  projSearchBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    projSearch.classList.toggle('open');
+    if (projSearch.classList.contains('open')) projSearchInput.focus();
+  });
+
+  projSearchInput.addEventListener('input', () => {
+    query = projSearchInput.value;
+    renderProjects();
+  });
+
+  document.addEventListener('click', e => {
+    if (!sortMenu.contains(e.target) && e.target !== sortBtn) closeSortMenu();
+  });
+
+  /* ================= CREATE PROJECT MODAL ================= */
+  const modal = document.getElementById('projectModal');
+  const nameInput = document.getElementById('projectName');
+  const goalInput = document.getElementById('projectGoal');
+  const createBtn = document.getElementById('projectCreate');
+  const cancelBtn = document.getElementById('projectCancel');
+  const closeBtn = document.getElementById('projectModalClose');
+
+  function openProjectModal() {
+    nameInput.value = '';
+    goalInput.value = '';
+    createBtn.disabled = true;
+    modal.classList.add('open');
+    setTimeout(() => nameInput.focus(), 30);
+  }
+
+  function closeProjectModal() {
+    modal.classList.remove('open');
+  }
+
+  newProjectBtn.addEventListener('click', openProjectModal);
+  cancelBtn.addEventListener('click', closeProjectModal);
+  closeBtn.addEventListener('click', closeProjectModal);
+
+  modal.addEventListener('click', e => {
+    if (e.target === modal) closeProjectModal();
+  });
+
+  nameInput.addEventListener('input', () => {
+    createBtn.disabled = !nameInput.value.trim();
+  });
+
+  nameInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && nameInput.value.trim()) createProject();
+  });
+
+  function createProject() {
+    const name = nameInput.value.trim();
+    if (!name) return;
+
+    const now = Date.now();
+    projects.push({
+      id: 'p' + now,
+      name: name,
+      goal: goalInput.value.trim(),
+      type: 'general',
+      created: now,
+      updated: now,
+      pinned: false,
+      instructions: '',
+      context: [],
+      schedules: [],
+      memory: []
+    });
+
+    closeProjectModal();
+    renderProjects();
+
+    navItems.forEach(i => i.classList.remove('active'));
+    const projectsNav = document.querySelector('.nav-item[data-view="projects"]');
+    if (projectsNav) projectsNav.classList.add('active');
+    showView('projects');
+  }
+
+  createBtn.addEventListener('click', createProject);
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && modal.classList.contains('open')) closeProjectModal();
+  });
+
+  /* ================= PROJECT WORKSPACE ================= */
+  const pvTitle = document.getElementById('pvTitle');
+  const pvPrompt = document.getElementById('pvPrompt');
+  const pvHintText = document.getElementById('pvHintText');
+  const pvModel = document.getElementById('pvModel');
+  const pvPerm = document.getElementById('pvPerm');
+
+  const railInstructions = document.getElementById('railInstructions');
+  const railContext = document.getElementById('railContext');
+  const railMemory = document.getElementById('railMemory');
+  const railScheduled = document.getElementById('railScheduled');
+
+  let current = null;
+
+  const SHEET_LABELS = {
+    instructions: 'Instructions',
+    context: 'Context',
+    memory: 'Memory',
+    scheduled: 'Scheduled'
+  };
+
+  function showOnly(name) {
+    Object.values(views).forEach(v => v.classList.remove('active'));
+    const target = views[name] || views.chat;
+    target.classList.add('active');
+  }
+
+  function markNav(name) {
+    navItems.forEach(i => i.classList.toggle('active', i.dataset.view === name));
+  }
+
+  function openProject(p) {
+    current = p;
+    pvTitle.textContent = p.name;
+    pvPrompt.placeholder = 'New session in ' + p.name;
+    pvHintText.textContent = p.goal ||
+      'ZO-AI remembers the same knowledge every time you talk to it in this project.';
+    refreshRail();
+    showOnly('project');
+  }
+
+  function chip(n) {
+    return n > 0 ? '<span class="rail-count has">' + n + '</span>' : '';
+  }
+
+  function refreshRail() {
+    if (!current) return;
+
+    railInstructions.innerHTML = (current.instructions.trim() ? 'Edit' : 'Add');
+    railContext.innerHTML = 'Add' + chip(current.context.length);
+    railMemory.innerHTML = 'View' + chip(current.memory.length);
+    railScheduled.innerHTML = 'Add' + chip(current.schedules.length);
+  }
+
+  /* ---------- sheet ---------- */
+  const sheetModal = document.getElementById('sheetModal');
+  const sheetTitle = document.getElementById('sheetTitle');
+  const sheetBody = document.getElementById('sheetBody');
+  const sheetSave = document.getElementById('sheetSave');
+  const sheetCancel = document.getElementById('sheetCancel');
+  const sheetClose = document.getElementById('sheetClose');
+
+  let sheetType = null;
+
+  const fileIcon = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+
+  function fmtSize(b) {
+    if (!b && b !== 0) return '';
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return Math.round(b / 1024) + ' KB';
+    return (b / 1048576).toFixed(1) + ' MB';
+  }
+
+  function emptyRow(text) {
+    const d = document.createElement('div');
+    d.className = 'sheet-empty';
+    d.textContent = text;
+    return d;
+  }
+
+  function openSheet(type) {
+    if (!current) return;
+    sheetType = type;
+    sheetTitle.textContent = SHEET_LABELS[type];
+    sheetBody.innerHTML = '';
+    sheetSave.style.display = type === 'memory' ? 'none' : '';
+    sheetCancel.textContent = type === 'memory' ? 'Close' : 'Cancel';
+
+    if (type === 'instructions') {
+      const field = document.createElement('div');
+      field.className = 'field';
+      field.innerHTML =
+        '<label for="sheetText">How should ZO-AI work in this project?</label>' +
+        '<textarea class="input" id="sheetText" placeholder="Tone, boundaries, format, things to always or never do..."></textarea>' +
+        '<p style="margin-top:8px;font-size:11px;color:var(--dim);line-height:1.5">' +
+        'Sits one layer above the system prompt, for this project only. It does not change ZO-AI outside the project.</p>';
+      sheetBody.appendChild(field);
+      document.getElementById('sheetText').value = current.instructions;
+
+    } else if (type === 'context') {
+      const list = document.createElement('div');
+      list.className = 'sheet-list';
+      list.id = 'ctxList';
+      sheetBody.appendChild(list);
+
+      const add = document.createElement('button');
+      add.className = 'ghost-btn';
+      add.innerHTML = fileIcon + ' Add files';
+      add.style.marginTop = '12px';
+      sheetBody.appendChild(add);
+
+      const hint = document.createElement('p');
+      hint.style.cssText = 'margin-top:8px;font-size:11px;color:var(--dim);line-height:1.5';
+      hint.textContent = 'Documents, zips, code, images. Everything in context is available to ZO-AI in every session of this project.';
+      sheetBody.appendChild(hint);
+
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.multiple = true;
+      fileInput.style.display = 'none';
+      sheetBody.appendChild(fileInput);
+
+      add.addEventListener('click', () => fileInput.click());
+
+      fileInput.addEventListener('change', () => {
+        Array.from(fileInput.files).forEach(f => {
+          current.context.push({ name: f.name, size: f.size });
+        });
+        renderContextList();
+        refreshRail();
+      });
+
+      renderContextList();
+
+    } else if (type === 'scheduled') {
+      const list = document.createElement('div');
+      list.className = 'sheet-list';
+      list.id = 'schedList';
+      sheetBody.appendChild(list);
+
+      const field = document.createElement('div');
+      field.className = 'field';
+      field.style.marginTop = '14px';
+      field.innerHTML =
+        '<label for="sheetScheduleText">What should ZO-AI do?</label>' +
+        '<input class="input" id="sheetScheduleText" type="text" placeholder="e.g. summarise new commits and post them here">' +
+        '<div class="row-2" style="margin-top:10px">' +
+          '<div><label for="sheetScheduleWhen" style="font-size:11px;color:var(--dim)">When</label>' +
+          '<input class="input" id="sheetScheduleWhen" type="datetime-local"></div>' +
+          '<div><label for="sheetScheduleRepeat" style="font-size:11px;color:var(--dim)">Repeat</label>' +
+          '<select class="input" id="sheetScheduleRepeat">' +
+            '<option value="once">Once</option>' +
+            '<option value="daily">Daily</option>' +
+            '<option value="weekly">Weekly</option>' +
+          '</select></div>' +
+        '</div>' +
+        '<p style="margin-top:10px;font-size:11px;color:var(--dim);line-height:1.5">' +
+        'You can also just ask ZO-AI in this project — “schedule this every Monday” — and it lands here.</p>';
+      sheetBody.appendChild(field);
+
+      const when = document.getElementById('sheetScheduleWhen');
+      const soon = new Date(Date.now() + 3600000);
+      soon.setMinutes(0, 0, 0);
+      when.value = new Date(soon.getTime() - soon.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+      renderSchedList();
+
+    } else if (type === 'memory') {
+      const note = document.createElement('p');
+      note.style.cssText = 'font-size:11px;color:var(--dim);line-height:1.5;margin-bottom:10px';
+      note.textContent =
+        'Project memory is loaded into this project’s working tree on every session, so ZO-AI already knows it before you type a word.';
+      sheetBody.appendChild(note);
+
+      const list = document.createElement('div');
+      list.className = 'sheet-list';
+      if (!current.memory.length) {
+        list.appendChild(emptyRow('No project memory yet. ZO-AI writes here as it learns what matters in this project.'));
+      } else {
+        current.memory.forEach(m => {
+          const item = document.createElement('div');
+          item.className = 'sheet-item';
+          item.innerHTML = '<span class="si-main"><span class="si-name"></span>' +
+            '<span class="si-sub"></span></span>';
+          item.querySelector('.si-name').textContent = m.text;
+          item.querySelector('.si-sub').textContent = m.when || '';
+          list.appendChild(item);
+        });
+      }
+      sheetBody.appendChild(list);
+    }
+
+    sheetModal.classList.add('open');
+  }
+
+  function renderContextList() {
+    const list = document.getElementById('ctxList');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!current.context.length) {
+      list.appendChild(emptyRow('No context attached yet.'));
+      return;
+    }
+    current.context.forEach((c, i) => {
+      const item = document.createElement('div');
+      item.className = 'sheet-item';
+      item.innerHTML =
+        '<span style="color:var(--muted);display:inline-flex">' + fileIcon + '</span>' +
+        '<span class="si-main"><span class="si-name"></span><span class="si-sub"></span></span>' +
+        '<button class="pc-pin" title="Remove" style="opacity:1">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
+      item.querySelector('.si-name').textContent = c.name;
+      item.querySelector('.si-sub').textContent = fmtSize(c.size);
+      item.querySelector('.pc-pin').addEventListener('click', () => {
+        current.context.splice(i, 1);
+        renderContextList();
+        refreshRail();
+      });
+      list.appendChild(item);
+    });
+  }
+
+  function renderSchedList() {
+    const list = document.getElementById('schedList');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!current.schedules.length) {
+      list.appendChild(emptyRow('Nothing scheduled in this project yet.'));
+      return;
+    }
+    current.schedules.forEach((s, i) => {
+      const item = document.createElement('div');
+      item.className = 'sheet-item';
+      item.innerHTML =
+        '<span style="color:var(--muted);display:inline-flex">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>' +
+        '<span class="si-main"><span class="si-name"></span><span class="si-sub"></span></span>' +
+        '<button class="pc-pin" title="Remove" style="opacity:1">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
+      item.querySelector('.si-name').textContent = s.text;
+      item.querySelector('.si-sub').textContent = (s.when || '') + (s.repeat && s.repeat !== 'once' ? ' · ' + s.repeat : '');
+      item.querySelector('.pc-pin').addEventListener('click', () => {
+        current.schedules.splice(i, 1);
+        renderSchedList();
+        refreshRail();
+      });
+      list.appendChild(item);
+    });
+  }
+
+  function closeSheet() {
+    sheetModal.classList.remove('open');
+    sheetType = null;
+  }
+
+  document.querySelectorAll('.rail-row').forEach(row => {
+    row.addEventListener('click', () => openSheet(row.dataset.sheet));
+  });
+
+  sheetClose.addEventListener('click', closeSheet);
+  sheetCancel.addEventListener('click', closeSheet);
+  sheetModal.addEventListener('click', e => {
+    if (e.target === sheetModal) closeSheet();
+  });
+
+  sheetSave.addEventListener('click', () => {
+    if (!current || !sheetType) return;
+
+    if (sheetType === 'instructions') {
+      const el = document.getElementById('sheetText');
+      current.instructions = el ? el.value.trim() : '';
+      current.updated = Date.now();
+
+    } else if (sheetType === 'scheduled') {
+      const textEl = document.getElementById('sheetScheduleText');
+      const whenEl = document.getElementById('sheetScheduleWhen');
+      const repEl = document.getElementById('sheetScheduleRepeat');
+      const text = textEl ? textEl.value.trim() : '';
+      if (!text) { textEl.focus(); return; }
+      current.schedules.push({
+        text: text,
+        when: whenEl && whenEl.value ? whenEl.value.replace('T', ' ') : '',
+        repeat: repEl ? repEl.value : 'once'
+      });
+      current.updated = Date.now();
+      renderSchedList();
+      if (textEl) textEl.value = '';
+
+    } else if (sheetType === 'context') {
+      current.updated = Date.now();
+    }
+
+    refreshRail();
+    if (sheetType !== 'scheduled') closeSheet();
+  });
+
+  pvModel.addEventListener('click', () => {
+    pvModel.textContent = pvModel.textContent === 'Haiku 5.5 Low' ? 'Opus 5.5 High' : 'Haiku 5.5 Low';
+  });
+
+  pvPerm.addEventListener('click', () => {
+    const order = ['Auto', 'Manual', 'Bypass'];
+    const i = order.indexOf(pvPerm.textContent);
+    pvPerm.textContent = order[(i + 1) % order.length];
+  });
+
+  renderProjects();
+})();
+</script>
+
+</body>
+</html>

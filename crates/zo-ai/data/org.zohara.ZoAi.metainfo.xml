@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.zohara.ZoAi</id>
+  <name>ZO-AI</name>
+  <summary>OS-level AI agent for Zohara OS</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <description>
+    <p>
+      ZO-AI is the AI module that ships inside Zohara OS. It keeps projects with
+      their own instructions, attached context, memory and schedules, and answers
+      from the same knowledge every time you work inside a project.
+    </p>
+  </description>
+  <launchable type="desktop-id">zo-ai.desktop</launchable>
+  <provides>
+    <binary>zo-ai</binary>
+  </provides>
+  <releases>
+    <release version="0.1.0" date="2026-11-02"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>
