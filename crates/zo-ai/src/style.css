@@ -613,3 +613,16 @@ window.quick {
   color: #c9d1de;
   padding: 6px 4px;
 }
+
+/* chat messages */
+.thread { padding: 24px 0 8px 0; }
+.msg-user {
+  background: alpha(@window_fg_color, 0.07);
+  border-radius: 14px;
+  padding: 9px 14px;
+  margin-left: 120px;
+}
+.msg-ai { padding: 4px 2px; font-size: 15px; }
+.msg-tool { opacity: 0.6; font-size: 12.5px; padding: 0 2px; }
+.msg-tool-out { opacity: 0.6; font-size: 12px; font-family: monospace; padding: 0 2px 4px 14px; }
+.msg-error { color: #c0392b; font-size: 13px; padding: 2px; }

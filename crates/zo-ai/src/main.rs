@@ -4,6 +4,7 @@
 //! project workspace with instructions / context / memory / schedules.
 
 mod ask;
+mod chat;
 mod model;
 mod quick;
 mod shortcut;
@@ -1102,7 +1103,7 @@ fn build_ui(app: &adw::Application) {
     composer.append(&prompt);
 
     // model pill
-    let model_label = lbl("Haiku 5.5 Low", "");
+    let model_label = lbl(&chat::pill_text(&zo_core::ai::Selection::load()), "");
     let model_btn = gtk::Button::new();
     model_btn.add_css_class("tool-btn");
     model_btn.add_css_class("pill");
@@ -1132,10 +1133,12 @@ fn build_ui(app: &adw::Application) {
         "Voice",
         "tool-btn",
     ));
-    composer.append(&icon_button("go-up-symbolic", "Send", "tool-btn send"));
+    let send_btn = icon_button("go-up-symbolic", "Send", "tool-btn send");
+    composer.append(&send_btn);
 
     composer_wrap.append(&composer);
     chat.append(&composer_wrap);
+    let chat_ctl = chat::Ctl::new(&chat, &hero);
     stack.add_named(&chat, Some("chat"));
 
     // ---------- plus popover ----------
@@ -1489,6 +1492,18 @@ fn build_ui(app: &adw::Application) {
         rail_memory: a_mem,
         rail_scheduled: a_sch,
     });
+
+    // ---------- chat and model ----------
+    {
+        let (c, p) = (chat_ctl.clone(), prompt.clone());
+        send_btn.connect_clicked(move |_| c.submit(&p));
+        let (c, p) = (chat_ctl.clone(), prompt.clone());
+        prompt.connect_activate(move |_| c.submit(&p));
+        let ui2 = ui.clone();
+        model_btn.connect_clicked(move |_| chat::models_sheet(&ui2));
+        let c = chat_ctl.clone();
+        nav_new.connect_clicked(move |_| c.new_conversation());
+    }
 
     // ---------- sidebar behaviour ----------
     {
