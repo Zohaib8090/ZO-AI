@@ -7,7 +7,7 @@ use super::wire::{self, Reply, ToolResult, Turn};
 use super::{keys, Selection};
 use crate::approval::Approver;
 use crate::policy::Mode;
-use crate::{mcp, tools};
+use crate::{mcp, mcp_client};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -94,8 +94,8 @@ fn stream_request(req: wire::Request, protocol: Protocol, tx: &std::sync::mpsc::
     Ok(acc.finish())
 }
 
-fn ask(cfg: &Config, turns: &[Turn], cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<Reply, String> {
-    let mut req = wire::build(cfg.provider, &cfg.base_url, cfg.key.as_deref(), &cfg.model, &cfg.system, turns, tools::definitions());
+fn ask(cfg: &Config, turns: &[Turn], specs: &[wire::ToolSpec], cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<Reply, String> {
+    let mut req = wire::build(cfg.provider, &cfg.base_url, cfg.key.as_deref(), &cfg.model, &cfg.system, turns, specs);
     let protocol = cfg.provider.protocol;
     wire::make_streaming(&mut req, protocol);
     // the request runs on its own thread so Stop works while the model is still thinking
@@ -123,11 +123,18 @@ pub const STOPPED: &str = "Stopped.";
 
 pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approver: &dyn Approver, cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     history.push(Turn::User(user.to_string()));
+    // ZO-AI's tools, and those of the MCP servers added in Settings (started for this turn only)
+    let mut external = mcp_client::External::start();
+    let mut specs = wire::builtin_specs();
+    specs.extend(external.tools().iter().map(|t| wire::ToolSpec { name: t.public_name(), description: t.description.clone(), schema: t.schema.clone() }));
+    for p in &external.problems {
+        on_event(Event::ToolDone { name: "mcp".into(), ok: false, output: format!("An MCP server did not start: {p}") });
+    }
     for _ in 0..MAX_STEPS {
         if cancel.load(Ordering::Relaxed) {
             return Err(STOPPED.into());
         }
-        let reply = ask(cfg, history, cancel, &mut *on_event)?;
+        let reply = ask(cfg, history, &specs, cancel, &mut *on_event)?;
         if !reply.text.is_empty() {
             on_event(Event::Text(reply.text.clone()));
         }
@@ -141,7 +148,8 @@ pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approv
                 return Err(STOPPED.into());
             }
             on_event(Event::ToolStart { name: call.name.clone(), summary: mcp::summarize(&call.name, &call.args) });
-            let (content, is_error) = match mcp::execute(&call.name, &call.args, mode, approver) {
+            let outcome = if external.owns(&call.name) { external.execute(&call.name, &call.args, mode, approver) } else { mcp::execute(&call.name, &call.args, mode, approver) };
+            let (content, is_error) = match outcome {
                 Ok(t) => (t, false),
                 Err(e) => (e, true),
             };
@@ -256,6 +264,29 @@ mod tests {
         let result = &seen[1]["messages"].as_array().unwrap().last().unwrap()["content"][0];
         assert_eq!(result["is_error"], true);
         assert!(result["content"].as_str().unwrap().contains("did not approve"));
+    }
+
+    #[test]
+    fn a_tool_from_an_added_mcp_server_is_offered_and_called() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (dir, server_cfg) = crate::mcp_client::fake_server();
+        let conf = dir.join("config");
+        std::fs::create_dir_all(conf.join("zo-ai")).unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", &conf);
+        crate::mcp_client::save_servers(&[server_cfg]);
+        let (url, server) = mock(vec![
+            json!({"choices":[{"message":{"content":null,"tool_calls":[{"id":"x1","function":{"name":"my_fake__echo","arguments":"{\"text\":\"hi\"}"}}]}}]}),
+            json!({"choices":[{"message":{"content":"It echoed."}}]}),
+        ]);
+        let mut events = Vec::new();
+        run(&cfg(url, "openai"), &mut Vec::new(), "use the fake server", Mode::Bypass, &Deny, &AtomicBool::new(false), &mut |e| if let Event::ToolDone { output, .. } = e { events.push(output) }).unwrap();
+        std::env::remove_var("XDG_CONFIG_HOME");
+        assert_eq!(events, ["echoed"]);
+        let seen = server.join().unwrap();
+        let offered: Vec<String> = seen[0]["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap().to_string()).collect();
+        assert!(offered.contains(&"my_fake__echo".to_string()) && offered.contains(&"zohara_shell".to_string()));
+        assert_eq!(seen[1]["messages"].as_array().unwrap().last().unwrap()["content"], "echoed");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

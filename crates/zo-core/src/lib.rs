@@ -6,6 +6,7 @@ pub mod approval;
 pub mod audit;
 pub mod exec;
 pub mod mcp;
+pub mod mcp_client;
 pub mod policy;
 pub mod store;
 pub mod tools;

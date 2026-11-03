@@ -105,7 +105,7 @@ pub fn inline(s: &str) -> String {
             '`' => match find(i + 1, &['`']) {
                 Some(j) if j > i + 1 => {
                     let code: String = c[i + 1..j].iter().collect();
-                    out.push_str(&format!("<span font_family=\"monospace\" background=\"#2B2B2B\">{}</span>", esc(&code)));
+                    out.push_str(&format!("<span font_family=\"monospace\" background=\"#808080\" bgalpha=\"22%\">{}</span>", esc(&code)));
                     i = j + 1;
                 }
                 _ => {

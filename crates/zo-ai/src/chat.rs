@@ -316,6 +316,13 @@ impl Ctl {
                             me.thread.remove(&w);
                         }
                         me.add(&t, "msg-ai");
+                        // code in the reply is kept under Artifacts
+                        let chat_id = me.id.borrow().clone();
+                        for b in crate::markdown::parse(&t) {
+                            if let crate::markdown::Block::Code { lang, text } = b {
+                                zo_core::store::artifacts::add_code(&lang, &text, Some(chat_id.clone()));
+                            }
+                        }
                     }
                     Ok(Msg::Ev(Event::ToolStart { name, summary })) => {
                         thinking.set_visible(false);

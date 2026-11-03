@@ -1,6 +1,7 @@
 //! What ZO-AI keeps on disk: projects, saved chats and scheduled tasks. The app, the chat AI and the MCP server all read and
 //! write the same files, so what one makes the others see.
 
+pub mod artifacts;
 pub mod chats;
 pub mod projects;
 pub mod schedules;

@@ -3,6 +3,19 @@
 
 use super::providers::{Protocol, Provider};
 use crate::tools::ToolDef;
+
+/// A tool as the model is told about it: ZO-AI's own, or one from an MCP server added in Settings.
+#[derive(Clone, Debug)]
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    pub schema: Value,
+}
+
+/// ZO-AI's own tools.
+pub fn builtin_specs() -> Vec<ToolSpec> {
+    crate::tools::definitions().iter().map(|d: &ToolDef| ToolSpec { name: d.name.into(), description: d.description.into(), schema: d.schema() }).collect()
+}
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -41,11 +54,11 @@ pub struct Request {
     pub body: Value,
 }
 
-fn has_params(t: &ToolDef) -> bool {
-    !t.params.is_empty()
+fn has_params(t: &ToolSpec) -> bool {
+    t.schema["properties"].as_object().is_some_and(|o| !o.is_empty())
 }
 
-pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, system: &str, turns: &[Turn], tools: &[ToolDef]) -> Request {
+pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, system: &str, turns: &[Turn], tools: &[ToolSpec]) -> Request {
     let base = base_url.trim_end_matches('/');
     match p.protocol {
         Protocol::Anthropic => {
@@ -69,7 +82,7 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
                 body["system"] = json!(system);
             }
             if !tools.is_empty() {
-                body["tools"] = json!(tools.iter().map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.schema() })).collect::<Vec<_>>());
+                body["tools"] = json!(tools.iter().map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.schema.clone() })).collect::<Vec<_>>());
             }
             let mut headers = vec![("anthropic-version".to_string(), "2023-06-01".to_string())];
             if let Some(k) = key {
@@ -104,7 +117,7 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
             let mut body = json!({ "model": model, "messages": messages });
             if !tools.is_empty() {
                 body["tools"] = json!(tools.iter().map(|t| json!({ "type": "function",
-                    "function": { "name": t.name, "description": t.description, "parameters": t.schema() } })).collect::<Vec<_>>());
+                    "function": { "name": t.name, "description": t.description, "parameters": t.schema.clone() } })).collect::<Vec<_>>());
             }
             let headers = key.map(|k| vec![("authorization".to_string(), format!("Bearer {k}"))]).unwrap_or_default();
             Request { url: format!("{base}/chat/completions"), headers, body }
@@ -134,7 +147,7 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
                 body["tools"] = json!([{ "functionDeclarations": tools.iter().map(|t| {
                     let mut d = json!({ "name": t.name, "description": t.description });
                     if has_params(t) {
-                        d["parameters"] = t.schema();
+                        d["parameters"] = t.schema.clone();
                     }
                     d
                 }).collect::<Vec<_>>() }]);
@@ -235,7 +248,7 @@ mod tests {
 
     #[test]
     fn anthropic_request_carries_tool_use_and_result() {
-        let r = build(find("anthropic").unwrap(), "https://x/v1/", Some("k"), "m", "sys", &conversation(), crate::tools::definitions());
+        let r = build(find("anthropic").unwrap(), "https://x/v1/", Some("k"), "m", "sys", &conversation(), &builtin_specs());
         assert_eq!(r.url, "https://x/v1/messages");
         assert!(r.headers.contains(&("x-api-key".into(), "k".into())));
         assert_eq!(r.body["system"], "sys");
@@ -246,7 +259,7 @@ mod tests {
 
     #[test]
     fn openai_request_uses_tool_role_and_string_arguments() {
-        let r = build(find("openai").unwrap(), "https://x/v1", Some("k"), "m", "sys", &conversation(), crate::tools::definitions());
+        let r = build(find("openai").unwrap(), "https://x/v1", Some("k"), "m", "sys", &conversation(), &builtin_specs());
         assert_eq!(r.url, "https://x/v1/chat/completions");
         assert!(r.headers.contains(&("authorization".into(), "Bearer k".into())));
         assert_eq!(r.body["messages"][0]["role"], "system");
@@ -264,7 +277,7 @@ mod tests {
 
     #[test]
     fn gemini_request_leaves_out_empty_parameters() {
-        let r = build(find("gemini").unwrap(), "https://x/v1beta", Some("k"), "gemini-x", "sys", &conversation(), crate::tools::definitions());
+        let r = build(find("gemini").unwrap(), "https://x/v1beta", Some("k"), "gemini-x", "sys", &conversation(), &builtin_specs());
         assert_eq!(r.url, "https://x/v1beta/models/gemini-x:generateContent");
         assert_eq!(r.body["contents"][1]["role"], "model");
         assert_eq!(r.body["contents"][2]["parts"][0]["functionResponse"]["name"], "zohara_process_list");

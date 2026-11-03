@@ -104,6 +104,27 @@ pub(crate) fn expand(p: &str) -> std::path::PathBuf {
 
 /// Run a tool. The caller has already decided it is allowed (see `policy`).
 pub fn call(name: &str, a: &Value) -> Result<String, String> {
+    let result = call_inner(name, a);
+    // what it made is kept under Artifacts
+    if result.is_ok() {
+        match name {
+            "zohara_fs_write" => {
+                if let Some(p) = a.get("path").and_then(Value::as_str) {
+                    crate::store::artifacts::add_file(p, "file");
+                }
+            }
+            "zohara_ss" => {
+                if let Ok(p) = &result {
+                    crate::store::artifacts::add_file(p, "screenshot");
+                }
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
+fn call_inner(name: &str, a: &Value) -> Result<String, String> {
     match name {
         "zohara_fs_read" => fs::read(text(a, "path")?),
         "zohara_fs_write" => fs::write(text(a, "path")?, text(a, "content")?, flag(a, "append")),

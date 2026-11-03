@@ -6,6 +6,7 @@
 mod ask;
 mod chat;
 use zo_core::store::chats;
+use zo_core::store::artifacts;
 use zo_core::store::schedules;
 mod composer;
 mod markdown;
@@ -14,6 +15,7 @@ mod quick;
 mod scheduler;
 mod settings;
 mod shortcut;
+mod theme;
 
 use adw::prelude::*;
 use gtk4 as gtk;
@@ -26,7 +28,7 @@ use std::time::Duration;
 use model::{Attachment, Project, Schedule, Store};
 
 const APP_ID: &str = "org.zohara.ZoAi";
-const CSS: &str = include_str!("style.css");
+pub(crate) const CSS: &str = include_str!("style.css");
 
 // ---------------------------------------------------------------- widgets
 
@@ -66,7 +68,7 @@ fn icon(name: &str, size: i32) -> gtk::Image {
     img
 }
 
-fn icon_button(name: &str, tip: &str, class: &str) -> gtk::Button {
+pub(crate) fn icon_button(name: &str, tip: &str, class: &str) -> gtk::Button {
     let b = gtk::Button::from_icon_name(name);
     b.set_has_frame(false);
     b.set_tooltip_text(Some(tip));
@@ -189,6 +191,7 @@ struct Ui {
     search_input: gtk::Entry,
     search_results: gtk::Box,
     sched_list: gtk::Box,
+    artifacts_list: gtk::Box,
     settings_box: gtk::Box,
 
     rail_instructions: gtk::Label,
@@ -269,6 +272,124 @@ fn open_chat(ui: &Rc<Ui>, chat: chats::Chat) {
     ui.stack.set_visible_child_name("chat");
     set_nav(ui, "new");
     ui.top_title.set_text(&chat.title);
+}
+
+/// The Artifacts page: files ZO-AI wrote, screenshots it took, and code from its replies.
+fn refresh_artifacts(ui: &Rc<Ui>) {
+    while let Some(c) = ui.artifacts_list.first_child() {
+        ui.artifacts_list.remove(&c);
+    }
+    let all = artifacts::load();
+    if all.is_empty() {
+        let empty = vbox(10);
+        empty.add_css_class("empty-box");
+        empty.set_margin_top(40);
+        let t = lbl("Nothing made yet", "empty-title");
+        t.set_halign(gtk::Align::Center);
+        let d = lbl("Files ZO-AI writes, screenshots it takes and code it shows you are kept here.", "empty-text");
+        d.set_halign(gtk::Align::Center);
+        d.set_wrap(true);
+        d.set_justify(gtk::Justification::Center);
+        empty.append(&t);
+        empty.append(&d);
+        ui.artifacts_list.append(&empty);
+        return;
+    }
+    for a in all {
+        let card = hbox(12);
+        card.add_css_class("project-card");
+        let exists = a.path.as_ref().map(|p| std::path::Path::new(p).exists()).unwrap_or(true);
+        // a thumbnail for screenshots, an icon for the rest
+        if a.kind == "screenshot" && exists {
+            let frame = gtk::Box::new(Orientation::Horizontal, 0);
+            frame.set_size_request(72, 48);
+            frame.set_overflow(gtk::Overflow::Hidden);
+            frame.add_css_class("thumb");
+            let pic = gtk::Picture::for_filename(a.path.clone().unwrap_or_default());
+            pic.set_content_fit(gtk::ContentFit::Cover);
+            pic.set_can_shrink(true);
+            pic.set_hexpand(true);
+            frame.append(&pic);
+            card.append(&frame);
+        } else {
+            let ic = icon(match a.kind.as_str() { "code" => "utilities-terminal-symbolic", "screenshot" => "image-x-generic-symbolic", _ => "text-x-generic-symbolic" }, 18);
+            ic.add_css_class("pc-icon");
+            card.append(&ic);
+        }
+        let col = vbox(3);
+        col.set_hexpand(true);
+        let title = lbl(&a.title, "pc-name");
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        col.append(&title);
+        let sub = match (&a.path, &a.text) {
+            (Some(p), _) if !exists => format!("{p} · no longer there"),
+            (Some(p), _) => p.clone(),
+            (None, Some(t)) => format!("{} lines of code", t.lines().count()),
+            _ => String::new(),
+        };
+        let s = lbl(&format!("{sub} · {}", model::relative(a.created)), "pc-meta");
+        s.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        col.append(&s);
+        card.append(&col);
+
+        if let (Some(path), true) = (a.path.clone(), exists) {
+            let open = icon_button("document-open-symbolic", "Open it", "icon-btn");
+            open.connect_clicked(move |b| {
+                let win = b.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+                gtk::UriLauncher::new(&format!("file://{path}")).launch(win.as_ref(), gtk::gio::Cancellable::NONE, |_| {});
+            });
+            card.append(&open);
+        }
+        if let Some(text) = a.text.clone() {
+            let view = icon_button("document-open-symbolic", "Show the code", "icon-btn");
+            let (ui2, title) = (ui.clone(), a.title.clone());
+            view.connect_clicked(move |_| open_code(&ui2, &title, &text));
+            card.append(&view);
+        }
+        if let Some(chat_id) = a.chat.clone() {
+            let chat_btn = icon_button("chat-message-new-symbolic", "Open the chat it came from", "icon-btn");
+            let ui2 = ui.clone();
+            chat_btn.connect_clicked(move |_| {
+                if let Some(c) = chats::load().into_iter().find(|c| c.id == chat_id) {
+                    open_chat(&ui2, c);
+                }
+            });
+            card.append(&chat_btn);
+        }
+        let del = icon_button("edit-delete-symbolic", "Remove from this list (the file stays)", "icon-btn");
+        let (ui2, id) = (ui.clone(), a.id.clone());
+        del.connect_clicked(move |_| {
+            artifacts::delete(&id);
+            refresh_artifacts(&ui2);
+        });
+        card.append(&del);
+        ui.artifacts_list.append(&card);
+    }
+}
+
+/// Shows saved code with a copy button.
+fn open_code(ui: &Rc<Ui>, title: &str, text: &str) {
+    let (win, body, foot) = sheet(ui, title, 720);
+    let view = gtk::TextView::new();
+    view.set_editable(false);
+    view.set_monospace(true);
+    view.set_wrap_mode(gtk::WrapMode::None);
+    view.add_css_class("code-view");
+    view.buffer().set_text(text);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_child(Some(&view));
+    scroll.set_min_content_height(340);
+    scroll.set_vexpand(true);
+    body.append(&scroll);
+    let copy = secondary("Copy");
+    let t = text.to_string();
+    copy.connect_clicked(move |b| b.clipboard().set_text(&t));
+    let close = primary("Close");
+    foot.append(&copy);
+    foot.append(&close);
+    let w = win.clone();
+    close.connect_clicked(move |_| w.close());
+    win.present();
 }
 
 /// The Scheduled page: every task, when it runs next, and buttons to run it now, switch it off or remove it.
@@ -741,7 +862,7 @@ fn update_rail(ui: &Rc<Ui>) {
 
 // ---------------------------------------------------------------- sheets
 
-fn sheet(ui: &Rc<Ui>, title: &str, width: i32) -> (gtk::Window, gtk::Box, gtk::Box) {
+pub(crate) fn sheet(ui: &Rc<Ui>, title: &str, width: i32) -> (gtk::Window, gtk::Box, gtk::Box) {
     let win = gtk::Window::builder()
         .title(title)
         .transient_for(&ui.window)
@@ -784,14 +905,14 @@ fn sheet(ui: &Rc<Ui>, title: &str, width: i32) -> (gtk::Window, gtk::Box, gtk::B
     (win, body, foot)
 }
 
-fn field(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
+pub(crate) fn field(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
     let b = vbox(7);
     b.append(&lbl(label, "field-label"));
     b.append(widget);
     b
 }
 
-fn primary(text: &str) -> gtk::Button {
+pub(crate) fn primary(text: &str) -> gtk::Button {
     let b = gtk::Button::with_label(text);
     b.add_css_class("btn");
     b.add_css_class("primary");
@@ -1079,6 +1200,7 @@ fn open_memory(ui: &Rc<Ui>) {
     win.present();
 }
 
+#[allow(dead_code)]
 fn open_scheduled(ui: &Rc<Ui>) {
     let Some(id) = ui.current.borrow().clone() else {
         return;
@@ -1380,7 +1502,6 @@ thread_local! {
 }
 
 fn build_ui(app: &adw::Application) {
-    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -1720,6 +1841,26 @@ fn build_ui(app: &adw::Application) {
     settings_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
     stack.add_named(&settings_scroll, Some("settings"));
 
+    // ---------- artifacts view ----------
+    let art_page = vbox(0);
+    let art_head = hbox(8);
+    art_head.set_margin_top(34);
+    art_head.set_margin_start(44);
+    art_head.set_margin_end(44);
+    art_head.set_margin_bottom(22);
+    art_head.append(&lbl("Artifacts", "page-title"));
+    art_page.append(&art_head);
+    let artifacts_list = vbox(8);
+    artifacts_list.set_margin_start(44);
+    artifacts_list.set_margin_end(44);
+    artifacts_list.set_margin_bottom(30);
+    let art_scroll = gtk::ScrolledWindow::new();
+    art_scroll.set_child(Some(&artifacts_list));
+    art_scroll.set_vexpand(true);
+    art_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+    art_page.append(&art_scroll);
+    stack.add_named(&art_page, Some("artifacts"));
+
     // ---------- placeholder view ----------
     let placeholder = vbox(0);
     stack.add_named(&placeholder, Some("placeholder"));
@@ -1768,6 +1909,7 @@ fn build_ui(app: &adw::Application) {
         search_input: search_input.clone(),
         search_results: search_results.clone(),
         sched_list: sched_list.clone(),
+        artifacts_list: artifacts_list.clone(),
         settings_box: settings_box.clone(),
         rail_instructions: a_instr,
         rail_context: a_ctx,
@@ -1879,12 +2021,9 @@ fn build_ui(app: &adw::Application) {
                 set_nav(&ui2, "new");
             }
             "artifacts" => {
-                open_placeholder(
-                    &ui2,
-                    "Artifacts",
-                    "This area fills up as ZO-AI produces things for you.",
-                );
+                ui2.stack.set_visible_child_name("artifacts");
                 set_nav(&ui2, "artifacts");
+                refresh_artifacts(&ui2);
             }
             _ => {
                 ui2.stack.set_visible_child_name("scheduled");
@@ -2124,7 +2263,7 @@ fn walk_tree(widget: &gtk::Widget, depth: usize) {
 fn main() -> glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).flags(gtk::gio::ApplicationFlags::HANDLES_COMMAND_LINE).build();
     app.connect_startup(|_| {
-        load_css();
+        theme::init();
         gtk::Window::set_default_icon_name("zo-ai");
     });
     app.connect_command_line(|app, cmd| {

@@ -6,6 +6,8 @@ use gtk4 as gtk;
 use libadwaita as adw;
 use std::rc::Rc;
 use zo_core::ai::{agent, claude_code, providers, Selection};
+use zo_core::mcp_client::{self, ServerConfig};
+use std::sync::mpsc;
 
 fn section(title: &str) -> (gtk::Box, gtk::Box) {
     let outer = vbox(8);
@@ -91,6 +93,15 @@ pub fn show(ui: &Rc<Ui>) {
     card.append(&row("API keys", keys_note, no_control()));
     content.append(&sec);
 
+    // ---- looks ----
+    let (sec, card) = section("Appearance");
+    let looks = ["system", "dark", "light"];
+    let dd = gtk::DropDown::from_strings(&["Follow the system", "Dark", "Light"]);
+    dd.set_selected(looks.iter().position(|l| *l == crate::theme::choice()).unwrap_or(0) as u32);
+    dd.connect_selected_notify(move |d| crate::theme::set(looks[d.selected() as usize]));
+    card.append(&row("Theme", "Light or dark, or the same as the rest of the system.", Some(&dd)));
+    content.append(&sec);
+
     // ---- permissions ----
     let (sec, card) = section("Permissions");
     let modes = ["Manual", "Auto", "Bypass"];
@@ -124,6 +135,49 @@ pub fn show(ui: &Rc<Ui>) {
     code.set_margin_end(16);
     code.set_margin_bottom(14);
     card.append(&code);
+    content.append(&sec);
+
+    // ---- MCP servers ZO-AI can use ----
+    let (sec, card) = section("MCP servers ZO-AI can use");
+    let servers = mcp_client::load_servers();
+    let add = secondary("Add server");
+    let ui2 = ui.clone();
+    add.connect_clicked(move |_| add_server_sheet(&ui2));
+    card.append(&row("Add tools from other programs", "Add an MCP server (for example a GitHub or a database server) and the chat can use its tools. Every call asks first, unless the mode is Bypass.", Some(&add)));
+    for s in servers {
+        let r = hbox(12);
+        r.add_css_class("settings-row");
+        let col = vbox(3);
+        col.set_hexpand(true);
+        col.append(&lbl(&s.name, "pc-name"));
+        let cmdl = lbl(&s.command, "pc-meta");
+        cmdl.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        col.append(&cmdl);
+        r.append(&col);
+        let sw = gtk::Switch::new();
+        sw.set_active(s.enabled);
+        sw.set_valign(gtk::Align::Center);
+        let name = s.name.clone();
+        sw.connect_state_set(move |_, on| {
+            let mut all = mcp_client::load_servers();
+            if let Some(x) = all.iter_mut().find(|x| x.name == name) {
+                x.enabled = on;
+            }
+            mcp_client::save_servers(&all);
+            gtk::glib::Propagation::Proceed
+        });
+        r.append(&sw);
+        let del = crate::icon_button("edit-delete-symbolic", "Remove this server", "icon-btn");
+        let (ui2, name) = (ui.clone(), s.name.clone());
+        del.connect_clicked(move |_| {
+            let mut all = mcp_client::load_servers();
+            all.retain(|x| x.name != name);
+            mcp_client::save_servers(&all);
+            show(&ui2);
+        });
+        r.append(&del);
+        card.append(&r);
+    }
     content.append(&sec);
 
     // ---- data ----
@@ -170,4 +224,73 @@ pub fn show(ui: &Rc<Ui>) {
     ui.stack.set_visible_child_name("settings");
     set_nav(ui, "settings");
     ui.top_title.set_text("Settings");
+}
+
+/// "Add server": a name and a command. It is started once to see that it works before it is saved.
+fn add_server_sheet(ui: &Rc<Ui>) {
+    let (win, body, foot) = crate::sheet(ui, "Add an MCP server", 560);
+    let name = gtk::Entry::new();
+    name.set_placeholder_text(Some("github"));
+    name.add_css_class("field-input");
+    body.append(&crate::field("Name", &name));
+    let command = gtk::Entry::new();
+    command.set_placeholder_text(Some("npx -y @modelcontextprotocol/server-github"));
+    command.add_css_class("field-input");
+    body.append(&crate::field("Command that starts it", &command));
+    let status = lbl("The server is started once to check that it works. Servers that need a key read it from the environment you start ZO-AI in.", "field-hint");
+    status.set_wrap(true);
+    status.set_xalign(0.0);
+    body.append(&status);
+    let cancel = secondary("Cancel");
+    let add = crate::primary("Test and add");
+    foot.append(&cancel);
+    foot.append(&add);
+    {
+        let w = win.clone();
+        cancel.connect_clicked(move |_| w.close());
+    }
+    {
+        let (w, ui2) = (win.clone(), ui.clone());
+        add.connect_clicked(move |b| {
+            let cfg = ServerConfig { name: mcp_client::clean_name(&name.text()), command: command.text().trim().to_string(), enabled: true };
+            if cfg.name.is_empty() || cfg.command.is_empty() {
+                status.set_text("Give it a name and a command.");
+                return;
+            }
+            if mcp_client::load_servers().iter().any(|s| s.name == cfg.name) {
+                status.set_text("A server with that name is already added.");
+                return;
+            }
+            status.set_text("Starting it…");
+            b.set_sensitive(false);
+            let (tx, rx) = mpsc::channel();
+            let cfg2 = cfg.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(mcp_client::test(&cfg2));
+            });
+            let (status, b, w, ui3) = (status.clone(), b.clone(), w.clone(), ui2.clone());
+            gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || match rx.try_recv() {
+                Ok(Ok(tools)) => {
+                    let mut all = mcp_client::load_servers();
+                    all.push(cfg.clone());
+                    mcp_client::save_servers(&all);
+                    w.close();
+                    show(&ui3);
+                    let _ = tools;
+                    gtk::glib::ControlFlow::Break
+                }
+                Ok(Err(e)) => {
+                    status.set_text(&format!("It did not work: {e}"));
+                    b.set_sensitive(true);
+                    gtk::glib::ControlFlow::Break
+                }
+                Err(mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
+                Err(_) => {
+                    b.set_sensitive(true);
+                    gtk::glib::ControlFlow::Break
+                }
+            });
+        });
+    }
+    win.present();
 }
