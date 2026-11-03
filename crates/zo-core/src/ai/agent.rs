@@ -228,6 +228,31 @@ mod tests {
         (url, h)
     }
 
+    /// Reads one whole HTTP request (headers and body) so the fake server never answers a half-sent one.
+    fn read_request(s: &mut std::net::TcpStream) {
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 4096];
+        loop {
+            let n = s.read(&mut tmp).unwrap_or(0);
+            if n == 0 {
+                return;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                let len = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                while buf.len() < i + 4 + len {
+                    let n = s.read(&mut tmp).unwrap_or(0);
+                    if n == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&tmp[..n]);
+                }
+                return;
+            }
+        }
+    }
+
     fn cfg(url: String, id: &str) -> Config<'static> {
         Config { provider: providers::find(id).unwrap(), base_url: url, model: "m".into(), key: Some("k".into()), system: "sys".into() }
     }
@@ -348,8 +373,7 @@ mod tests {
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         std::thread::spawn(move || {
             let (mut s, _) = listener.accept().unwrap();
-            let mut tmp = [0u8; 8192];
-            let _ = s.read(&mut tmp);
+            read_request(&mut s);
             let body = r#"{"error":{"message":"invalid api key"}}"#;
             write!(s, "HTTP/1.1 401 Unauthorized\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).unwrap();
         });
