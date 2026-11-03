@@ -42,6 +42,19 @@ fn lbl(text: &str, class: &str) -> gtk::Label {
     l
 }
 
+/// The ZO-AI mark without its tile, built into the program so it shows even before the icon is installed.
+fn mark(size: i32) -> gtk::Image {
+    let bytes = glib::Bytes::from_static(include_bytes!("../data/zo-ai-mark.png"));
+    let img = match gtk::gdk::Texture::from_bytes(&bytes) {
+        Ok(t) => gtk::Image::from_paintable(Some(&t)),
+        Err(_) => gtk::Image::new(),
+    };
+    img.set_pixel_size(size);
+    img.set_halign(gtk::Align::Center);
+    img.set_valign(gtk::Align::Center);
+    img
+}
+
 fn icon(name: &str, size: i32) -> gtk::Image {
     let img = gtk::Image::from_icon_name(name);
     img.set_pixel_size(size);
@@ -1134,7 +1147,11 @@ fn build_ui(app: &adw::Application) {
     let sidebar = vbox(2);
     sidebar.add_css_class("sidebar");
     sidebar.set_size_request(268, -1);
-    sidebar.append(&lbl("ZO-AI", "wordmark"));
+    let brand = hbox(10);
+    brand.set_margin_start(8);
+    brand.append(&mark(26));
+    brand.append(&lbl("ZO-AI", "wordmark"));
+    sidebar.append(&brand);
     sidebar.append(&nav_new);
     sidebar.append(&nav_search);
     sidebar.append(&nav_projects);
@@ -1207,7 +1224,7 @@ fn build_ui(app: &adw::Application) {
     let hero = hbox(14);
     hero.set_halign(gtk::Align::Center);
     hero.set_margin_bottom(28);
-    hero.append(&lbl("✦", "hero-mark"));
+    hero.append(&mark(52));
     hero.append(&lbl(&chat::greeting(), "hero-title"));
     chat.append(&hero);
 

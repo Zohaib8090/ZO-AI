@@ -640,7 +640,7 @@ window.background, .zo-root { background-color: #191919; color: #ECECEC; }
 
 /* sidebar */
 .sidebar { background-color: #191919; border-right: 1px solid alpha(white, 0.07); padding: 10px 8px 8px 8px; }
-.wordmark { font-size: 21px; padding: 6px 10px 14px 10px; color: #ECECEC; }
+.wordmark { font-size: 21px; padding: 6px 4px 14px 0; color: #ECECEC; }
 .nav-item { padding: 7px 10px; border-radius: 8px; font-size: 14px; }
 .nav-item:hover { background-color: alpha(white, 0.06); }
 .nav-item.active { background-color: alpha(white, 0.09); }

@@ -1,0 +1,7 @@
+<svg viewBox="45 45 250 250" xmlns="http://www.w3.org/2000/svg">
+  <!-- the same mark without the tile, for use inside the app -->
+    <path d="M170.0 57.5 Q180.1 93.4 216.0 103.5 Q180.1 113.6 170.0 149.5 Q159.9 113.6 124.0 103.5 Q159.9 93.4 170.0 57.5 Z" fill="#E8ECF1" stroke="#E8ECF1" stroke-width="8.3" stroke-linejoin="round" opacity="1"/>
+    <path d="M103.5 124.0 Q113.6 159.9 149.5 170.0 Q113.6 180.1 103.5 216.0 Q93.4 180.1 57.5 170.0 Q93.4 159.9 103.5 124.0 Z" fill="#E8ECF1" stroke="#E8ECF1" stroke-width="8.3" stroke-linejoin="round" opacity="0.55"/>
+    <path d="M236.5 124.0 Q246.6 159.9 282.5 170.0 Q246.6 180.1 236.5 216.0 Q226.4 180.1 190.5 170.0 Q226.4 159.9 236.5 124.0 Z" fill="#E8ECF1" stroke="#E8ECF1" stroke-width="8.3" stroke-linejoin="round" opacity="0.55"/>
+    <path d="M170.0 190.5 Q180.1 226.4 216.0 236.5 Q180.1 246.6 170.0 282.5 Q159.9 246.6 124.0 236.5 Q159.9 226.4 170.0 190.5 Z" fill="#5FD4D4" stroke="#5FD4D4" stroke-width="8.3" stroke-linejoin="round" opacity="1"/>
+</svg>

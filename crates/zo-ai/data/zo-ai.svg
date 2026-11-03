@@ -1,12 +1,8 @@
 <svg viewBox="0 0 340 340" xmlns="http://www.w3.org/2000/svg">
-  <!-- ZO-AI: the Zohara OS mark (four rounded diamonds on the dark tile), with the cyan diamond turned into a sparkle -->
+  <!-- ZO-AI app icon: the Zohara OS mark, each diamond turned into a sparkle, on the dark tile -->
   <rect width="340" height="340" rx="64" fill="#0B0E14"/>
-  <g transform="translate(170,170) rotate(45)">
-    <rect x="-86" y="-86" width="78" height="78" rx="14" fill="#E8ECF1"/>
-    <rect x="8"   y="-86" width="78" height="78" rx="14" fill="#E8ECF1" opacity="0.55"/>
-    <rect x="-86" y="8"   width="78" height="78" rx="14" fill="#E8ECF1" opacity="0.55"/>
-  </g>
-  <!-- the sparkle sits where the cyan diamond was -->
-  <path d="M170 182 Q182 224 224 236 Q182 248 170 290 Q158 248 116 236 Q158 224 170 182 Z" fill="#5FD4D4"
-        stroke="#5FD4D4" stroke-width="14" stroke-linejoin="round"/>
+    <path d="M170.0 57.5 Q180.1 93.4 216.0 103.5 Q180.1 113.6 170.0 149.5 Q159.9 113.6 124.0 103.5 Q159.9 93.4 170.0 57.5 Z" fill="#E8ECF1" stroke="#E8ECF1" stroke-width="8.3" stroke-linejoin="round" opacity="1"/>
+    <path d="M103.5 124.0 Q113.6 159.9 149.5 170.0 Q113.6 180.1 103.5 216.0 Q93.4 180.1 57.5 170.0 Q93.4 159.9 103.5 124.0 Z" fill="#E8ECF1" stroke="#E8ECF1" stroke-width="8.3" stroke-linejoin="round" opacity="0.55"/>
+    <path d="M236.5 124.0 Q246.6 159.9 282.5 170.0 Q246.6 180.1 236.5 216.0 Q226.4 180.1 190.5 170.0 Q226.4 159.9 236.5 124.0 Z" fill="#E8ECF1" stroke="#E8ECF1" stroke-width="8.3" stroke-linejoin="round" opacity="0.55"/>
+    <path d="M170.0 190.5 Q180.1 226.4 216.0 236.5 Q180.1 246.6 170.0 282.5 Q159.9 246.6 124.0 236.5 Q159.9 226.4 170.0 190.5 Z" fill="#5FD4D4" stroke="#5FD4D4" stroke-width="8.3" stroke-linejoin="round" opacity="1"/>
 </svg>
