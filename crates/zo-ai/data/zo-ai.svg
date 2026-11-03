@@ -1,8 +1,10 @@
 <svg viewBox="0 0 340 340" xmlns="http://www.w3.org/2000/svg">
-  <!-- ZO-AI app icon: the Zohara OS mark, each diamond turned into a sparkle, on the dark tile -->
+  <!-- ZO-AI app icon: the mark on the dark Zohara tile -->
   <rect width="340" height="340" rx="64" fill="#0B0E14"/>
-    <path d="M170.0 57.5 Q180.1 93.4 216.0 103.5 Q180.1 113.6 170.0 149.5 Q159.9 113.6 124.0 103.5 Q159.9 93.4 170.0 57.5 Z" fill="#E8ECF1" stroke="#E8ECF1" stroke-width="8.3" stroke-linejoin="round" opacity="1"/>
-    <path d="M103.5 124.0 Q113.6 159.9 149.5 170.0 Q113.6 180.1 103.5 216.0 Q93.4 180.1 57.5 170.0 Q93.4 159.9 103.5 124.0 Z" fill="#E8ECF1" stroke="#E8ECF1" stroke-width="8.3" stroke-linejoin="round" opacity="0.55"/>
-    <path d="M236.5 124.0 Q246.6 159.9 282.5 170.0 Q246.6 180.1 236.5 216.0 Q226.4 180.1 190.5 170.0 Q226.4 159.9 236.5 124.0 Z" fill="#E8ECF1" stroke="#E8ECF1" stroke-width="8.3" stroke-linejoin="round" opacity="0.55"/>
-    <path d="M170.0 190.5 Q180.1 226.4 216.0 236.5 Q180.1 246.6 170.0 282.5 Q159.9 246.6 124.0 236.5 Q159.9 226.4 170.0 190.5 Z" fill="#5FD4D4" stroke="#5FD4D4" stroke-width="8.3" stroke-linejoin="round" opacity="1"/>
+  <g transform="translate(40,40) scale(2.0)">
+    <defs><mask id="gap"><rect width="120" height="120" fill="#fff"/><circle cx="94" cy="26" r="16" fill="#000"/></mask></defs>
+    <circle cx="60" cy="60" r="48" fill="none" stroke="#5FD4D4" stroke-width="8" mask="url(#gap)"/>
+    <path d="M60 30 Q60 60 90 60 Q60 60 60 90 Q60 60 30 60 Q60 60 60 30Z" fill="#7EE0E0"/>
+    <path d="M94 14 Q94 26 106 26 Q94 26 94 38 Q94 26 82 26 Q94 26 94 14Z" fill="#F2B84B"/>
+  </g>
 </svg>
