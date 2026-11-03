@@ -183,6 +183,8 @@ struct Ui {
     recents_box: gtk::Box,
     side_settings: gtk::Button,
     chat: Rc<chat::Ctl>,
+    search_input: gtk::Entry,
+    search_results: gtk::Box,
 
     rail_instructions: gtk::Label,
     rail_context: gtk::Label,
@@ -218,6 +220,69 @@ fn refresh_sidebar(ui: &Rc<Ui>) {
         let (ui2, id) = (ui.clone(), p.id.clone());
         b.connect_clicked(move |_| open_project(&ui2, &id));
         ui.pinned_box.append(&b);
+    }
+}
+
+/// The search page: chats and projects that match what is typed (everything recent when it is empty).
+fn refresh_search(ui: &Rc<Ui>) {
+    while let Some(c) = ui.search_results.first_child() {
+        ui.search_results.remove(&c);
+    }
+    let query = ui.search_input.text().to_string();
+    let q = query.trim().to_lowercase();
+    let row = |icon_name: &str, title: &str, sub: &str, when: u64| {
+        let b = gtk::Button::new();
+        b.set_has_frame(false);
+        b.add_css_class("project-card");
+        let inner = hbox(14);
+        let ic = icon(icon_name, 18);
+        ic.add_css_class("pc-icon");
+        inner.append(&ic);
+        let col = vbox(3);
+        col.set_hexpand(true);
+        let t = lbl(title, "pc-name");
+        t.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        col.append(&t);
+        if !sub.is_empty() {
+            let s = lbl(sub, "pc-meta");
+            s.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            col.append(&s);
+        }
+        inner.append(&col);
+        inner.append(&lbl(&relative_of(when), "pc-meta"));
+        b.set_child(Some(&inner));
+        b
+    };
+    let mut shown = 0;
+    // projects
+    let projects: Vec<Project> = ui.store.borrow().projects.iter().filter(|p| !q.is_empty() && (p.name.to_lowercase().contains(&q) || p.goal.to_lowercase().contains(&q))).cloned().collect();
+    for p in projects {
+        let b = row("folder-symbolic", &p.name, &p.goal, p.updated);
+        let (ui2, id) = (ui.clone(), p.id.clone());
+        b.connect_clicked(move |_| open_project(&ui2, &id));
+        ui.search_results.append(&b);
+        shown += 1;
+    }
+    // chats
+    let all = chats::load();
+    for hit in chats::search(&query, &all).into_iter().take(50) {
+        let b = row("chat-message-new-symbolic", &hit.title, &hit.snippet, hit.updated);
+        let (ui2, chat) = (ui.clone(), all.iter().find(|c| c.id == hit.id).cloned());
+        b.connect_clicked(move |_| {
+            if let Some(chat) = chat.clone() {
+                ui2.chat.load_chat(chat.clone());
+                ui2.stack.set_visible_child_name("chat");
+                set_nav(&ui2, "new");
+                ui2.top_title.set_text(&chat.title);
+            }
+        });
+        ui.search_results.append(&b);
+        shown += 1;
+    }
+    if shown == 0 {
+        let none = lbl(if q.is_empty() { "No chats yet. Start one and it will show up here." } else { "Nothing matches that." }, "empty-text");
+        none.set_margin_top(24);
+        ui.search_results.append(&none);
     }
 }
 
@@ -1400,6 +1465,33 @@ fn build_ui(app: &adw::Application) {
     project_page.append(&rail);
     stack.add_named(&project_page, Some("project"));
 
+    // ---------- search view ----------
+    let search_page = vbox(0);
+    let sp_head = hbox(8);
+    sp_head.set_margin_top(34);
+    sp_head.set_margin_start(44);
+    sp_head.set_margin_end(44);
+    sp_head.set_margin_bottom(18);
+    sp_head.append(&lbl("Search", "page-title"));
+    search_page.append(&sp_head);
+    let search_input = gtk::Entry::new();
+    search_input.set_placeholder_text(Some("Search your chats and projects"));
+    search_input.add_css_class("search-input");
+    search_input.set_margin_start(44);
+    search_input.set_margin_end(44);
+    search_input.set_margin_bottom(14);
+    search_page.append(&search_input);
+    let search_results = vbox(8);
+    search_results.set_margin_start(44);
+    search_results.set_margin_end(44);
+    search_results.set_margin_bottom(30);
+    let search_scroll = gtk::ScrolledWindow::new();
+    search_scroll.set_child(Some(&search_results));
+    search_scroll.set_vexpand(true);
+    search_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+    search_page.append(&search_scroll);
+    stack.add_named(&search_page, Some("search"));
+
     // ---------- placeholder view ----------
     let placeholder = vbox(0);
     stack.add_named(&placeholder, Some("placeholder"));
@@ -1445,6 +1537,8 @@ fn build_ui(app: &adw::Application) {
         recents_box,
         side_settings,
         chat: chat_ctl.clone(),
+        search_input: search_input.clone(),
+        search_results: search_results.clone(),
         rail_instructions: a_instr,
         rail_context: a_ctx,
         rail_memory: a_mem,
@@ -1542,7 +1636,13 @@ fn build_ui(app: &adw::Application) {
                 ui2.stack.set_visible_child_name("projects");
                 set_nav(&ui2, "projects");
             }
-            "new" | "search" => {
+            "search" => {
+                ui2.stack.set_visible_child_name("search");
+                set_nav(&ui2, "search");
+                refresh_search(&ui2);
+                ui2.search_input.grab_focus();
+            }
+            "new" => {
                 ui2.stack.set_visible_child_name("chat");
                 set_nav(&ui2, "new");
             }
@@ -1672,6 +1772,10 @@ fn build_ui(app: &adw::Application) {
         ui.pv_prompt.connect_send(move || s());
     }
 
+    {
+        let ui2 = ui.clone();
+        ui.search_input.connect_changed(move |_| refresh_search(&ui2));
+    }
     refresh_sidebar(&ui);
     {
         let weak = Rc::downgrade(&ui);

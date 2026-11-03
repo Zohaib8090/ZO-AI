@@ -75,6 +75,69 @@ pub fn delete(id: &str) {
     write(&all);
 }
 
+/// A reply as plain words: the marks of bold, code, headings and links taken out, for showing a short preview.
+pub fn plain(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find("](") {
+        let Some(j) = rest[i..].find(')') else { break };
+        out.push_str(&rest[..i]);
+        rest = &rest[i + j + 1..];
+    }
+    out.push_str(rest);
+    out.replace(['*', '`', '#', '['], "").replace("\n", " ").split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// One search result.
+pub struct Hit {
+    pub id: String,
+    pub title: String,
+    /// A few words around the match.
+    pub snippet: String,
+    pub updated: u64,
+}
+
+/// About 90 characters around the first match of `needle` (already lower case) in `text`.
+fn snippet_around(text: &str, needle: &str) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let lower: Vec<char> = text.to_lowercase().chars().collect();
+    if lower.len() != chars.len() {
+        return text.to_lowercase().contains(needle).then(|| chars.iter().take(90).collect());
+    }
+    let n: Vec<char> = needle.chars().collect();
+    let at = (0..lower.len().saturating_sub(n.len().saturating_sub(1))).find(|&i| lower[i..i + n.len()] == n[..])?;
+    let start = at.saturating_sub(30);
+    let end = (at + n.len() + 60).min(chars.len());
+    let mut s: String = chars[start..end].iter().collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ");
+    if start > 0 {
+        s = format!("…{s}");
+    }
+    if end < chars.len() {
+        s.push('…');
+    }
+    Some(plain(&s))
+}
+
+/// Chats whose title or text holds `query`, newest first. An empty query lists them all.
+pub fn search(query: &str, all: &[Chat]) -> Vec<Hit> {
+    let q = query.trim().to_lowercase();
+    let mut hits: Vec<Hit> = all.iter().filter_map(|c| {
+        if q.is_empty() {
+            let first = c.entries.iter().find(|e| e.kind == "msg-ai").or(c.entries.first());
+            return Some(Hit { id: c.id.clone(), title: c.title.clone(), snippet: first.map(|e| plain(&e.text).chars().take(90).collect::<String>()).unwrap_or_default(), updated: c.updated });
+        }
+        if let Some(s) = snippet_around(&c.title, &q) {
+            let _ = s;
+            let body = c.entries.iter().find(|e| e.kind == "msg-ai").map(|e| plain(&e.text).chars().take(90).collect::<String>()).unwrap_or_default();
+            return Some(Hit { id: c.id.clone(), title: c.title.clone(), snippet: body, updated: c.updated });
+        }
+        c.entries.iter().filter(|e| e.kind == "msg-user" || e.kind == "msg-ai").find_map(|e| snippet_around(&e.text, &q))
+            .map(|snippet| Hit { id: c.id.clone(), title: c.title.clone(), snippet, updated: c.updated })
+    }).collect();
+    hits.sort_by(|a, b| b.updated.cmp(&a.updated));
+    hits
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,9 +153,48 @@ mod tests {
         let all = load();
         assert_eq!(all.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
         assert_eq!(all[0].title, "renamed");
+        let found = search("RENAMED", &load());
+        assert_eq!(found.len(), 1);
         delete("a");
         assert_eq!(load().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
         std::env::remove_var("XDG_DATA_HOME");
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    fn chat(id: &str, title: &str, updated: u64, lines: &[(&str, &str)]) -> Chat {
+        Chat { id: id.into(), title: title.into(), updated, entries: lines.iter().map(|(k, t)| Entry { kind: k.to_string(), text: t.to_string() }).collect(), ..Default::default() }
+    }
+
+    #[test]
+    fn finds_by_title_and_by_text_with_a_snippet_newest_first() {
+        let all = vec![
+            chat("1", "disk space", 1, &[("msg-user", "how full is my disk"), ("msg-ai", "Your root partition is 89% full, mostly in /var/lib.")]),
+            chat("2", "photos", 3, &[("msg-user", "find big pictures"), ("msg-ai", "Found 12 files over 20 MB.")]),
+            chat("3", "other", 2, &[("msg-user", "what is the DISK speed"), ("msg-tool", "disk hidden in a tool line")]),
+        ];
+        let hits = search("disk", &all);
+        assert_eq!(hits.iter().map(|h| h.id.as_str()).collect::<Vec<_>>(), ["3", "1"], "newest first, only chats that mention it");
+        assert!(hits[0].snippet.to_lowercase().contains("disk"));
+        assert!(search("zzz", &all).is_empty());
+        assert_eq!(search("", &all).len(), 3, "an empty search lists everything");
+    }
+
+    #[test]
+    fn previews_drop_the_marks_of_markdown() {
+        assert_eq!(plain("# A heading\n\nSome **bold** and `code` plus a [link](https://example.com/a)."), "A heading Some bold and code plus a link.");
+    }
+
+    #[test]
+    fn snippets_cut_around_the_match_and_survive_unicode() {
+        let long = format!("{} needle {}", "a".repeat(100), "b".repeat(100));
+        let s = snippet_around(&long, "needle").unwrap();
+        assert!(s.starts_with('…') && s.ends_with('…') && s.contains("needle") && s.chars().count() < 110);
+        assert!(snippet_around("Größe ändern ÄÖÜ", "ändern").is_some());
+        assert_eq!(snippet_around("short", "x"), None);
     }
 }

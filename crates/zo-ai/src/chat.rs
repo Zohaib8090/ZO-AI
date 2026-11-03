@@ -156,6 +156,14 @@ impl Ctl {
         self.add_plain(text, class)
     }
 
+    fn scroll_down(&self) {
+        let scroll = self.scroll.clone();
+        glib::timeout_add_local_once(Duration::from_millis(40), move || {
+            let a = scroll.vadjustment();
+            a.set_value(a.upper() - a.page_size());
+        });
+    }
+
     fn add_plain(&self, text: &str, class: &str) -> gtk::Widget {
         let w: gtk::Widget = if class == "msg-ai" {
             // a reply: formatted, with a copy button under it
@@ -225,6 +233,8 @@ impl Ctl {
         self.cancel.store(false, Ordering::Relaxed);
         self.set_busy(true);
         let thinking = self.add_plain("Thinking…", "msg-tool");
+        // the reply as it is being written, shown plain until it is complete
+        let mut live: Option<(gtk::Widget, String)> = None;
         let (tx, rx) = mpsc::channel::<Msg>();
         let mut history = std::mem::take(&mut *self.history.borrow_mut());
         let mut session = self.session.borrow().clone();
@@ -245,8 +255,20 @@ impl Ctl {
         glib::timeout_add_local(Duration::from_millis(40), move || {
             loop {
                 match rx.try_recv() {
+                    Ok(Msg::Ev(Event::TextDelta(d))) => {
+                        thinking.set_visible(false);
+                        let entry = live.get_or_insert_with(|| (me.add_plain("", "msg-live"), String::new()));
+                        entry.1.push_str(&d);
+                        if let Some(l) = entry.0.downcast_ref::<gtk::Label>() {
+                            l.set_text(&entry.1);
+                        }
+                        me.scroll_down();
+                    }
                     Ok(Msg::Ev(Event::Text(t))) => {
                         thinking.set_visible(false);
+                        if let Some((w, _)) = live.take() {
+                            me.thread.remove(&w);
+                        }
                         me.add(&t, "msg-ai");
                     }
                     Ok(Msg::Ev(Event::ToolStart { name, summary })) => {
@@ -260,6 +282,13 @@ impl Ctl {
                     }
                     Ok(Msg::Done(result, history, session)) => {
                         thinking.set_visible(false);
+                        // stopped half way: keep what had been written
+                        if let Some((w, partial)) = live.take() {
+                            me.thread.remove(&w);
+                            if !partial.is_empty() {
+                                me.add(&partial, "msg-ai");
+                            }
+                        }
                         *me.history.borrow_mut() = history;
                         *me.session.borrow_mut() = session;
                         match result {

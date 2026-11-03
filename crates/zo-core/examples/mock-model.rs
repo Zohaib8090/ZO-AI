@@ -39,6 +39,19 @@ fn main() {
         } else {
             let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
             let last = v["messages"].as_array().and_then(|m| m.last()).cloned().unwrap_or_default();
+            let wants_stream = v["stream"] == true && v["messages"].as_array().and_then(|m| m.iter().rev().find(|x| x["role"] == "user")).and_then(|x| x["content"].as_str()).is_some_and(|c| c.to_lowercase().contains("stream"));
+            if wants_stream {
+                let _ = write!(s, "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n");
+                let words = "Here is a **streamed** answer, arriving a few words at a time so you can watch it being written. It ends with a short list:\n\n- first\n- second\n- third\n";
+                for w in words.split_inclusive(' ') {
+                    let chunk = serde_json::json!({ "choices": [{ "delta": { "content": w } }] });
+                    let _ = write!(s, "data: {chunk}\n\n");
+                    let _ = s.flush();
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+                let _ = write!(s, "data: [DONE]\n\n");
+                continue;
+            }
             let said = v["messages"].as_array().and_then(|m| m.iter().rev().find(|x| x["role"] == "user")).and_then(|x| x["content"].as_str()).unwrap_or("").to_lowercase();
             if said.contains("slow") {
                 std::thread::sleep(std::time::Duration::from_secs(25));

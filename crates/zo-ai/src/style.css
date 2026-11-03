@@ -708,7 +708,7 @@ popover.zo-popover > contents {
 /* chat */
 .thread { padding: 24px 0 8px 0; }
 .msg-user { background-color: #2B2B2B; border-radius: 14px; padding: 9px 14px; margin-left: 120px; font-size: 15px; }
-.msg-ai { padding: 4px 2px; font-size: 15px; line-height: 1.5; }
+.msg-ai, .msg-live { padding: 4px 2px; font-size: 15px; line-height: 1.5; }
 .msg-tool { color: #8C8C8C; opacity: 1; }
 .msg-tool-out { color: #8C8C8C; opacity: 1; }
 
@@ -755,3 +755,11 @@ textview.composer-entry { padding: 0; }
 /* list items sit close together */
 .md-item { padding: 0; }
 .md-mark { padding-top: 0; min-width: 14px; }
+
+/* search page */
+entry.search-input {
+  background-color: #202020; color: #ECECEC; border: 1px solid alpha(white, 0.10);
+  border-radius: 12px; padding: 10px 14px; font-size: 15px; min-height: 22px;
+}
+entry.search-input:focus-within { border-color: alpha(white, 0.25); }
+entry.search-input text { background: transparent; color: #ECECEC; }

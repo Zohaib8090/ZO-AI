@@ -2,6 +2,7 @@
 //! approval as the MCP server), give it the results, and repeat until it answers in words.
 
 use super::providers::{self, Protocol, Provider};
+use std::io::BufRead;
 use super::wire::{self, Reply, ToolResult, Turn};
 use super::{keys, Selection};
 use crate::approval::Approver;
@@ -42,6 +43,9 @@ impl Config<'static> {
 }
 
 pub enum Event {
+    /// A new piece of the answer, as it is being written.
+    TextDelta(String),
+    /// The whole answer of one step, when it is complete.
     Text(String),
     ToolStart { name: String, summary: String },
     ToolDone { name: String, ok: bool, output: String },
@@ -62,21 +66,48 @@ fn http_error(e: ureq::Error) -> String {
     }
 }
 
-fn ask(cfg: &Config, turns: &[Turn], cancel: &AtomicBool) -> Result<Reply, String> {
-    let req = wire::build(cfg.provider, &cfg.base_url, cfg.key.as_deref(), &cfg.model, &cfg.system, turns, tools::definitions());
+enum Chunk {
+    Delta(String),
+    Done(Result<Reply, String>),
+}
+
+/// Sends the request and reads the answer as it is written, handing each new piece of text on.
+fn stream_request(req: wire::Request, protocol: Protocol, tx: &std::sync::mpsc::Sender<Chunk>) -> Result<Reply, String> {
+    let mut r = agent().post(&req.url);
+    for (k, v) in &req.headers {
+        r = r.set(k, v);
+    }
+    let resp = r.send_json(req.body).map_err(http_error)?;
+    let streaming = resp.header("content-type").is_some_and(|c| c.contains("text/event-stream"));
+    if !streaming {
+        // a server that answers all at once
+        let v: Value = resp.into_json().map_err(|e| format!("The answer was not valid JSON: {e}"))?;
+        return wire::parse(protocol, &v);
+    }
+    let mut acc = wire::StreamAcc::default();
+    for line in std::io::BufReader::new(resp.into_reader()).lines() {
+        let line = line.map_err(|e| format!("The connection broke while the answer was coming: {e}"))?;
+        if let Some(d) = acc.feed(protocol, &line)? {
+            let _ = tx.send(Chunk::Delta(d));
+        }
+    }
+    Ok(acc.finish())
+}
+
+fn ask(cfg: &Config, turns: &[Turn], cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<Reply, String> {
+    let mut req = wire::build(cfg.provider, &cfg.base_url, cfg.key.as_deref(), &cfg.model, &cfg.system, turns, tools::definitions());
+    let protocol = cfg.provider.protocol;
+    wire::make_streaming(&mut req, protocol);
     // the request runs on its own thread so Stop works while the model is still thinking
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let mut r = agent().post(&req.url);
-        for (k, v) in &req.headers {
-            r = r.set(k, v);
-        }
-        let out: Result<Value, String> = r.send_json(req.body).map_err(http_error).and_then(|resp| resp.into_json().map_err(|e| format!("The answer was not valid JSON: {e}")));
-        let _ = tx.send(out);
+        let out = stream_request(req, protocol, &tx);
+        let _ = tx.send(Chunk::Done(out));
     });
-    let v = loop {
+    loop {
         match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(out) => break out?,
+            Ok(Chunk::Delta(t)) => on_event(Event::TextDelta(t)),
+            Ok(Chunk::Done(r)) => return r,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 if cancel.load(Ordering::Relaxed) {
                     return Err(STOPPED.into());
@@ -84,8 +115,7 @@ fn ask(cfg: &Config, turns: &[Turn], cancel: &AtomicBool) -> Result<Reply, Strin
             }
             Err(_) => return Err("The request ended without an answer.".into()),
         }
-    };
-    wire::parse(cfg.provider.protocol, &v)
+    }
 }
 
 /// Run one user message to the end. `history` gets every step appended, so it can be saved and continued.
@@ -97,7 +127,7 @@ pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approv
         if cancel.load(Ordering::Relaxed) {
             return Err(STOPPED.into());
         }
-        let reply = ask(cfg, history, cancel)?;
+        let reply = ask(cfg, history, cancel, &mut *on_event)?;
         if !reply.text.is_empty() {
             on_event(Event::Text(reply.text.clone()));
         }
@@ -157,11 +187,15 @@ mod tests {
 
     /// A server that answers the given bodies in order and hands back every request body it saw.
     fn mock(answers: Vec<Value>) -> (String, std::thread::JoinHandle<Vec<Value>>) {
+        serve(answers.into_iter().map(|a| ("application/json".to_string(), a.to_string())).collect())
+    }
+
+    fn serve(answers: Vec<(String, String)>) -> (String, std::thread::JoinHandle<Vec<Value>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         let h = std::thread::spawn(move || {
             let mut seen = Vec::new();
-            for a in answers {
+            for (ctype, body) in answers {
                 let (mut s, _) = listener.accept().unwrap();
                 let mut buf = Vec::new();
                 let mut tmp = [0u8; 4096];
@@ -179,8 +213,7 @@ mod tests {
                     buf.extend_from_slice(&tmp[..n]);
                 }
                 seen.push(serde_json::from_slice(&buf[head_end..head_end + len]).unwrap());
-                let body = a.to_string();
-                write!(s, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).unwrap();
+                write!(s, "HTTP/1.1 200 OK\r\ncontent-type: {ctype}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).unwrap();
             }
             seen
         });
@@ -200,6 +233,7 @@ mod tests {
         let mut history = Vec::new();
         let mut events = Vec::new();
         run(&cfg(url, "openai"), &mut history, "say it", Mode::Auto, &Deny, &AtomicBool::new(false), &mut |e| events.push(match e {
+            Event::TextDelta(t) => format!("delta:{t}"),
             Event::Text(t) => format!("text:{t}"),
             Event::ToolStart { name, .. } => format!("start:{name}"),
             Event::ToolDone { ok, output, .. } => format!("done:{ok}:{output}"),
@@ -228,6 +262,31 @@ mod tests {
     fn pressing_stop_ends_the_loop_before_asking_the_model() {
         let err = run(&cfg("http://127.0.0.1:9/v1".into(), "openai"), &mut Vec::new(), "hi", Mode::Auto, &Deny, &AtomicBool::new(true), &mut |_| {}).unwrap_err();
         assert_eq!(err, STOPPED);
+    }
+
+    #[test]
+    fn a_streamed_answer_arrives_in_pieces_and_its_tool_call_is_assembled() {
+        let sse = |lines: &[&str]| ("text/event-stream".to_string(), lines.iter().map(|l| format!("data: {l}\n\n")).collect::<String>());
+        let (url, server) = serve(vec![
+            sse(&[
+                r#"{"choices":[{"delta":{"content":"Checking "}}]}"#,
+                r#"{"choices":[{"delta":{"content":"now."}}]}"#,
+                r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"zohara_shell","arguments":"{\"cmd\":\"echo "}}]}}]}"#,
+                r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"stream-ok\"}"}}]}}]}"#,
+                "[DONE]",
+            ]),
+            sse(&[r#"{"choices":[{"delta":{"content":"It said "}}]}"#, r#"{"choices":[{"delta":{"content":"stream-ok."}}]}"#, "[DONE]"]),
+        ]);
+        let mut events = Vec::new();
+        run(&cfg(url, "openai"), &mut Vec::new(), "go", Mode::Auto, &Deny, &AtomicBool::new(false), &mut |e| events.push(match e {
+            Event::TextDelta(t) => format!("delta:{t}"),
+            Event::Text(t) => format!("text:{t}"),
+            Event::ToolStart { name, .. } => format!("start:{name}"),
+            Event::ToolDone { ok, output, .. } => format!("done:{ok}:{output}"),
+        })).unwrap();
+        assert_eq!(events, ["delta:Checking ", "delta:now.", "text:Checking now.", "start:zohara_shell", "done:true:stream-ok", "delta:It said ", "delta:stream-ok.", "text:It said stream-ok."]);
+        let seen = server.join().unwrap();
+        assert_eq!(seen[0]["stream"], true);
     }
 
     #[test]

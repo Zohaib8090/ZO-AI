@@ -43,6 +43,13 @@ fn handle_line(v: &Value, session: &mut Option<String>, names: &mut Vec<(String,
         *session = Some(id.to_string());
     }
     match v["type"].as_str() {
+        // the text as Claude writes it
+        Some("stream_event") => {
+            if let Some(t) = v["event"]["delta"]["text"].as_str().filter(|t| !t.is_empty()) {
+                on_event(Event::TextDelta(t.to_string()));
+            }
+            None
+        }
         Some("assistant") => {
             for b in v["message"]["content"].as_array().into_iter().flatten() {
                 match b["type"].as_str() {
@@ -81,7 +88,7 @@ pub fn run(model: &str, session: &mut Option<String>, prompt: &str, system_extra
     let bin = binary().ok_or("Claude Code is not installed. Install it (npm install -g @anthropic-ai/claude-code), then sign in with: claude auth login")?;
     let config = json!({ "mcpServers": { "zohara": { "command": mcp_binary() } } }).to_string();
     let mut cmd = Command::new(bin);
-    cmd.args(["-p", prompt, "--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--mcp-config", &config,
+    cmd.args(["-p", prompt, "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--strict-mcp-config", "--mcp-config", &config,
         // Claude's own file and shell tools are off: everything goes through ZO-AI's tools, so ZO-AI's permission modes apply
         "--tools", "", "--allowedTools", "mcp__zohara__*", "--append-system-prompt", &system]);
     if !model.is_empty() {
@@ -154,6 +161,7 @@ mod tests {
         let (mut session, mut names, mut out) = (None, Vec::new(), Vec::new());
         for l in &lines {
             assert!(handle_line(l, &mut session, &mut names, &mut |e| out.push(match e {
+                Event::TextDelta(t) => format!("delta:{t}"),
                 Event::Text(t) => format!("text:{t}"),
                 Event::ToolStart { name, .. } => format!("start:{name}"),
                 Event::ToolDone { name, ok, output } => format!("done:{name}:{ok}:{output}"),
@@ -161,6 +169,14 @@ mod tests {
         }
         assert_eq!(out, ["start:zohara_system", "done:zohara_system:true:OS: Linux", "text:Kernel: Linux"]);
         assert_eq!(session.as_deref(), Some("s-1"));
+    }
+
+    #[test]
+    fn partial_messages_become_text_deltas() {
+        let mut out = Vec::new();
+        let line = json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}});
+        assert!(handle_line(&line, &mut None, &mut Vec::new(), &mut |e| out.push(match e { Event::TextDelta(t) => t, _ => "other".into() })).is_none());
+        assert_eq!(out, ["Hel"]);
     }
 
     #[test]

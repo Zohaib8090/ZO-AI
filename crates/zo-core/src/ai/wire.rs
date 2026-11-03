@@ -298,3 +298,187 @@ mod tests {
         assert_eq!(parse_models(Protocol::Gemini, &json!({"models":[{"name":"models/g1","supportedGenerationMethods":["generateContent"]},{"name":"models/emb","supportedGenerationMethods":["embedContent"]}]})), ["g1"]);
     }
 }
+
+// ---------------------------------------------------------------- streaming
+
+/// Turns a request into its streaming form: the provider then sends the answer in small pieces as it writes it.
+pub fn make_streaming(req: &mut Request, protocol: Protocol) {
+    match protocol {
+        Protocol::OpenAi | Protocol::Anthropic => req.body["stream"] = json!(true),
+        Protocol::Gemini => req.url = req.url.replace(":generateContent", ":streamGenerateContent?alt=sse"),
+        Protocol::ClaudeCode => {}
+    }
+}
+
+#[derive(Default)]
+struct PartialCall {
+    id: String,
+    name: String,
+    args: String,
+}
+
+/// Collects a streamed answer line by line. `feed` gives back each new piece of text as it arrives; `finish` gives the whole answer.
+#[derive(Default)]
+pub struct StreamAcc {
+    text: String,
+    calls: Vec<PartialCall>,
+    /// Anthropic numbers its content blocks; this maps a block number to its place in `calls`.
+    blocks: std::collections::HashMap<u64, usize>,
+}
+
+impl StreamAcc {
+    pub fn feed(&mut self, protocol: Protocol, line: &str) -> Result<Option<String>, String> {
+        let Some(data) = line.trim().strip_prefix("data:") else { return Ok(None) };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            return Ok(None);
+        }
+        let v: Value = serde_json::from_str(data).map_err(|e| format!("A piece of the answer was not valid JSON: {e}"))?;
+        if let Some(e) = v.get("error") {
+            return Err(error_text(e));
+        }
+        let mut delta = String::new();
+        match protocol {
+            Protocol::OpenAi => {
+                let d = &v["choices"][0]["delta"];
+                if let Some(t) = d["content"].as_str() {
+                    delta.push_str(t);
+                }
+                for tc in d["tool_calls"].as_array().into_iter().flatten() {
+                    let idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                    while self.calls.len() <= idx {
+                        self.calls.push(PartialCall::default());
+                    }
+                    let c = &mut self.calls[idx];
+                    if let Some(id) = tc["id"].as_str() {
+                        c.id = id.to_string();
+                    }
+                    if let Some(n) = tc["function"]["name"].as_str().filter(|n| !n.is_empty()) {
+                        c.name = n.to_string();
+                    }
+                    if let Some(a) = tc["function"]["arguments"].as_str() {
+                        c.args.push_str(a);
+                    }
+                }
+            }
+            Protocol::Anthropic => match v["type"].as_str() {
+                Some("content_block_start") if v["content_block"]["type"] == "tool_use" => {
+                    self.calls.push(PartialCall {
+                        id: v["content_block"]["id"].as_str().unwrap_or("").into(),
+                        name: v["content_block"]["name"].as_str().unwrap_or("").into(),
+                        args: String::new(),
+                    });
+                    self.blocks.insert(v["index"].as_u64().unwrap_or(0), self.calls.len() - 1);
+                }
+                Some("content_block_delta") => {
+                    let d = &v["delta"];
+                    if let Some(t) = d["text"].as_str() {
+                        delta.push_str(t);
+                    }
+                    if let (Some(p), Some(&at)) = (d["partial_json"].as_str(), self.blocks.get(&v["index"].as_u64().unwrap_or(0))) {
+                        self.calls[at].args.push_str(p);
+                    }
+                }
+                _ => {}
+            },
+            Protocol::Gemini => {
+                for part in v["candidates"][0]["content"]["parts"].as_array().into_iter().flatten() {
+                    if let Some(t) = part["text"].as_str() {
+                        delta.push_str(t);
+                    }
+                    if let Some(fc) = part.get("functionCall") {
+                        self.calls.push(PartialCall {
+                            id: String::new(),
+                            name: fc["name"].as_str().unwrap_or("").into(),
+                            args: fc.get("args").map(|a| a.to_string()).unwrap_or_default(),
+                        });
+                    }
+                }
+            }
+            Protocol::ClaudeCode => {}
+        }
+        self.text.push_str(&delta);
+        Ok((!delta.is_empty()).then_some(delta))
+    }
+
+    pub fn finish(self) -> Reply {
+        let calls = self.calls.into_iter().enumerate().map(|(i, c)| ToolCall {
+            id: if c.id.is_empty() { format!("call_{i}") } else { c.id },
+            name: c.name,
+            args: serde_json::from_str(&c.args).ok().filter(Value::is_object).unwrap_or_else(|| json!({})),
+        }).collect();
+        Reply { text: self.text, calls }
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    fn run(protocol: Protocol, lines: &[&str]) -> (Vec<String>, Reply) {
+        let mut acc = StreamAcc::default();
+        let mut deltas = Vec::new();
+        for l in lines {
+            if let Some(d) = acc.feed(protocol, l).unwrap() {
+                deltas.push(d);
+            }
+        }
+        (deltas, acc.finish())
+    }
+
+    #[test]
+    fn openai_text_and_split_tool_arguments() {
+        let (d, r) = run(Protocol::OpenAi, &[
+            r#"data: {"choices":[{"delta":{"content":"Hel"}}]}"#, "",
+            r#"data: {"choices":[{"delta":{"content":"lo"}}]}"#,
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"zohara_shell","arguments":"{\"cmd\":"}}]}}]}"#,
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"ls\"}"}}]}}]}"#,
+            "data: [DONE]",
+        ]);
+        assert_eq!(d, ["Hel", "lo"]);
+        assert_eq!(r.text, "Hello");
+        assert_eq!((r.calls[0].id.as_str(), r.calls[0].name.as_str(), r.calls[0].args["cmd"].as_str()), ("c1", "zohara_shell", Some("ls")));
+    }
+
+    #[test]
+    fn anthropic_blocks() {
+        let (d, r) = run(Protocol::Anthropic, &[
+            "event: content_block_start",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Look"}}"#,
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"zohara_fs_read"}}"#,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}"#,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"/etc/hostname\"}"}}"#,
+        ]);
+        assert_eq!(d, ["Look"]);
+        assert_eq!((r.calls[0].id.as_str(), r.calls[0].args["path"].as_str()), ("t1", Some("/etc/hostname")));
+    }
+
+    #[test]
+    fn gemini_chunks() {
+        let (d, r) = run(Protocol::Gemini, &[
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"Hi "}]}}]}"#,
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"there"},{"functionCall":{"name":"zohara_system","args":{}}}]}}]}"#,
+        ]);
+        assert_eq!(d, ["Hi ", "there"]);
+        assert_eq!((r.text.as_str(), r.calls[0].name.as_str(), r.calls[0].id.as_str()), ("Hi there", "zohara_system", "call_0"));
+    }
+
+    #[test]
+    fn an_error_in_the_stream_is_reported_and_other_lines_are_ignored() {
+        let mut acc = StreamAcc::default();
+        assert_eq!(acc.feed(Protocol::OpenAi, ": keep-alive").unwrap(), None);
+        assert_eq!(acc.feed(Protocol::OpenAi, "event: ping").unwrap(), None);
+        assert_eq!(acc.feed(Protocol::OpenAi, r#"data: {"error":{"message":"overloaded"}}"#).unwrap_err(), "overloaded");
+    }
+
+    #[test]
+    fn gemini_url_becomes_the_streaming_one() {
+        let mut r = Request { url: "https://x/v1beta/models/m:generateContent".into(), headers: vec![], body: json!({}) };
+        make_streaming(&mut r, Protocol::Gemini);
+        assert_eq!(r.url, "https://x/v1beta/models/m:streamGenerateContent?alt=sse");
+        let mut o = Request { url: "u".into(), headers: vec![], body: json!({}) };
+        make_streaming(&mut o, Protocol::OpenAi);
+        assert_eq!(o.body["stream"], true);
+    }
+}
