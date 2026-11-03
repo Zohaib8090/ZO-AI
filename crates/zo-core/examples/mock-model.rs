@@ -56,7 +56,11 @@ fn main() {
             if said.contains("slow") {
                 std::thread::sleep(std::time::Duration::from_secs(25));
             }
-            if said.contains("markdown") {
+            if said.contains("schedule") && last["role"] != "tool" {
+                serde_json::json!({ "choices": [{ "message": { "content": "I will schedule that for you.", "tool_calls": [{
+                    "id": "call_s", "type": "function",
+                    "function": { "name": "zohara_ai_schedule", "arguments": "{\"task\":\"say hello from the schedule\",\"when\":\"now + 1 minute\",\"repeat\":\"once\",\"title\":\"Hello task\"}" } }] } }] })
+            } else if said.contains("markdown") {
                 serde_json::json!({ "choices": [{ "message": { "content": "# A heading\n\nSome **bold** words, *italic* ones and `inline code`, plus a [link](https://example.com).\n\n- first point\n- second point\n  continues here\n1. one\n2. two\n\n```bash\nls -la /home\necho done\n```\n\n> a quote\n" } }] })
             } else if last["role"] == "tool" {
                 serde_json::json!({ "choices": [{ "message": { "content": format!("The command printed: {}", last["content"].as_str().unwrap_or("")) } }] })

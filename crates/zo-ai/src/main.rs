@@ -5,11 +5,14 @@
 
 mod ask;
 mod chat;
-mod chats;
+use zo_core::store::chats;
+use zo_core::store::schedules;
 mod composer;
 mod markdown;
-mod model;
+use zo_core::store::projects as model;
 mod quick;
+mod scheduler;
+mod settings;
 mod shortcut;
 
 use adw::prelude::*;
@@ -45,7 +48,7 @@ fn lbl(text: &str, class: &str) -> gtk::Label {
 }
 
 /// The ZO-AI mark without its tile, built into the program so it shows even before the icon is installed.
-fn mark(size: i32) -> gtk::Image {
+pub(crate) fn mark(size: i32) -> gtk::Image {
     let bytes = glib::Bytes::from_static(include_bytes!("../data/zo-ai-mark.png"));
     let img = match gtk::gdk::Texture::from_bytes(&bytes) {
         Ok(t) => gtk::Image::from_paintable(Some(&t)),
@@ -185,6 +188,8 @@ struct Ui {
     chat: Rc<chat::Ctl>,
     search_input: gtk::Entry,
     search_results: gtk::Box,
+    sched_list: gtk::Box,
+    settings_box: gtk::Box,
 
     rail_instructions: gtk::Label,
     rail_context: gtk::Label,
@@ -197,30 +202,214 @@ fn save_store(ui: &Rc<Ui>) {
     refresh_sidebar(ui);
 }
 
-/// The pinned projects in the sidebar.
+/// A row in the sidebar lists: an icon and a name that opens something, plus small buttons that show on hover.
+fn side_row(icon_name: &str, title: &str, extra: &[(&str, &str)], on_open: impl Fn() + 'static, on_extra: Vec<Box<dyn Fn()>>) -> gtk::Box {
+    let row = hbox(0);
+    let b = gtk::Button::new();
+    b.set_has_frame(false);
+    b.set_hexpand(true);
+    b.add_css_class("side-item");
+    let inner = hbox(10);
+    inner.append(&icon(icon_name, 14));
+    let name = lbl(title, "");
+    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    name.set_hexpand(true);
+    inner.append(&name);
+    b.set_child(Some(&inner));
+    b.connect_clicked(move |_| on_open());
+    row.append(&b);
+    for ((icon_name, tip), f) in extra.iter().zip(on_extra) {
+        let btn = icon_button(icon_name, tip, "icon-btn side-del");
+        btn.connect_clicked(move |_| f());
+        row.append(&btn);
+    }
+    row
+}
+
+/// The pinned projects and chats in the sidebar, the most recently used first: a pinned chat you write in again moves up.
 fn refresh_sidebar(ui: &Rc<Ui>) {
     while let Some(c) = ui.pinned_box.first_child() {
         ui.pinned_box.remove(&c);
     }
-    let store = ui.store.borrow();
-    let mut pinned: Vec<&Project> = store.projects.iter().filter(|p| p.pinned).collect();
-    pinned.sort_by(|a, b| b.updated.cmp(&a.updated));
-    ui.pinned_label.set_visible(!pinned.is_empty());
-    for p in pinned {
-        let b = gtk::Button::new();
-        b.set_has_frame(false);
-        b.add_css_class("side-item");
-        let row = hbox(10);
-        row.append(&icon("folder-symbolic", 14));
-        let name = lbl(&p.name, "");
-        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        name.set_hexpand(true);
-        row.append(&name);
-        b.set_child(Some(&row));
-        let (ui2, id) = (ui.clone(), p.id.clone());
-        b.connect_clicked(move |_| open_project(&ui2, &id));
-        ui.pinned_box.append(&b);
+    enum Item {
+        Project(Project),
+        Chat(chats::Chat),
     }
+    let mut items: Vec<(u64, Item)> = ui.store.borrow().projects.iter().filter(|p| p.pinned).map(|p| (p.updated, Item::Project(p.clone()))).collect();
+    items.extend(chats::load().into_iter().filter(|c| c.pinned).map(|c| (c.updated, Item::Chat(c))));
+    items.sort_by(|a, b| b.0.cmp(&a.0));
+    ui.pinned_label.set_visible(!items.is_empty());
+    for (_, item) in items {
+        let row = match item {
+            Item::Project(p) => {
+                let (ui2, id) = (ui.clone(), p.id.clone());
+                let (ui3, id3) = (ui.clone(), p.id.clone());
+                side_row("folder-symbolic", &p.name, &[("window-close-symbolic", "Unpin")], move || open_project(&ui2, &id), vec![Box::new(move || {
+                    if let Some(p) = ui3.store.borrow_mut().get_mut(&id3) {
+                        p.pinned = false;
+                    }
+                    save_store(&ui3);
+                })])
+            }
+            Item::Chat(c) => {
+                let (ui2, shown) = (ui.clone(), c.clone());
+                let (ui3, id3) = (ui.clone(), c.id.clone());
+                side_row("chat-message-new-symbolic", &c.title, &[("window-close-symbolic", "Unpin")], move || open_chat(&ui2, shown.clone()), vec![Box::new(move || {
+                    chats::set_pinned(&id3, false);
+                    refresh_recents(&ui3);
+                })])
+            }
+        };
+        ui.pinned_box.append(&row);
+    }
+}
+
+fn open_chat(ui: &Rc<Ui>, chat: chats::Chat) {
+    ui.chat.load_chat(chat.clone());
+    ui.stack.set_visible_child_name("chat");
+    set_nav(ui, "new");
+    ui.top_title.set_text(&chat.title);
+}
+
+/// The Scheduled page: every task, when it runs next, and buttons to run it now, switch it off or remove it.
+fn refresh_scheduled(ui: &Rc<Ui>) {
+    while let Some(c) = ui.sched_list.first_child() {
+        ui.sched_list.remove(&c);
+    }
+    let tasks = schedules::load();
+    if tasks.is_empty() {
+        let empty = vbox(10);
+        empty.add_css_class("empty-box");
+        empty.set_margin_top(40);
+        let t = lbl("Nothing is scheduled", "empty-title");
+        t.set_halign(gtk::Align::Center);
+        let d = lbl("Ask ZO-AI in a chat to do something later (for example \"every morning at 8, check my disk space\"), or press New task.", "empty-text");
+        d.set_halign(gtk::Align::Center);
+        d.set_wrap(true);
+        d.set_justify(gtk::Justification::Center);
+        d.set_max_width_chars(60);
+        empty.append(&t);
+        empty.append(&d);
+        ui.sched_list.append(&empty);
+        return;
+    }
+    for task in tasks {
+        let card = hbox(12);
+        card.add_css_class("project-card");
+        let ic = icon("alarm-symbolic", 18);
+        ic.add_css_class("pc-icon");
+        card.append(&ic);
+        let col = vbox(3);
+        col.set_hexpand(true);
+        let title = lbl(&task.title, "pc-name");
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        col.append(&title);
+        let when = if task.enabled {
+            format!("Next: {} · {}", schedules::format_when(task.next_run), task.repeat)
+        } else if let Some(ran) = task.last_run {
+            format!("Done {} · {}", model::relative(ran), task.repeat)
+        } else {
+            format!("Off · {}", task.repeat)
+        };
+        col.append(&lbl(&when, "pc-meta"));
+        let what = lbl(&task.prompt, "pc-meta");
+        what.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        col.append(&what);
+        card.append(&col);
+
+        if let Some(chat_id) = task.last_chat.clone() {
+            let open = icon_button("chat-message-new-symbolic", "Open the last result", "icon-btn");
+            let ui2 = ui.clone();
+            open.connect_clicked(move |_| {
+                if let Some(c) = chats::load().into_iter().find(|c| c.id == chat_id) {
+                    open_chat(&ui2, c);
+                }
+            });
+            card.append(&open);
+        }
+        let run = icon_button("media-playback-start-symbolic", "Run it now", "icon-btn");
+        let (ui2, id) = (ui.clone(), task.id.clone());
+        run.connect_clicked(move |_| {
+            schedules::run_now(&id);
+            let done = ui2.clone();
+            scheduler::check(Rc::new(move || refresh_scheduled(&done)));
+            refresh_scheduled(&ui2);
+        });
+        card.append(&run);
+        let sw = gtk::Switch::new();
+        sw.set_active(task.enabled);
+        sw.set_valign(gtk::Align::Center);
+        sw.set_tooltip_text(Some("On or off"));
+        let (ui2, id) = (ui.clone(), task.id.clone());
+        sw.connect_state_set(move |_, on| {
+            schedules::set_enabled(&id, on);
+            refresh_scheduled(&ui2);
+            glib::Propagation::Proceed
+        });
+        card.append(&sw);
+        let del = icon_button("edit-delete-symbolic", "Remove", "icon-btn");
+        let (ui2, id) = (ui.clone(), task.id.clone());
+        del.connect_clicked(move |_| {
+            schedules::remove(&id);
+            refresh_scheduled(&ui2);
+        });
+        card.append(&del);
+        ui.sched_list.append(&card);
+    }
+}
+
+/// The "New task" window.
+fn open_new_task(ui: &Rc<Ui>, project: Option<String>) {
+    let (win, body, foot) = sheet(ui, "New scheduled task", 560);
+    let what = gtk::Entry::new();
+    what.set_placeholder_text(Some("e.g. check my disk space and tell me if it is above 90%"));
+    what.add_css_class("field-input");
+    body.append(&field("What should ZO-AI do?", &what));
+    let when = gtk::Entry::new();
+    when.set_placeholder_text(Some("tomorrow 9am, in 2 hours, 2026-11-05 18:30"));
+    when.add_css_class("field-input");
+    body.append(&field("When", &when));
+    let preview = lbl("", "field-hint");
+    body.append(&preview);
+    let repeat = gtk::DropDown::from_strings(&["Once", "Every hour", "Every day", "Every week"]);
+    body.append(&field("Repeat", &repeat));
+    let error = lbl("", "field-hint");
+    body.append(&error);
+    {
+        let preview = preview.clone();
+        when.connect_changed(move |e| {
+            let t = e.text();
+            preview.set_text(&if t.trim().is_empty() { String::new() } else {
+                match schedules::parse_when(&t) {
+                    Ok(ms) => format!("→ {}", schedules::format_when(ms)),
+                    Err(_) => "I can't read that as a time yet.".to_string(),
+                }
+            });
+        });
+    }
+    let cancel = secondary("Cancel");
+    let create = primary("Create task");
+    foot.append(&cancel);
+    foot.append(&create);
+    {
+        let w = win.clone();
+        cancel.connect_clicked(move |_| w.close());
+    }
+    {
+        let (w, ui2) = (win.clone(), ui.clone());
+        create.connect_clicked(move |_| {
+            let repeat_id = ["once", "hourly", "daily", "weekly"][repeat.selected() as usize];
+            let result = schedules::parse_when(&when.text()).and_then(|ms| schedules::add("", &what.text(), ms, repeat_id, project.clone()));
+            match result {
+                Ok(_) => {
+                    w.close();
+                    refresh_scheduled(&ui2);
+                }
+                Err(e) => error.set_text(&e),
+            }
+        });
+    }
+    win.present();
 }
 
 /// The search page: chats and projects that match what is typed (everything recent when it is empty).
@@ -286,44 +475,37 @@ fn refresh_search(ui: &Rc<Ui>) {
     }
 }
 
-/// The recent chats in the sidebar.
-fn refresh_recents(ui: &Rc<Ui>) {
+/// The recent chats in the sidebar (the pinned ones are in the Pinned list above).
+pub(crate) fn refresh_recents(ui: &Rc<Ui>) {
     while let Some(c) = ui.recents_box.first_child() {
         ui.recents_box.remove(&c);
     }
     let all = chats::load();
-    ui.recents_label.set_visible(!all.is_empty());
-    for chat in all.into_iter().take(15) {
-        let row = hbox(0);
-        let b = gtk::Button::new();
-        b.set_has_frame(false);
-        b.set_hexpand(true);
-        b.add_css_class("side-item");
-        let inner = hbox(10);
-        inner.append(&icon("chat-message-new-symbolic", 14));
-        let name = lbl(&chat.title, "");
-        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        name.set_hexpand(true);
-        inner.append(&name);
-        b.set_child(Some(&inner));
-        let del = icon_button("edit-delete-symbolic", "Delete this chat", "icon-btn side-del");
-        row.append(&b);
-        row.append(&del);
-        let (ui2, id, shown) = (ui.clone(), chat.id.clone(), chat.clone());
-        b.connect_clicked(move |_| {
-            ui2.chat.load_chat(shown.clone());
-            ui2.stack.set_visible_child_name("chat");
-            set_nav(&ui2, "new");
-            ui2.top_title.set_text(&shown.title);
-            let _ = &id;
-        });
-        let (ui2, id) = (ui.clone(), chat.id.clone());
-        del.connect_clicked(move |_| {
-            chats::delete(&id);
-            refresh_recents(&ui2);
-        });
+    let recent: Vec<chats::Chat> = all.into_iter().filter(|c| !c.pinned).take(15).collect();
+    ui.recents_label.set_visible(!recent.is_empty());
+    for chat in recent {
+        let (ui2, shown) = (ui.clone(), chat.clone());
+        let (ui3, id3) = (ui.clone(), chat.id.clone());
+        let (ui4, id4) = (ui.clone(), chat.id.clone());
+        let row = side_row(
+            "chat-message-new-symbolic",
+            &chat.title,
+            &[("view-pin-symbolic", "Pin this chat"), ("edit-delete-symbolic", "Delete this chat")],
+            move || open_chat(&ui2, shown.clone()),
+            vec![
+                Box::new(move || {
+                    chats::set_pinned(&id3, true);
+                    refresh_recents(&ui3);
+                }),
+                Box::new(move || {
+                    chats::delete(&id4);
+                    refresh_recents(&ui4);
+                }),
+            ],
+        );
         ui.recents_box.append(&row);
     }
+    refresh_sidebar(ui);
 }
 
 /// What the model should know about the open project.
@@ -347,7 +529,7 @@ fn project_context(ui: &Rc<Ui>) -> String {
     s
 }
 
-fn set_nav(ui: &Rc<Ui>, which: &str) {
+pub(crate) fn set_nav(ui: &Rc<Ui>, which: &str) {
     ui.top_title.set_text(match which {
         "projects" => "Projects",
         "artifacts" => "Artifacts",
@@ -1192,6 +1374,11 @@ fn show_main(text: &str) {
     }
 }
 
+thread_local! {
+    /// What to refresh when scheduled tasks finish; set while the main window exists.
+    static TASKS_DONE: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
+}
+
 fn build_ui(app: &adw::Application) {
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
 
@@ -1256,7 +1443,7 @@ fn build_ui(app: &adw::Application) {
     who.set_valign(gtk::Align::Center);
     who.append(&lbl(&user, "side-user"));
     side_foot.append(&who);
-    let side_settings = icon_button("emblem-system-symbolic", "Model, key and address", "icon-btn");
+    let side_settings = icon_button("emblem-system-symbolic", "Settings", "icon-btn");
     side_foot.append(&side_settings);
     sidebar.append(&side_foot);
 
@@ -1492,6 +1679,47 @@ fn build_ui(app: &adw::Application) {
     search_page.append(&search_scroll);
     stack.add_named(&search_page, Some("search"));
 
+    // ---------- scheduled view ----------
+    let sched_page = vbox(0);
+    let sch_head = hbox(8);
+    sch_head.set_margin_top(34);
+    sch_head.set_margin_start(44);
+    sch_head.set_margin_end(44);
+    sch_head.set_margin_bottom(22);
+    sch_head.append(&lbl("Scheduled", "page-title"));
+    let sch_spacer = gtk::Box::new(Orientation::Horizontal, 0);
+    sch_spacer.set_hexpand(true);
+    sch_head.append(&sch_spacer);
+    let sch_new = primary("New task");
+    sch_new.add_css_class("page-btn");
+    sch_head.append(&sch_new);
+    sched_page.append(&sch_head);
+    let sched_list = vbox(8);
+    sched_list.set_margin_start(44);
+    sched_list.set_margin_end(44);
+    sched_list.set_margin_bottom(30);
+    let sched_scroll = gtk::ScrolledWindow::new();
+    sched_scroll.set_child(Some(&sched_list));
+    sched_scroll.set_vexpand(true);
+    sched_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+    sched_page.append(&sched_scroll);
+    stack.add_named(&sched_page, Some("scheduled"));
+
+    // ---------- settings view ----------
+    let settings_box = vbox(0);
+    settings_box.set_margin_top(34);
+    settings_box.set_margin_bottom(34);
+    let settings_clamp = adw::Clamp::new();
+    settings_clamp.set_maximum_size(760);
+    settings_clamp.set_margin_start(30);
+    settings_clamp.set_margin_end(30);
+    settings_clamp.set_child(Some(&settings_box));
+    let settings_scroll = gtk::ScrolledWindow::new();
+    settings_scroll.set_child(Some(&settings_clamp));
+    settings_scroll.set_vexpand(true);
+    settings_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+    stack.add_named(&settings_scroll, Some("settings"));
+
     // ---------- placeholder view ----------
     let placeholder = vbox(0);
     stack.add_named(&placeholder, Some("placeholder"));
@@ -1539,6 +1767,8 @@ fn build_ui(app: &adw::Application) {
         chat: chat_ctl.clone(),
         search_input: search_input.clone(),
         search_results: search_results.clone(),
+        sched_list: sched_list.clone(),
+        settings_box: settings_box.clone(),
         rail_instructions: a_instr,
         rail_context: a_ctx,
         rail_memory: a_mem,
@@ -1556,6 +1786,8 @@ fn build_ui(app: &adw::Application) {
             c.submit(&p);
             ui2.top_title.set_text(&c.title());
         });
+        let (c, p) = (chat_ctl.clone(), prompt.clone());
+        chat_ctl.on_retry(Rc::new(move || c.retry(&p)));
         // while it works the send button turns into a stop button
         let sb = send_btn.clone();
         chat_ctl.on_busy(Rc::new(move |busy| {
@@ -1574,7 +1806,7 @@ fn build_ui(app: &adw::Application) {
         let p = prompt.clone();
         plus.connect_clicked(move |b| chat::show_plus_popover(&p, b));
         let ui2 = ui.clone();
-        ui.side_settings.connect_clicked(move |_| chat::models_sheet(&ui2));
+        ui.side_settings.connect_clicked(move |_| settings::show(&ui2));
         let c = chat_ctl.clone();
         nav_new.connect_clicked(move |_| c.new_conversation());
     }
@@ -1655,12 +1887,9 @@ fn build_ui(app: &adw::Application) {
                 set_nav(&ui2, "artifacts");
             }
             _ => {
-                open_placeholder(
-                    &ui2,
-                    "Scheduled",
-                    "Scheduled runs show up here once you create one.",
-                );
+                ui2.stack.set_visible_child_name("scheduled");
                 set_nav(&ui2, "scheduled");
+                refresh_scheduled(&ui2);
             }
         });
     }
@@ -1739,7 +1968,10 @@ fn build_ui(app: &adw::Application) {
     }
     {
         let ui2 = ui.clone();
-        r_sch.connect_clicked(move |_| open_scheduled(&ui2));
+        r_sch.connect_clicked(move |_| {
+            let project = ui2.current.borrow().clone();
+            open_new_task(&ui2, project);
+        });
     }
 
     // ---------- project page: model, mode, files and sending ----------
@@ -1775,6 +2007,20 @@ fn build_ui(app: &adw::Application) {
     {
         let ui2 = ui.clone();
         ui.search_input.connect_changed(move |_| refresh_search(&ui2));
+    }
+    {
+        let ui2 = ui.clone();
+        sch_new.connect_clicked(move |_| open_new_task(&ui2, None));
+        // when the runner finishes tasks, the lists change
+        let weak = Rc::downgrade(&ui);
+        TASKS_DONE.with(|t| {
+            *t.borrow_mut() = Some(Rc::new(move || {
+                if let Some(ui) = weak.upgrade() {
+                    refresh_scheduled(&ui);
+                    refresh_recents(&ui);
+                }
+            }));
+        });
     }
     refresh_sidebar(&ui);
     {
@@ -1886,6 +2132,12 @@ fn main() -> glib::ExitCode {
         static FIRST: std::sync::Once = std::sync::Once::new();
         FIRST.call_once(|| {
             ask::start();
+            scheduler::start(Rc::new(|| {
+                let f = TASKS_DONE.with(|t| t.borrow().clone());
+                if let Some(f) = f {
+                    f();
+                }
+            }));
             let app2 = app.clone();
             shortcut::register(move || quick::toggle(app2.upcast_ref(), |text| show_main(text)));
             std::mem::forget(app.hold());

@@ -734,7 +734,6 @@ popover.zo-popover > contents {
 button, button label { font-weight: 400; }
 .nav-item, .side-item, .pop-title, .tool-btn.pill { font-weight: 400; }
 .side-del { opacity: 0; min-width: 28px; min-height: 28px; }
-.side-item:hover + .side-del, .side-del:hover { opacity: 1; }
 .side-del image { color: #8C8C8C; }
 
 /* multi-line message box */
@@ -763,3 +762,24 @@ entry.search-input {
 }
 entry.search-input:focus-within { border-color: alpha(white, 0.25); }
 entry.search-input text { background: transparent; color: #ECECEC; }
+
+/* hover buttons in the sidebar lists */
+.side-del { opacity: 0; min-width: 26px; min-height: 26px; }
+.side-item:hover ~ .side-del, .side-del:hover { opacity: 1; }
+.side-del image { color: #8C8C8C; }
+
+/* settings page */
+.settings-head { font-size: 13px; color: #8C8C8C; padding-left: 4px; }
+.settings-card { background-color: #202020; border: 1px solid alpha(white, 0.06); border-radius: 12px; }
+.settings-row { padding: 14px 16px; border-bottom: 1px solid alpha(white, 0.05); }
+.settings-row:last-child { border-bottom: none; }
+.settings-code { font-family: monospace; font-size: 13px; background-color: #171717; border-radius: 8px; padding: 10px 12px; color: #D0D0D0; margin: 0 16px 14px 16px; }
+button.danger { color: #E5736A; }
+
+/* quick popup, in the same style as the app */
+window.quick { border-radius: 20px; border: none; background: transparent; }
+.quick-body { background-color: #262626; border: 1px solid alpha(white, 0.10); border-radius: 20px; padding: 16px 18px 14px 18px; }
+.quick-entry, .quick-entry text { font-size: 17px; background: transparent; color: #ECECEC; padding: 6px 4px; }
+.quick-out { color: #D0D0D0; font-size: 13px; }
+.foot-chip { background-color: #303030; border: none; border-radius: 999px; padding: 6px 13px; font-size: 12.5px; color: #D0D0D0; }
+.foot-chip:hover { background-color: #3A3A3A; color: #ECECEC; }

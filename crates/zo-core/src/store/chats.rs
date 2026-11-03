@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use zo_core::ai::wire::Turn;
+use crate::ai::wire::Turn;
 
 /// One line of what the person sees in a chat. `kind` is the style it is shown in.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -25,6 +25,8 @@ pub struct Chat {
     pub session: Option<String>,
     #[serde(default)]
     pub context: String,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 const KEEP: usize = 100;
@@ -61,11 +63,22 @@ fn write(all: &[Chat]) {
 }
 
 /// Adds the chat, or replaces the one with the same id.
-pub fn upsert(chat: Chat) {
+pub fn upsert(mut chat: Chat) {
     let mut all = load();
+    // pinning is only changed by `set_pinned`, so saving a chat never loses it
+    chat.pinned = all.iter().find(|c| c.id == chat.id).is_some_and(|c| c.pinned);
     all.retain(|c| c.id != chat.id);
     all.insert(0, chat);
     all.truncate(KEEP);
+    write(&all);
+}
+
+/// Pins or unpins a chat. Pinned chats are listed first and keep their order by the last message.
+pub fn set_pinned(id: &str, on: bool) {
+    let mut all = load();
+    if let Some(c) = all.iter_mut().find(|c| c.id == id) {
+        c.pinned = on;
+    }
     write(&all);
 }
 
@@ -144,6 +157,7 @@ mod tests {
 
     #[test]
     fn chats_are_saved_replaced_listed_newest_first_and_deleted() {
+        let _g = super::super::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("zo-chats-{}", std::process::id()));
         std::env::set_var("XDG_DATA_HOME", &dir);
         let mk = |id: &str, t: u64| Chat { id: id.into(), title: format!("chat {id}"), updated: t, ..Default::default() };
@@ -155,6 +169,12 @@ mod tests {
         assert_eq!(all[0].title, "renamed");
         let found = search("RENAMED", &load());
         assert_eq!(found.len(), 1);
+        set_pinned("b", true);
+        upsert(Chat { title: "b again".into(), ..mk("b", 9) });
+        assert!(load().iter().find(|c| c.id == "b").unwrap().pinned, "saving a chat keeps it pinned");
+        assert_eq!(load()[0].id, "b", "newest first");
+        set_pinned("b", false);
+        assert!(!load().iter().any(|c| c.pinned));
         delete("a");
         assert_eq!(load().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);

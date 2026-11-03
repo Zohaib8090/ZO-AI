@@ -37,6 +37,8 @@ pub struct Ctl {
     busy: Cell<bool>,
     cancel: Arc<AtomicBool>,
     on_busy: RefCell<Option<Rc<dyn Fn(bool)>>>,
+    on_retry: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    last_retry: RefCell<Option<gtk::Button>>,
 }
 
 enum Msg {
@@ -57,7 +59,7 @@ impl Ctl {
         scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         scroll.set_visible(false);
         chat.insert_child_after(&scroll, Some(hero));
-        Rc::new(Ctl { chat: chat.clone(), hero: hero.clone(), thread, scroll, history: RefCell::new(Vec::new()), session: RefCell::new(None), extra: RefCell::new(String::new()), title: RefCell::new(String::new()), id: RefCell::new(String::new()), entries: RefCell::new(Vec::new()), on_saved: RefCell::new(None), busy: Cell::new(false), cancel: Arc::new(AtomicBool::new(false)), on_busy: RefCell::new(None) })
+        Rc::new(Ctl { chat: chat.clone(), hero: hero.clone(), thread, scroll, history: RefCell::new(Vec::new()), session: RefCell::new(None), extra: RefCell::new(String::new()), title: RefCell::new(String::new()), id: RefCell::new(String::new()), entries: RefCell::new(Vec::new()), on_saved: RefCell::new(None), busy: Cell::new(false), cancel: Arc::new(AtomicBool::new(false)), on_busy: RefCell::new(None), on_retry: Rc::new(RefCell::new(None)), last_retry: RefCell::new(None) })
     }
 
     pub fn on_saved(&self, f: Rc<dyn Fn()>) {
@@ -77,6 +79,7 @@ impl Ctl {
             history: self.history.borrow().clone(),
             session: self.session.borrow().clone(),
             context: self.extra.borrow().clone(),
+            pinned: false,
         });
         let f = self.on_saved.borrow().clone();
         if let Some(f) = f {
@@ -101,6 +104,36 @@ impl Ctl {
         for e in chat.entries {
             self.add(&e.text, &e.kind);
         }
+    }
+
+    /// Called when "try again" is pressed.
+    pub fn on_retry(&self, f: Rc<dyn Fn()>) {
+        *self.on_retry.borrow_mut() = Some(f);
+    }
+
+    /// Throws away the last reply and asks the same thing again.
+    pub fn retry(self: &Rc<Self>, prompt: &Prompt) {
+        if self.busy.get() {
+            return;
+        }
+        let entries = self.entries.borrow().clone();
+        let Some(at) = entries.iter().rposition(|e| e.kind == "msg-user") else { return };
+        let text = entries[at].text.clone();
+        let last_user = self.history.borrow().iter().rposition(|t| matches!(t, Turn::User(_)));
+        if let Some(p) = last_user {
+            self.history.borrow_mut().truncate(p);
+        }
+        // show the chat again without the last question and its answer
+        while let Some(c) = self.thread.first_child() {
+            self.thread.remove(&c);
+        }
+        *self.last_retry.borrow_mut() = None;
+        self.entries.borrow_mut().clear();
+        for e in &entries[..at] {
+            self.add(&e.text, &e.kind);
+        }
+        prompt.set_text(&text);
+        self.submit(prompt);
     }
 
     pub fn is_busy(&self) -> bool {
@@ -175,6 +208,19 @@ impl Ctl {
             let raw = text.to_string();
             copy.connect_clicked(move |b| b.clipboard().set_text(&raw));
             actions.append(&copy);
+            // "try again" sits under the newest reply only
+            let retry = crate::icon_button("view-refresh-symbolic", "Try again", "icon-btn");
+            let on_retry = self.on_retry.clone();
+            retry.connect_clicked(move |_| {
+                let f = on_retry.borrow().clone();
+                if let Some(f) = f {
+                    f();
+                }
+            });
+            actions.append(&retry);
+            if let Some(old) = self.last_retry.borrow_mut().replace(retry) {
+                old.set_visible(false);
+            }
             col.append(&actions);
             col.upcast()
         } else {

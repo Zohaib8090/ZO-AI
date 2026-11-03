@@ -7,6 +7,7 @@ pub mod audit;
 pub mod exec;
 pub mod mcp;
 pub mod policy;
+pub mod store;
 pub mod tools;
 
 pub use policy::{Decision, Mode, Risk};

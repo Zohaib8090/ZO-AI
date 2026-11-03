@@ -4,6 +4,7 @@ use crate::policy::Risk;
 use serde_json::{json, Value};
 
 mod android;
+mod app;
 mod fs;
 mod system;
 
@@ -67,6 +68,18 @@ pub fn definitions() -> &'static [ToolDef] {
         ToolDef { name: "zohara_waydroid_app_list", description: "Android apps installed in Waydroid.", risk: Change, params: &[] },
         ToolDef { name: "zohara_waydroid_app_install", description: "Install an APK into Waydroid.", risk: Change, params: &[("apk", "string", "Path to the APK", true)] },
         ToolDef { name: "zohara_waydroid_app_launch", description: "Start an Android app in Waydroid.", risk: Change, params: &[("package", "string", "Package name", true)] },
+        ToolDef { name: "zohara_ai_schedule", description: "Schedule a task for ZO-AI to do later, once or on a repeat. It appears on the Scheduled page.", risk: Change,
+            params: &[("task", "string", "What ZO-AI should do when the time comes, written as an instruction", true), ("when", "string", "When, in plain words: \"tomorrow 9am\", \"in 2 hours\", \"2026-11-05 18:30\"", true), ("repeat", "string", "once, hourly, daily or weekly (default once)", false), ("title", "string", "A short name for the list", false)] },
+        ToolDef { name: "zohara_ai_list_scheduled", description: "List the scheduled tasks and when they run next.", risk: Read, params: &[] },
+        ToolDef { name: "zohara_ai_cancel_scheduled", description: "Remove a scheduled task.", risk: Change, params: &[("id", "string", "The task id from the list", true)] },
+        ToolDef { name: "zohara_ai_projects", description: "List the projects (name, goal, memory notes).", risk: Read, params: &[] },
+        ToolDef { name: "zohara_ai_create_project", description: "Create a project. It appears on the Projects page.", risk: Change,
+            params: &[("name", "string", "The project name", true), ("goal", "string", "What the project is for", false)] },
+        ToolDef { name: "zohara_ai_add_memory", description: "Add a note to a project's memory, so ZO-AI remembers it in that project.", risk: Change,
+            params: &[("project", "string", "Project name or id", true), ("text", "string", "The note", true)] },
+        ToolDef { name: "zohara_ai_search_chats", description: "Search the saved chats.", risk: Read, params: &[("query", "string", "Words to look for", true)] },
+        ToolDef { name: "zohara_ai_pin_chat", description: "Pin or unpin a saved chat in the sidebar.", risk: Change,
+            params: &[("chat", "string", "Chat id or part of its title", true), ("pinned", "boolean", "true to pin (default), false to unpin", false)] },
         ToolDef { name: "zohara_waydroid_shell", description: "Run a command inside Waydroid (asks for your password).", risk: Change,
             params: &[("cmds", "string", "Command line", true)] },
     ]
@@ -111,6 +124,14 @@ pub fn call(name: &str, a: &Value) -> Result<String, String> {
         "zohara_adb_uninstall" => android::adb(&["uninstall", text(a, "package")?]),
         "zohara_adb_push" => android::adb(&["push", text(a, "local")?, text(a, "remote")?]),
         "zohara_adb_pull" => android::adb(&["pull", text(a, "remote")?, text(a, "local")?]),
+        "zohara_ai_schedule" => app::schedule(a),
+        "zohara_ai_list_scheduled" => app::list_scheduled(),
+        "zohara_ai_cancel_scheduled" => app::cancel_scheduled(a),
+        "zohara_ai_projects" => app::list_projects(),
+        "zohara_ai_create_project" => app::create_project(a),
+        "zohara_ai_add_memory" => app::add_memory(a),
+        "zohara_ai_search_chats" => app::search_chats(a),
+        "zohara_ai_pin_chat" => app::pin_chat(a),
         "zohara_waydroid_status" => android::waydroid(&["status"], false),
         "zohara_waydroid_prop" => android::waydroid(&["prop", "get", text(a, "key")?], false),
         "zohara_waydroid_app_list" => android::waydroid(&["app", "list"], true),

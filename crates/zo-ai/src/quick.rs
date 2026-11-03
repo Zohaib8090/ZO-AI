@@ -38,7 +38,11 @@ pub fn toggle(app: &gtk::Application, open_full: impl Fn(&str) + 'static) {
     entry.set_placeholder_text(Some("Ask ZO-AI, or run something on this computer…"));
     entry.add_css_class("composer-entry");
     entry.add_css_class("quick-entry");
-    root.append(&entry);
+    let top = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    top.append(&crate::mark(30));
+    entry.set_hexpand(true);
+    top.append(&entry);
+    root.append(&top);
 
     let out = gtk::Label::new(None);
     out.set_xalign(0.0);
