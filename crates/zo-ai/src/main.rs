@@ -1207,7 +1207,7 @@ fn build_ui(app: &adw::Application) {
     let hero = hbox(14);
     hero.set_halign(gtk::Align::Center);
     hero.set_margin_bottom(28);
-    hero.append(&lbl("✺", "hero-mark"));
+    hero.append(&lbl("✦", "hero-mark"));
     hero.append(&lbl(&chat::greeting(), "hero-title"));
     chat.append(&hero);
 
@@ -1751,7 +1751,10 @@ fn walk_tree(widget: &gtk::Widget, depth: usize) {
 
 fn main() -> glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).flags(gtk::gio::ApplicationFlags::HANDLES_COMMAND_LINE).build();
-    app.connect_startup(|_| load_css());
+    app.connect_startup(|_| {
+        load_css();
+        gtk::Window::set_default_icon_name("zo-ai");
+    });
     app.connect_command_line(|app, cmd| {
         // first start: begin answering approval questions and stay alive after the window closes
         static FIRST: std::sync::Once = std::sync::Once::new();

@@ -1,4 +1,4 @@
-/* ZO-AI: neutral dark palette and layout in the style of Claude. #191919 background · #ECECEC text · #D97757 brand */
+/* ZO-AI: neutral dark palette and layout in the style of Claude. #191919 background · #ECECEC text · #5FD4D4 accent */
 
 window.background,
 .zo-root {
@@ -662,7 +662,7 @@ window.background, .zo-root { background-color: #191919; color: #ECECEC; }
 .top-title { font-size: 14px; color: #D0D0D0; }
 
 /* home */
-.hero-mark { color: #D97757; font-size: 36px; }
+.hero-mark { color: #5FD4D4; font-size: 34px; }
 .hero-title { font-size: 32px; color: #ECECEC; }
 
 /* composer: one soft card, controls under the text */
@@ -678,8 +678,8 @@ window.background, .zo-root { background-color: #191919; color: #ECECEC; }
 .composer entry placeholder { color: #8C8C8C; }
 .tool-btn { min-width: 32px; min-height: 32px; border-radius: 9px; color: #BDBDBD; }
 .tool-btn:hover { background-color: alpha(white, 0.08); color: #ECECEC; }
-.tool-btn.send { background-color: #D97757; color: #FFFFFF; border-radius: 10px; }
-.tool-btn.send:hover { background-color: #E58A6B; }
+.tool-btn.send { background-color: #5FD4D4; color: #0B0E14; border-radius: 10px; }
+.tool-btn.send:hover { background-color: #7EE0E0; }
 .tool-btn.pill {
   background-color: transparent; border: none; border-radius: 9px;
   color: #BDBDBD; padding: 0 10px; font-size: 13px;
