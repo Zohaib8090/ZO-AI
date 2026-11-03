@@ -39,7 +39,13 @@ fn main() {
         } else {
             let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
             let last = v["messages"].as_array().and_then(|m| m.last()).cloned().unwrap_or_default();
-            if last["role"] == "tool" {
+            let said = v["messages"].as_array().and_then(|m| m.iter().rev().find(|x| x["role"] == "user")).and_then(|x| x["content"].as_str()).unwrap_or("").to_lowercase();
+            if said.contains("slow") {
+                std::thread::sleep(std::time::Duration::from_secs(25));
+            }
+            if said.contains("markdown") {
+                serde_json::json!({ "choices": [{ "message": { "content": "# A heading\n\nSome **bold** words, *italic* ones and `inline code`, plus a [link](https://example.com).\n\n- first point\n- second point\n  continues here\n1. one\n2. two\n\n```bash\nls -la /home\necho done\n```\n\n> a quote\n" } }] })
+            } else if last["role"] == "tool" {
                 serde_json::json!({ "choices": [{ "message": { "content": format!("The command printed: {}", last["content"].as_str().unwrap_or("")) } }] })
             } else {
                 serde_json::json!({ "choices": [{ "message": { "content": "I will run a command to check.", "tool_calls": [{

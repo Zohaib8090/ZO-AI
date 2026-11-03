@@ -2,6 +2,7 @@
 //! and the sheet where the person picks a provider, a model and an API key.
 
 use crate::chats::{self, Chat, Entry};
+use crate::composer::Prompt;
 use crate::{hbox, lbl, primary, secondary, sheet, vbox, Ui};
 use adw::prelude::*;
 use gtk4 as gtk;
@@ -9,7 +10,8 @@ use gtk::glib;
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 use zo_core::ai::agent::{self, Config, Event};
 use zo_core::ai::claude_code;
@@ -33,6 +35,8 @@ pub struct Ctl {
     entries: RefCell<Vec<Entry>>,
     on_saved: RefCell<Option<Rc<dyn Fn()>>>,
     busy: Cell<bool>,
+    cancel: Arc<AtomicBool>,
+    on_busy: RefCell<Option<Rc<dyn Fn(bool)>>>,
 }
 
 enum Msg {
@@ -53,7 +57,7 @@ impl Ctl {
         scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         scroll.set_visible(false);
         chat.insert_child_after(&scroll, Some(hero));
-        Rc::new(Ctl { chat: chat.clone(), hero: hero.clone(), thread, scroll, history: RefCell::new(Vec::new()), session: RefCell::new(None), extra: RefCell::new(String::new()), title: RefCell::new(String::new()), id: RefCell::new(String::new()), entries: RefCell::new(Vec::new()), on_saved: RefCell::new(None), busy: Cell::new(false) })
+        Rc::new(Ctl { chat: chat.clone(), hero: hero.clone(), thread, scroll, history: RefCell::new(Vec::new()), session: RefCell::new(None), extra: RefCell::new(String::new()), title: RefCell::new(String::new()), id: RefCell::new(String::new()), entries: RefCell::new(Vec::new()), on_saved: RefCell::new(None), busy: Cell::new(false), cancel: Arc::new(AtomicBool::new(false)), on_busy: RefCell::new(None) })
     }
 
     pub fn on_saved(&self, f: Rc<dyn Fn()>) {
@@ -99,6 +103,27 @@ impl Ctl {
         }
     }
 
+    pub fn is_busy(&self) -> bool {
+        self.busy.get()
+    }
+
+    /// Ends what is running now (the model call between steps, or the Claude Code program).
+    pub fn stop(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    pub fn on_busy(&self, f: Rc<dyn Fn(bool)>) {
+        *self.on_busy.borrow_mut() = Some(f);
+    }
+
+    fn set_busy(&self, on: bool) {
+        self.busy.set(on);
+        let f = self.on_busy.borrow().clone();
+        if let Some(f) = f {
+            f(on);
+        }
+    }
+
     pub fn set_context(&self, text: String) {
         *self.extra.borrow_mut() = text;
     }
@@ -126,18 +151,34 @@ impl Ctl {
     }
 
     /// Shows a line and remembers it for saving.
-    fn add(&self, text: &str, class: &str) -> gtk::Label {
+    fn add(&self, text: &str, class: &str) -> gtk::Widget {
         self.entries.borrow_mut().push(Entry { kind: class.to_string(), text: text.to_string() });
         self.add_plain(text, class)
     }
 
-    fn add_plain(&self, text: &str, class: &str) -> gtk::Label {
-        let l = lbl(text, class);
-        l.set_wrap(true);
-        l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        l.set_xalign(0.0);
-        l.set_selectable(true);
-        l.set_halign(if class == "msg-user" { gtk::Align::End } else { gtk::Align::Fill });
+    fn add_plain(&self, text: &str, class: &str) -> gtk::Widget {
+        let w: gtk::Widget = if class == "msg-ai" {
+            // a reply: formatted, with a copy button under it
+            let col = vbox(2);
+            col.append(&crate::markdown::render(text));
+            let actions = hbox(2);
+            actions.add_css_class("msg-actions");
+            let copy = crate::icon_button("edit-copy-symbolic", "Copy the reply", "icon-btn");
+            let raw = text.to_string();
+            copy.connect_clicked(move |b| b.clipboard().set_text(&raw));
+            actions.append(&copy);
+            col.append(&actions);
+            col.upcast()
+        } else {
+            let l = lbl(text, class);
+            l.set_wrap(true);
+            l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+            l.set_xalign(0.0);
+            l.set_selectable(true);
+            l.set_halign(if class == "msg-user" { gtk::Align::End } else { gtk::Align::Fill });
+            l.upcast()
+        };
+        let l = w;
         self.thread.append(&l);
         let scroll = self.scroll.clone();
         glib::timeout_add_local_once(Duration::from_millis(40), move || {
@@ -147,7 +188,7 @@ impl Ctl {
         l
     }
 
-    pub fn submit(self: &Rc<Self>, prompt: &gtk::Entry) {
+    pub fn submit(self: &Rc<Self>, prompt: &Prompt) {
         let text = prompt.text().trim().to_string();
         if text.is_empty() || self.busy.get() {
             return;
@@ -181,20 +222,21 @@ impl Ctl {
         if self.id.borrow().is_empty() {
             *self.id.borrow_mut() = format!("c{}", chats::now_millis());
         }
-        self.busy.set(true);
-        prompt.set_sensitive(false);
+        self.cancel.store(false, Ordering::Relaxed);
+        self.set_busy(true);
         let thinking = self.add_plain("Thinking…", "msg-tool");
         let (tx, rx) = mpsc::channel::<Msg>();
         let mut history = std::mem::take(&mut *self.history.borrow_mut());
         let mut session = self.session.borrow().clone();
+        let cancel = self.cancel.clone();
         std::thread::spawn(move || {
             let tx2 = tx.clone();
             let mut emit = |e: Event| {
                 let _ = tx2.send(Msg::Ev(e));
             };
             let r = match &cfg {
-                None => claude_code::run(&model, &mut session, &text, &extra, &mut emit),
-                Some(cfg) => agent::run(cfg, &mut history, &text, zo_core::Mode::load(), &zo_core::approval::AppApprover, &mut emit),
+                None => claude_code::run(&model, &mut session, &text, &extra, &cancel, &mut emit),
+                Some(cfg) => agent::run(cfg, &mut history, &text, zo_core::Mode::load(), &zo_core::approval::AppApprover, &cancel, &mut emit),
             };
             let _ = tx.send(Msg::Done(r, history, session));
         });
@@ -220,18 +262,24 @@ impl Ctl {
                         thinking.set_visible(false);
                         *me.history.borrow_mut() = history;
                         *me.session.borrow_mut() = session;
-                        if let Err(e) = result {
-                            me.add(&e, "msg-error");
+                        match result {
+                            Err(e) if e == agent::STOPPED => {
+                                me.add(&e, "msg-tool");
+                            }
+                            Err(e) => {
+                                me.add(&e, "msg-error");
+                            }
+                            Ok(()) => {}
                         }
                         me.persist();
-                        me.busy.set(false);
+                        me.set_busy(false);
                         prompt.set_sensitive(true);
                         prompt.grab_focus();
                         return glib::ControlFlow::Break;
                     }
                     Err(mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
                     Err(mpsc::TryRecvError::Disconnected) => {
-                        me.busy.set(false);
+                        me.set_busy(false);
                         prompt.set_sensitive(true);
                         return glib::ControlFlow::Break;
                     }
@@ -602,7 +650,7 @@ pub fn show_perm_popover(ui: &Rc<Ui>, btn: &gtk::Button) {
 }
 
 /// The "+" menu: put a file or a folder path into the message, so the model can look at it.
-pub fn show_plus_popover(prompt: &gtk::Entry, btn: &gtk::Button) {
+pub fn show_plus_popover(prompt: &Prompt, btn: &gtk::Button) {
     let pop = new_popover(btn);
     let body = vbox(0);
     for (title, sub, folder) in [("Add a file", "Puts its path in your message", false), ("Add a folder", "Puts its path in your message", true)] {
@@ -611,14 +659,14 @@ pub fn show_plus_popover(prompt: &gtk::Entry, btn: &gtk::Button) {
         row.connect_clicked(move |_| {
             pop2.popdown();
             let dialog = gtk::FileDialog::new();
-            let window = prompt2.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+            let window = prompt2.window();
             let prompt3 = prompt2.clone();
             let done = move |path: Option<std::path::PathBuf>| {
                 if let Some(p) = path {
                     let old = prompt3.text();
                     let sep = if old.is_empty() || old.ends_with(' ') { "" } else { " " };
                     prompt3.set_text(&format!("{old}{sep}{} ", p.display()));
-                    prompt3.set_position(-1);
+                    prompt3.move_to_end();
                     prompt3.grab_focus();
                 }
             };

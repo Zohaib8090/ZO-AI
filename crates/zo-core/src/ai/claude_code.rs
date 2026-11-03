@@ -7,6 +7,8 @@ use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// Where `claude` is: `ZOAI_CLAUDE_BIN`, the PATH, or `~/.local/bin`.
 pub fn binary() -> Option<PathBuf> {
@@ -74,7 +76,7 @@ fn handle_line(v: &Value, session: &mut Option<String>, names: &mut Vec<(String,
 }
 
 /// Send one message. `session` is remembered between calls so the conversation continues.
-pub fn run(model: &str, session: &mut Option<String>, prompt: &str, system_extra: &str, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+pub fn run(model: &str, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     let system = if system_extra.trim().is_empty() { SYSTEM_PROMPT.to_string() } else { format!("{SYSTEM_PROMPT}\n\n{system_extra}") };
     let bin = binary().ok_or("Claude Code is not installed. Install it (npm install -g @anthropic-ai/claude-code), then sign in with: claude auth login")?;
     let config = json!({ "mcpServers": { "zohara": { "command": mcp_binary() } } }).to_string();
@@ -89,9 +91,28 @@ pub fn run(model: &str, session: &mut Option<String>, prompt: &str, system_extra
         cmd.args(["--resume", id]);
     }
     let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("Could not start Claude Code: {e}"))?;
+    let stdout = child.stdout.take().ok_or("no output")?;
+    let stderr_pipe = child.stderr.take();
+    let child = Arc::new(Mutex::new(child));
+    // pressing Stop ends the program
+    let finished = Arc::new(AtomicBool::new(false));
+    {
+        let (child, cancel, finished) = (child.clone(), cancel.clone(), finished.clone());
+        std::thread::spawn(move || {
+            while !finished.load(Ordering::Relaxed) {
+                if cancel.load(Ordering::Relaxed) {
+                    if let Ok(mut c) = child.lock() {
+                        let _ = c.kill();
+                    }
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        });
+    }
     let mut failure = None;
     let mut names = Vec::new();
-    for line in BufReader::new(child.stdout.take().ok_or("no output")?).lines().map_while(Result::ok) {
+    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
         if let Ok(v) = serde_json::from_str::<Value>(&line) {
             if let Some(e) = handle_line(&v, session, &mut names, on_event) {
                 failure = Some(e);
@@ -99,10 +120,14 @@ pub fn run(model: &str, session: &mut Option<String>, prompt: &str, system_extra
         }
     }
     let mut stderr = String::new();
-    if let Some(mut e) = child.stderr.take() {
+    if let Some(mut e) = stderr_pipe {
         let _ = e.read_to_string(&mut stderr);
     }
-    let status = child.wait().map_err(|e| e.to_string())?;
+    let status = child.lock().map_err(|_| "lock".to_string())?.wait().map_err(|e| e.to_string())?;
+    finished.store(true, Ordering::Relaxed);
+    if cancel.load(Ordering::Relaxed) {
+        return Err(super::agent::STOPPED.into());
+    }
     match (failure, status.success()) {
         (Some(e), _) => Err(e),
         (None, true) => Ok(()),
@@ -159,8 +184,8 @@ mod tests {
         std::env::set_var("ZOAI_CLAUDE_BIN", &script);
 
         let (mut session, mut texts) = (None, Vec::new());
-        run("sonnet", &mut session, "one", "", &mut |e| if let Event::Text(t) = e { texts.push(t) }).unwrap();
-        run("sonnet", &mut session, "two", "", &mut |_| {}).unwrap();
+        run("sonnet", &mut session, "one", "", &Arc::new(AtomicBool::new(false)), &mut |e| if let Event::Text(t) = e { texts.push(t) }).unwrap();
+        run("sonnet", &mut session, "two", "", &Arc::new(AtomicBool::new(false)), &mut |_| {}).unwrap();
         assert_eq!(texts, ["hi"]);
         assert_eq!(session.as_deref(), Some("fake-1"));
         let log = std::fs::read_to_string(&args_log).unwrap();

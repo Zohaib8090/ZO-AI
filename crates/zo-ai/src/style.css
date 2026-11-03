@@ -736,3 +736,22 @@ button, button label { font-weight: 400; }
 .side-del { opacity: 0; min-width: 28px; min-height: 28px; }
 .side-item:hover + .side-del, .side-del:hover { opacity: 1; }
 .side-del image { color: #8C8C8C; }
+
+/* multi-line message box */
+textview.composer-entry, textview.composer-entry text { background: transparent; color: #ECECEC; font-size: 15px; }
+textview.composer-entry { padding: 0; }
+.composer-hint { color: #8C8C8C; font-size: 15px; padding: 0; }
+
+/* replies: code blocks, lists, quotes */
+.code-block { background-color: #202020; border: 1px solid alpha(white, 0.07); border-radius: 10px; margin: 2px 0; }
+.code-head { padding: 4px 6px 0 12px; }
+.code-lang { font-size: 12px; color: #8C8C8C; }
+.code-body { font-family: monospace; font-size: 13px; padding: 4px 12px 12px 12px; color: #E4E4E4; }
+.md-mark { color: #8C8C8C; font-size: 15px; }
+.md-quote { border-left: 3px solid alpha(white, 0.18); padding-left: 12px; color: #BDBDBD; }
+.msg-actions { margin-top: 2px; }
+.msg-actions button { min-width: 28px; min-height: 28px; color: #8C8C8C; }
+
+/* list items sit close together */
+.md-item { padding: 0; }
+.md-mark { padding-top: 0; min-width: 14px; }

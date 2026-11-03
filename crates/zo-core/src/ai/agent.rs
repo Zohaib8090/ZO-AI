@@ -8,6 +8,7 @@ use crate::approval::Approver;
 use crate::policy::Mode;
 use crate::{mcp, tools};
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 const MAX_STEPS: usize = 15;
@@ -61,21 +62,42 @@ fn http_error(e: ureq::Error) -> String {
     }
 }
 
-fn ask(cfg: &Config, turns: &[Turn]) -> Result<Reply, String> {
+fn ask(cfg: &Config, turns: &[Turn], cancel: &AtomicBool) -> Result<Reply, String> {
     let req = wire::build(cfg.provider, &cfg.base_url, cfg.key.as_deref(), &cfg.model, &cfg.system, turns, tools::definitions());
-    let mut r = agent().post(&req.url);
-    for (k, v) in &req.headers {
-        r = r.set(k, v);
-    }
-    let v: Value = r.send_json(req.body).map_err(http_error)?.into_json().map_err(|e| format!("The answer was not valid JSON: {e}"))?;
+    // the request runs on its own thread so Stop works while the model is still thinking
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut r = agent().post(&req.url);
+        for (k, v) in &req.headers {
+            r = r.set(k, v);
+        }
+        let out: Result<Value, String> = r.send_json(req.body).map_err(http_error).and_then(|resp| resp.into_json().map_err(|e| format!("The answer was not valid JSON: {e}")));
+        let _ = tx.send(out);
+    });
+    let v = loop {
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(out) => break out?,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(STOPPED.into());
+                }
+            }
+            Err(_) => return Err("The request ended without an answer.".into()),
+        }
+    };
     wire::parse(cfg.provider.protocol, &v)
 }
 
 /// Run one user message to the end. `history` gets every step appended, so it can be saved and continued.
-pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approver: &dyn Approver, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+pub const STOPPED: &str = "Stopped.";
+
+pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approver: &dyn Approver, cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     history.push(Turn::User(user.to_string()));
     for _ in 0..MAX_STEPS {
-        let reply = ask(cfg, history)?;
+        if cancel.load(Ordering::Relaxed) {
+            return Err(STOPPED.into());
+        }
+        let reply = ask(cfg, history, cancel)?;
         if !reply.text.is_empty() {
             on_event(Event::Text(reply.text.clone()));
         }
@@ -85,6 +107,9 @@ pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approv
         }
         let mut results = Vec::new();
         for call in reply.calls {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(STOPPED.into());
+            }
             on_event(Event::ToolStart { name: call.name.clone(), summary: mcp::summarize(&call.name, &call.args) });
             let (content, is_error) = match mcp::execute(&call.name, &call.args, mode, approver) {
                 Ok(t) => (t, false),
@@ -174,7 +199,7 @@ mod tests {
         ]);
         let mut history = Vec::new();
         let mut events = Vec::new();
-        run(&cfg(url, "openai"), &mut history, "say it", Mode::Auto, &Deny, &mut |e| events.push(match e {
+        run(&cfg(url, "openai"), &mut history, "say it", Mode::Auto, &Deny, &AtomicBool::new(false), &mut |e| events.push(match e {
             Event::Text(t) => format!("text:{t}"),
             Event::ToolStart { name, .. } => format!("start:{name}"),
             Event::ToolDone { ok, output, .. } => format!("done:{ok}:{output}"),
@@ -192,11 +217,39 @@ mod tests {
             json!({"content":[{"type":"text","text":"Understood, I stopped."}]}),
         ]);
         let mut history = Vec::new();
-        run(&cfg(url, "anthropic"), &mut history, "delete it", Mode::Auto, &Deny, &mut |_| {}).unwrap();
+        run(&cfg(url, "anthropic"), &mut history, "delete it", Mode::Auto, &Deny, &AtomicBool::new(false), &mut |_| {}).unwrap();
         let seen = server.join().unwrap();
         let result = &seen[1]["messages"].as_array().unwrap().last().unwrap()["content"][0];
         assert_eq!(result["is_error"], true);
         assert!(result["content"].as_str().unwrap().contains("did not approve"));
+    }
+
+    #[test]
+    fn pressing_stop_ends_the_loop_before_asking_the_model() {
+        let err = run(&cfg("http://127.0.0.1:9/v1".into(), "openai"), &mut Vec::new(), "hi", Mode::Auto, &Deny, &AtomicBool::new(true), &mut |_| {}).unwrap_err();
+        assert_eq!(err, STOPPED);
+    }
+
+    #[test]
+    fn stop_works_while_the_model_is_still_thinking() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut tmp = [0u8; 8192];
+            let _ = s.read(&mut tmp);
+            std::thread::sleep(Duration::from_secs(4));
+        });
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let c2 = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            c2.store(true, Ordering::Relaxed);
+        });
+        let t0 = std::time::Instant::now();
+        let err = run(&cfg(url, "openai"), &mut Vec::new(), "hi", Mode::Auto, &Deny, &cancel, &mut |_| {}).unwrap_err();
+        assert_eq!(err, STOPPED);
+        assert!(t0.elapsed() < Duration::from_secs(2), "stop took {:?}", t0.elapsed());
     }
 
     #[test]
@@ -210,7 +263,7 @@ mod tests {
             let body = r#"{"error":{"message":"invalid api key"}}"#;
             write!(s, "HTTP/1.1 401 Unauthorized\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).unwrap();
         });
-        let err = run(&cfg(url, "openai"), &mut Vec::new(), "hi", Mode::Auto, &Deny, &mut |_| {}).unwrap_err();
+        let err = run(&cfg(url, "openai"), &mut Vec::new(), "hi", Mode::Auto, &Deny, &AtomicBool::new(false), &mut |_| {}).unwrap_err();
         assert!(err.contains("401") && err.contains("invalid api key"), "{err}");
     }
 }

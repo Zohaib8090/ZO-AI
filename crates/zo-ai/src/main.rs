@@ -6,6 +6,8 @@
 mod ask;
 mod chat;
 mod chats;
+mod composer;
+mod markdown;
 mod model;
 mod quick;
 mod shortcut;
@@ -167,7 +169,7 @@ struct Ui {
     search_entry: gtk::Entry,
 
     pv_title: gtk::Label,
-    pv_prompt: gtk::Entry,
+    pv_prompt: composer::Prompt,
     pv_hint: gtk::Label,
 
     model_label: gtk::Label,
@@ -442,8 +444,7 @@ fn open_project(ui: &Rc<Ui>, id: &str) {
     };
 
     ui.pv_title.set_text(&project.name);
-    ui.pv_prompt
-        .set_placeholder_text(Some(&format!("New session in {}", project.name)));
+    ui.pv_prompt.set_placeholder(&format!("New session in {}", project.name));
     ui.pv_hint.set_text(if project.goal.trim().is_empty() {
         "ZO-AI remembers the same knowledge every time you talk to it in this project."
     } else {
@@ -1101,7 +1102,7 @@ fn load_css() {
 
 thread_local! {
     // the open main window, its page stack and the chat box; empty while the app only waits in the background
-    static MAIN: RefCell<Option<(adw::ApplicationWindow, gtk::Stack, gtk::Entry)>> = const { RefCell::new(None) };
+    static MAIN: RefCell<Option<(adw::ApplicationWindow, gtk::Stack, composer::Prompt)>> = const { RefCell::new(None) };
 }
 
 /// Bring up the main window (building it if it was closed), optionally with text already in the chat box.
@@ -1237,11 +1238,8 @@ fn build_ui(app: &adw::Application) {
     // the card: the text on top, the controls under it
     let composer = vbox(0);
     composer.add_css_class("composer");
-    let prompt = gtk::Entry::new();
-    prompt.set_placeholder_text(Some("How can I help you today?"));
-    prompt.set_hexpand(true);
-    prompt.add_css_class("composer-entry");
-    composer.append(&prompt);
+    let prompt = composer::Prompt::new("How can I help you today?");
+    composer.append(prompt.widget());
     let tools = hbox(4);
     let plus = icon_button("list-add-symbolic", "Add a file or a screenshot", "tool-btn");
     tools.append(&plus);
@@ -1336,11 +1334,8 @@ fn build_ui(app: &adw::Application) {
     pv_wrap.set_halign(gtk::Align::Fill);
     let pv_composer = vbox(0);
     pv_composer.add_css_class("composer");
-    let pv_prompt = gtk::Entry::new();
-    pv_prompt.set_placeholder_text(Some("New session"));
-    pv_prompt.set_hexpand(true);
-    pv_prompt.add_css_class("composer-entry");
-    pv_composer.append(&pv_prompt);
+    let pv_prompt = composer::Prompt::new("New session");
+    pv_composer.append(pv_prompt.widget());
     let pv_tools = hbox(4);
     let pv_plus = icon_button("list-add-symbolic", "Add a file or a folder", "tool-btn");
     pv_tools.append(&pv_plus);
@@ -1460,11 +1455,21 @@ fn build_ui(app: &adw::Application) {
     {
         let (c, p, ui2) = (chat_ctl.clone(), prompt.clone(), ui.clone());
         send_btn.connect_clicked(move |_| {
+            if c.is_busy() {
+                c.stop();
+                return;
+            }
             c.submit(&p);
             ui2.top_title.set_text(&c.title());
         });
+        // while it works the send button turns into a stop button
+        let sb = send_btn.clone();
+        chat_ctl.on_busy(Rc::new(move |busy| {
+            sb.set_icon_name(if busy { "media-playback-stop-symbolic" } else { "go-up-symbolic" });
+            sb.set_tooltip_text(Some(if busy { "Stop" } else { "Send" }));
+        }));
         let (c, p, ui2) = (chat_ctl.clone(), prompt.clone(), ui.clone());
-        prompt.connect_activate(move |_| {
+        prompt.connect_send(move || {
             c.submit(&p);
             ui2.top_title.set_text(&c.title());
         });
@@ -1664,7 +1669,7 @@ fn build_ui(app: &adw::Application) {
         let s = send.clone();
         pv_send.connect_clicked(move |_| s());
         let s = send.clone();
-        ui.pv_prompt.connect_activate(move |_| s());
+        ui.pv_prompt.connect_send(move || s());
     }
 
     refresh_sidebar(&ui);
