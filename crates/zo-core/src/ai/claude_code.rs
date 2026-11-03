@@ -74,13 +74,14 @@ fn handle_line(v: &Value, session: &mut Option<String>, names: &mut Vec<(String,
 }
 
 /// Send one message. `session` is remembered between calls so the conversation continues.
-pub fn run(model: &str, session: &mut Option<String>, prompt: &str, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+pub fn run(model: &str, session: &mut Option<String>, prompt: &str, system_extra: &str, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+    let system = if system_extra.trim().is_empty() { SYSTEM_PROMPT.to_string() } else { format!("{SYSTEM_PROMPT}\n\n{system_extra}") };
     let bin = binary().ok_or("Claude Code is not installed. Install it (npm install -g @anthropic-ai/claude-code), then sign in with: claude auth login")?;
     let config = json!({ "mcpServers": { "zohara": { "command": mcp_binary() } } }).to_string();
     let mut cmd = Command::new(bin);
     cmd.args(["-p", prompt, "--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--mcp-config", &config,
         // Claude's own file and shell tools are off: everything goes through ZO-AI's tools, so ZO-AI's permission modes apply
-        "--tools", "", "--allowedTools", "mcp__zohara__*", "--append-system-prompt", SYSTEM_PROMPT]);
+        "--tools", "", "--allowedTools", "mcp__zohara__*", "--append-system-prompt", &system]);
     if !model.is_empty() {
         cmd.args(["--model", model]);
     }
@@ -158,8 +159,8 @@ mod tests {
         std::env::set_var("ZOAI_CLAUDE_BIN", &script);
 
         let (mut session, mut texts) = (None, Vec::new());
-        run("sonnet", &mut session, "one", &mut |e| if let Event::Text(t) = e { texts.push(t) }).unwrap();
-        run("sonnet", &mut session, "two", &mut |_| {}).unwrap();
+        run("sonnet", &mut session, "one", "", &mut |e| if let Event::Text(t) = e { texts.push(t) }).unwrap();
+        run("sonnet", &mut session, "two", "", &mut |_| {}).unwrap();
         assert_eq!(texts, ["hi"]);
         assert_eq!(session.as_deref(), Some("fake-1"));
         let log = std::fs::read_to_string(&args_log).unwrap();

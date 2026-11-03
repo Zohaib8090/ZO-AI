@@ -5,6 +5,7 @@
 
 mod ask;
 mod chat;
+mod chats;
 mod model;
 mod quick;
 mod shortcut;
@@ -51,8 +52,8 @@ fn icon_button(name: &str, tip: &str, class: &str) -> gtk::Button {
     let b = gtk::Button::from_icon_name(name);
     b.set_has_frame(false);
     b.set_tooltip_text(Some(tip));
-    if !class.is_empty() {
-        b.add_css_class(class);
+    for c in class.split_whitespace() {
+        b.add_css_class(c);
     }
     b
 }
@@ -158,6 +159,15 @@ struct Ui {
 
     model_label: gtk::Label,
     perm_label: gtk::Label,
+    pv_model_label: gtk::Label,
+    pv_perm_label: gtk::Label,
+    top_title: gtk::Label,
+    pinned_label: gtk::Label,
+    pinned_box: gtk::Box,
+    recents_label: gtk::Label,
+    recents_box: gtk::Box,
+    side_settings: gtk::Button,
+    chat: Rc<chat::Ctl>,
 
     rail_instructions: gtk::Label,
     rail_context: gtk::Label,
@@ -167,9 +177,103 @@ struct Ui {
 
 fn save_store(ui: &Rc<Ui>) {
     ui.store.borrow().save();
+    refresh_sidebar(ui);
+}
+
+/// The pinned projects in the sidebar.
+fn refresh_sidebar(ui: &Rc<Ui>) {
+    while let Some(c) = ui.pinned_box.first_child() {
+        ui.pinned_box.remove(&c);
+    }
+    let store = ui.store.borrow();
+    let mut pinned: Vec<&Project> = store.projects.iter().filter(|p| p.pinned).collect();
+    pinned.sort_by(|a, b| b.updated.cmp(&a.updated));
+    ui.pinned_label.set_visible(!pinned.is_empty());
+    for p in pinned {
+        let b = gtk::Button::new();
+        b.set_has_frame(false);
+        b.add_css_class("side-item");
+        let row = hbox(10);
+        row.append(&icon("folder-symbolic", 14));
+        let name = lbl(&p.name, "");
+        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        name.set_hexpand(true);
+        row.append(&name);
+        b.set_child(Some(&row));
+        let (ui2, id) = (ui.clone(), p.id.clone());
+        b.connect_clicked(move |_| open_project(&ui2, &id));
+        ui.pinned_box.append(&b);
+    }
+}
+
+/// The recent chats in the sidebar.
+fn refresh_recents(ui: &Rc<Ui>) {
+    while let Some(c) = ui.recents_box.first_child() {
+        ui.recents_box.remove(&c);
+    }
+    let all = chats::load();
+    ui.recents_label.set_visible(!all.is_empty());
+    for chat in all.into_iter().take(15) {
+        let row = hbox(0);
+        let b = gtk::Button::new();
+        b.set_has_frame(false);
+        b.set_hexpand(true);
+        b.add_css_class("side-item");
+        let inner = hbox(10);
+        inner.append(&icon("chat-message-new-symbolic", 14));
+        let name = lbl(&chat.title, "");
+        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        name.set_hexpand(true);
+        inner.append(&name);
+        b.set_child(Some(&inner));
+        let del = icon_button("edit-delete-symbolic", "Delete this chat", "icon-btn side-del");
+        row.append(&b);
+        row.append(&del);
+        let (ui2, id, shown) = (ui.clone(), chat.id.clone(), chat.clone());
+        b.connect_clicked(move |_| {
+            ui2.chat.load_chat(shown.clone());
+            ui2.stack.set_visible_child_name("chat");
+            set_nav(&ui2, "new");
+            ui2.top_title.set_text(&shown.title);
+            let _ = &id;
+        });
+        let (ui2, id) = (ui.clone(), chat.id.clone());
+        del.connect_clicked(move |_| {
+            chats::delete(&id);
+            refresh_recents(&ui2);
+        });
+        ui.recents_box.append(&row);
+    }
+}
+
+/// What the model should know about the open project.
+fn project_context(ui: &Rc<Ui>) -> String {
+    let current = ui.current.borrow().clone();
+    let store = ui.store.borrow();
+    let Some(p) = current.and_then(|id| store.get(&id).cloned()) else { return String::new() };
+    let mut s = format!("You are working inside the project \"{}\".", p.name);
+    if !p.goal.trim().is_empty() {
+        s += &format!("\nGoal: {}", p.goal.trim());
+    }
+    if !p.instructions.trim().is_empty() {
+        s += &format!("\nInstructions for this project:\n{}", p.instructions.trim());
+    }
+    if !p.memory.is_empty() {
+        s += "\nWhat you remember about this project:";
+        for m in &p.memory {
+            s += &format!("\n- {}", m.text);
+        }
+    }
+    s
 }
 
 fn set_nav(ui: &Rc<Ui>, which: &str) {
+    ui.top_title.set_text(match which {
+        "projects" => "Projects",
+        "artifacts" => "Artifacts",
+        "scheduled" => "Scheduled",
+        _ => "",
+    });
     for (btn, key) in [
         (&ui.nav_new, "new"),
         (&ui.nav_search, "search"),
@@ -337,6 +441,7 @@ fn open_project(ui: &Rc<Ui>, id: &str) {
     update_rail(ui);
     ui.stack.set_visible_child_name("project");
     set_nav(ui, "projects");
+    ui.top_title.set_text(&format!("Projects  /  {}", project.name));
 }
 
 fn update_rail(ui: &Rc<Ui>) {
@@ -1024,16 +1129,53 @@ fn build_ui(app: &adw::Application) {
     let nav_search = nav_button("system-search-symbolic", "Search", false, None);
     let nav_projects = nav_button("view-grid-symbolic", "Projects", false, None);
     let nav_artifacts = nav_button("view-list-symbolic", "Artifacts", false, None);
-    let nav_scheduled = nav_button("alarm-symbolic", "Scheduled", false, Some("3"));
+    let nav_scheduled = nav_button("alarm-symbolic", "Scheduled", false, None);
 
     let sidebar = vbox(2);
     sidebar.add_css_class("sidebar");
-    sidebar.set_size_request(248, -1);
+    sidebar.set_size_request(268, -1);
+    sidebar.append(&lbl("ZO-AI", "wordmark"));
     sidebar.append(&nav_new);
     sidebar.append(&nav_search);
     sidebar.append(&nav_projects);
     sidebar.append(&nav_artifacts);
     sidebar.append(&nav_scheduled);
+
+    // pinned projects and recent chats, scrolling when there are many
+    let lists = vbox(1);
+    let pinned_label = lbl("Pinned", "side-label");
+    let pinned_box = vbox(1);
+    let recents_label = lbl("Recents", "side-label");
+    let recents_box = vbox(1);
+    lists.append(&pinned_label);
+    lists.append(&pinned_box);
+    lists.append(&recents_label);
+    lists.append(&recents_box);
+    let lists_scroll = gtk::ScrolledWindow::new();
+    lists_scroll.set_child(Some(&lists));
+    lists_scroll.set_vexpand(true);
+    lists_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+    sidebar.append(&lists_scroll);
+
+    // who is signed in, and the way to the model settings
+    let side_foot = hbox(10);
+    side_foot.add_css_class("side-foot");
+    let user = glib::user_name().to_string_lossy().into_owned();
+    let initial = user.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "Z".into());
+    let avatar = lbl(&initial, "avatar");
+    avatar.set_halign(gtk::Align::Center);
+    avatar.set_valign(gtk::Align::Center);
+    avatar.set_xalign(0.5);
+    avatar.set_width_chars(2);
+    side_foot.append(&avatar);
+    let who = vbox(0);
+    who.set_hexpand(true);
+    who.set_valign(gtk::Align::Center);
+    who.append(&lbl(&user, "side-user"));
+    side_foot.append(&who);
+    let side_settings = icon_button("emblem-system-symbolic", "Model, key and address", "icon-btn");
+    side_foot.append(&side_settings);
+    sidebar.append(&side_foot);
 
     let reveal = gtk::Revealer::new();
     reveal.set_transition_type(gtk::RevealerTransitionType::SlideRight);
@@ -1042,27 +1184,14 @@ fn build_ui(app: &adw::Application) {
     reveal.set_child(Some(&sidebar));
 
     // ---------- top bar ----------
-    let toggle = icon_button("open-menu-symbolic", "Toggle sidebar", "icon-btn");
+    let toggle = icon_button("sidebar-show-symbolic", "Show or hide the sidebar", "icon-btn");
 
     let topbar = hbox(10);
     topbar.add_css_class("topbar");
     topbar.append(&toggle);
-    topbar.append(&lbl("ZO-AI", "brand"));
-
-    let status = hbox(7);
-    status.add_css_class("status");
-    status.append(&lbl("●", "status-dot"));
-    status.append(&lbl("Running — agentd v0.1.0", ""));
-    topbar.append(&status);
-
-    let spacer = gtk::Box::new(Orientation::Horizontal, 0);
-    spacer.set_hexpand(true);
-    topbar.append(&spacer);
-
-    topbar.append(&lbl(&std::env::var("USER").unwrap_or_default(), "topbar-user"));
-    let granted = gtk::Button::with_label("Granted");
-    granted.add_css_class("granted");
-    topbar.append(&granted);
+    let top_title = lbl("", "top-title");
+    top_title.set_hexpand(true);
+    topbar.append(&top_title);
 
     // ---------- stack ----------
     let stack = gtk::Stack::new();
@@ -1075,245 +1204,54 @@ fn build_ui(app: &adw::Application) {
     chat.set_valign(gtk::Align::Center);
     chat.set_halign(gtk::Align::Fill);
 
-    let hero = vbox(8);
+    let hero = hbox(14);
     hero.set_halign(gtk::Align::Center);
-    hero.set_margin_bottom(26);
-    let h1 = lbl("It’s a late-night jam session.", "hero-title");
-    h1.set_halign(gtk::Align::Center);
-    let h2 = lbl("Ask anything, or type / for skills.", "hero-sub");
-    h2.set_halign(gtk::Align::Center);
-    hero.append(&h1);
-    hero.append(&h2);
+    hero.set_margin_bottom(28);
+    hero.append(&lbl("✺", "hero-mark"));
+    hero.append(&lbl(&chat::greeting(), "hero-title"));
     chat.append(&hero);
 
-    let composer_wrap = hbox(0);
+    let composer_wrap = vbox(6);
     composer_wrap.set_halign(gtk::Align::Center);
-    composer_wrap.set_size_request(760, -1);
+    composer_wrap.set_size_request(720, -1);
+    composer_wrap.set_margin_start(24);
+    composer_wrap.set_margin_end(24);
 
-    let composer = hbox(8);
+    // the card: the text on top, the controls under it
+    let composer = vbox(0);
     composer.add_css_class("composer");
-
-    let plus = icon_button("list-add-symbolic", "Add files, skills, connectors", "tool-btn");
-    composer.append(&plus);
-
     let prompt = gtk::Entry::new();
-    prompt.set_placeholder_text(Some("Type / for skills"));
+    prompt.set_placeholder_text(Some("How can I help you today?"));
     prompt.set_hexpand(true);
     prompt.add_css_class("composer-entry");
     composer.append(&prompt);
-
-    // model pill
-    let model_label = lbl(&chat::pill_text(&zo_core::ai::Selection::load()), "");
-    let model_btn = gtk::Button::new();
-    model_btn.add_css_class("tool-btn");
-    model_btn.add_css_class("pill");
-    {
-        let row = hbox(6);
-        row.append(&icon("applications-science-symbolic", 13));
-        row.append(&model_label);
-        model_btn.set_child(Some(&row));
-    }
-    composer.append(&model_btn);
-
-    // permission pill
-    let perm_label = lbl(zo_core::Mode::load().name(), "");
-    let perm_btn = gtk::Button::new();
-    perm_btn.add_css_class("tool-btn");
-    perm_btn.add_css_class("pill");
-    {
-        let row = hbox(6);
-        row.append(&icon("system-lock-screen-symbolic", 13));
-        row.append(&perm_label);
-        perm_btn.set_child(Some(&row));
-    }
-    composer.append(&perm_btn);
-
-    composer.append(&icon_button(
-        "audio-input-microphone-symbolic",
-        "Voice",
-        "tool-btn",
-    ));
+    let tools = hbox(4);
+    let plus = icon_button("list-add-symbolic", "Add a file or a screenshot", "tool-btn");
+    tools.append(&plus);
+    let tools_spacer = gtk::Box::new(Orientation::Horizontal, 0);
+    tools_spacer.set_hexpand(true);
+    tools.append(&tools_spacer);
     let send_btn = icon_button("go-up-symbolic", "Send", "tool-btn send");
-    composer.append(&send_btn);
-
+    tools.append(&send_btn);
+    composer.append(&tools);
     composer_wrap.append(&composer);
+
+    // under the card: which model, which permission mode
+    let pills = hbox(2);
+    pills.set_halign(gtk::Align::End);
+    let (model_btn, model_label) = chat::pill_button(&chat::pill_text(&zo_core::ai::Selection::load()), true);
+    let (perm_btn, perm_label) = chat::pill_button(zo_core::Mode::load().name(), false);
+    pills.append(&model_btn);
+    pills.append(&perm_btn);
+    composer_wrap.append(&pills);
+    let note = lbl("ZO-AI can make mistakes. Check what it did.", "foot-note");
+    note.set_halign(gtk::Align::Center);
+    note.set_margin_top(6);
+    composer_wrap.append(&note);
+
     chat.append(&composer_wrap);
     let chat_ctl = chat::Ctl::new(&chat, &hero);
     stack.add_named(&chat, Some("chat"));
-
-    // ---------- plus popover ----------
-    let plus_pop = gtk::Popover::new();
-    plus_pop.add_css_class("zo-popover");
-    plus_pop.set_parent(&plus);
-    {
-        let body = vbox(0);
-        body.append(&pop_row(
-            Some("document-open-symbolic"),
-            "Upload or add files",
-            Some("Attach documents, images, code"),
-            Some("Ctrl+U"),
-            false,
-        ));
-        body.append(&pop_row(
-            Some("applications-science-symbolic"),
-            "Skills",
-            Some("Run a saved procedure"),
-            Some("›"),
-            false,
-        ));
-        body.append(&pop_row(
-            Some("mail-attachment-symbolic"),
-            "Connectors",
-            Some("GitHub, Slack, Drive"),
-            Some("›"),
-            false,
-        ));
-        body.append(&pop_row(
-            Some("preferences-system-symbolic"),
-            "Design system",
-            Some("Tokens and components"),
-            Some("›"),
-            false,
-        ));
-        body.append(&pop_row(
-            Some("system-run-symbolic"),
-            "Plugins",
-            Some("MCP servers and extensions"),
-            Some("›"),
-            false,
-        ));
-        body.append(&pop_row(
-            Some("video-display-symbolic"),
-            "Devices",
-            Some("This machine, Waydroid, phone"),
-            Some("›"),
-            false,
-        ));
-
-        let sep = gtk::Box::new(Orientation::Horizontal, 0);
-        sep.add_css_class("pop-sep");
-        body.append(&sep);
-
-        body.append(&pop_row(
-            Some("system-search-symbolic"),
-            "Research",
-            Some("Live web with citations"),
-            Some("›"),
-            false,
-        ));
-        body.append(&pop_row(
-            Some("preferences-other-symbolic"),
-            "Memory",
-            Some("4 tiers · always loaded"),
-            Some("On"),
-            true,
-        ));
-
-        plus_pop.set_child(Some(&body));
-    }
-    {
-        let p = plus_pop.clone();
-        plus.connect_clicked(move |_| p.popup());
-    }
-
-    // ---------- model popover ----------
-    let model_pop = gtk::Popover::new();
-    model_pop.add_css_class("zo-popover");
-    model_pop.set_parent(&model_btn);
-    {
-        let body = vbox(0);
-        body.append(&lbl("Model", "pop-head"));
-
-        let rows: [(&str, &str, &str, Option<&str>, bool); 4] = [
-            ("Fable 5.1", "Most challenging tasks · needs credits", "Fable 5.1 High", Some("Locked"), false),
-            ("Opus 5.5", "Complex work, everyday tasks", "Opus 5.5 High", None, false),
-            ("Sonnet 5.5", "Optimized for simpler tasks", "Sonnet 5.5 Medium", None, false),
-            ("Haiku 5.5", "Fastest for quick answers", "Haiku 5.5 Low", Some("Current"), true),
-        ];
-
-        for (title, sub, label_text, trail, accent) in rows {
-            let row = pop_row(None, title, Some(sub), trail, accent);
-            let label = model_label.clone();
-            let pop = model_pop.clone();
-            row.connect_clicked(move |_| {
-                label.set_text(label_text);
-                pop.popdown();
-            });
-            body.append(&row);
-        }
-
-        let foot = hbox(6);
-        foot.add_css_class("pop-footer");
-        for text in ["Effort: Low", "More models →"] {
-            let chip = gtk::Button::with_label(text);
-            chip.add_css_class("foot-chip");
-            chip.set_hexpand(true);
-            foot.append(&chip);
-        }
-        body.append(&foot);
-
-        model_pop.set_child(Some(&body));
-    }
-    {
-        let p = model_pop.clone();
-        model_btn.connect_clicked(move |_| p.popup());
-    }
-
-    // ---------- permission popover ----------
-    let perm_pop = gtk::Popover::new();
-    perm_pop.add_css_class("zo-popover");
-    perm_pop.set_parent(&perm_btn);
-    {
-        let body = vbox(0);
-        body.append(&lbl("Permission mode", "pop-head"));
-
-        let grid = gtk::Grid::builder()
-            .column_spacing(6)
-            .row_spacing(6)
-            .build();
-
-        let modes: [(&str, &str, &str); 4] = [
-            ("Auto", "Runs anything safe, asks for the rest", "changes-prevent-symbolic"),
-            ("Manual", "Asks before every edit and command", "system-lock-screen-symbolic"),
-            ("Bypass", "Skips approval entirely · destructive", "system-run-symbolic"),
-            ("History", "Keep the last mode per session", "document-open-recent-symbolic"),
-        ];
-
-        for (index, (name, desc, ic)) in modes.iter().enumerate() {
-            let card = gtk::Button::new();
-            card.add_css_class("perm-card");
-            let col = vbox(3);
-            col.append(&icon(ic, 18));
-            col.append(&lbl(name, "perm-name"));
-            let d = lbl(desc, "perm-desc");
-            d.set_wrap(true);
-            d.set_max_width_chars(20);
-            col.append(&d);
-            card.set_child(Some(&col));
-
-            if *name == "Auto" {
-                card.add_css_class("selected");
-            }
-
-            let label = perm_label.clone();
-            let pop = perm_pop.clone();
-            let name_owned = name.to_string();
-            card.connect_clicked(move |_| {
-                label.set_text(&name_owned);
-                zo_core::Mode::parse(&name_owned).save();
-                pop.popdown();
-            });
-
-            grid.attach(&card, (index % 2) as i32, (index / 2) as i32, 1, 1);
-        }
-
-        body.append(&grid);
-        perm_pop.set_child(Some(&body));
-    }
-    {
-        let p = perm_pop.clone();
-        perm_btn.connect_clicked(move |_| p.popup());
-    }
 
     // ---------- projects view ----------
     let projects_page = vbox(0);
@@ -1377,38 +1315,37 @@ fn build_ui(app: &adw::Application) {
     pv_title.set_margin_bottom(20);
     left.append(&pv_title);
 
-    let pv_composer = hbox(8);
+    let pv_wrap = vbox(6);
+    pv_wrap.set_halign(gtk::Align::Fill);
+    let pv_composer = vbox(0);
     pv_composer.add_css_class("composer");
-    let pv_plus = icon_button("list-add-symbolic", "Add", "tool-btn");
-    pv_composer.append(&pv_plus);
     let pv_prompt = gtk::Entry::new();
     pv_prompt.set_placeholder_text(Some("New session"));
     pv_prompt.set_hexpand(true);
     pv_prompt.add_css_class("composer-entry");
     pv_composer.append(&pv_prompt);
-    pv_composer.append(&icon_button(
-        "audio-input-microphone-symbolic",
-        "Voice",
-        "tool-btn",
-    ));
-    pv_composer.append(&icon_button("pan-down-symbolic", "Expand", "tool-btn"));
-    pv_composer.append(&icon_button("audio-volume-high-symbolic", "Waveform", "tool-btn"));
-    left.append(&pv_composer);
+    let pv_tools = hbox(4);
+    let pv_plus = icon_button("list-add-symbolic", "Add a file or a folder", "tool-btn");
+    pv_tools.append(&pv_plus);
+    let pv_tools_spacer = gtk::Box::new(Orientation::Horizontal, 0);
+    pv_tools_spacer.set_hexpand(true);
+    pv_tools.append(&pv_tools_spacer);
+    let pv_send = icon_button("go-up-symbolic", "Send", "tool-btn send");
+    pv_tools.append(&pv_send);
+    pv_composer.append(&pv_tools);
+    pv_wrap.append(&pv_composer);
 
-    let pv_meta = hbox(16);
-    pv_meta.add_css_class("pv-meta");
+    let pv_meta = hbox(2);
     pv_meta.set_halign(gtk::Align::End);
-    pv_meta.set_margin_top(12);
-    let pv_model = gtk::Button::with_label("Haiku 5.5 Low");
-    pv_model.set_has_frame(false);
-    let pv_perm = gtk::Button::with_label("Auto");
-    pv_perm.set_has_frame(false);
+    let (pv_model, pv_model_label) = chat::pill_button(&chat::pill_text(&zo_core::ai::Selection::load()), true);
+    let (pv_perm, pv_perm_label) = chat::pill_button(zo_core::Mode::load().name(), false);
     pv_meta.append(&pv_model);
     pv_meta.append(&pv_perm);
-    left.append(&pv_meta);
+    pv_wrap.append(&pv_meta);
+    left.append(&pv_wrap);
 
     let hint_box = vbox(10);
-    hint_box.set_valign(gtk::Align::End);
+    hint_box.set_valign(gtk::Align::Center);
     hint_box.set_vexpand(true);
     hint_box.set_halign(gtk::Align::Center);
     hint_box.set_margin_top(40);
@@ -1487,6 +1424,15 @@ fn build_ui(app: &adw::Application) {
         pv_hint,
         model_label,
         perm_label,
+        pv_model_label,
+        pv_perm_label,
+        top_title,
+        pinned_label,
+        pinned_box,
+        recents_label,
+        recents_box,
+        side_settings,
+        chat: chat_ctl.clone(),
         rail_instructions: a_instr,
         rail_context: a_ctx,
         rail_memory: a_mem,
@@ -1495,12 +1441,24 @@ fn build_ui(app: &adw::Application) {
 
     // ---------- chat and model ----------
     {
-        let (c, p) = (chat_ctl.clone(), prompt.clone());
-        send_btn.connect_clicked(move |_| c.submit(&p));
-        let (c, p) = (chat_ctl.clone(), prompt.clone());
-        prompt.connect_activate(move |_| c.submit(&p));
+        let (c, p, ui2) = (chat_ctl.clone(), prompt.clone(), ui.clone());
+        send_btn.connect_clicked(move |_| {
+            c.submit(&p);
+            ui2.top_title.set_text(&c.title());
+        });
+        let (c, p, ui2) = (chat_ctl.clone(), prompt.clone(), ui.clone());
+        prompt.connect_activate(move |_| {
+            c.submit(&p);
+            ui2.top_title.set_text(&c.title());
+        });
         let ui2 = ui.clone();
-        model_btn.connect_clicked(move |_| chat::models_sheet(&ui2));
+        model_btn.connect_clicked(move |b| chat::show_model_popover(&ui2, b));
+        let ui2 = ui.clone();
+        perm_btn.connect_clicked(move |b| chat::show_perm_popover(&ui2, b));
+        let p = prompt.clone();
+        plus.connect_clicked(move |b| chat::show_plus_popover(&p, b));
+        let ui2 = ui.clone();
+        ui.side_settings.connect_clicked(move |_| chat::models_sheet(&ui2));
         let c = chat_ctl.clone();
         nav_new.connect_clicked(move |_| c.new_conversation());
     }
@@ -1662,31 +1620,45 @@ fn build_ui(app: &adw::Application) {
         r_sch.connect_clicked(move |_| open_scheduled(&ui2));
     }
 
-    // ---------- workspace model / permission cycle ----------
+    // ---------- project page: model, mode, files and sending ----------
     {
-        let label = ui.model_label.clone();
-        let pv = pv_model.clone();
-        pv.connect_clicked(move |_| {
-            let next = if label.text() == "Haiku 5.5 Low" {
-                "Opus 5.5 High"
-            } else {
-                "Haiku 5.5 Low"
-            };
-            label.set_text(next);
+        let ui2 = ui.clone();
+        pv_model.connect_clicked(move |b| chat::show_model_popover(&ui2, b));
+        let ui2 = ui.clone();
+        pv_perm.connect_clicked(move |b| chat::show_perm_popover(&ui2, b));
+        let p = ui.pv_prompt.clone();
+        pv_plus.connect_clicked(move |b| chat::show_plus_popover(&p, b));
+
+        // a message written in a project starts a chat that knows the project
+        let (ui2, ctl, main_prompt) = (ui.clone(), chat_ctl.clone(), prompt.clone());
+        let send: Rc<dyn Fn()> = Rc::new(move || {
+            let text = ui2.pv_prompt.text().trim().to_string();
+            if text.is_empty() {
+                return;
+            }
+            ui2.pv_prompt.set_text("");
+            ctl.new_conversation();
+            ctl.set_context(project_context(&ui2));
+            ui2.stack.set_visible_child_name("chat");
+            main_prompt.set_text(&text);
+            ctl.submit(&main_prompt);
+            ui2.top_title.set_text(&ctl.title());
         });
+        let s = send.clone();
+        pv_send.connect_clicked(move |_| s());
+        let s = send.clone();
+        ui.pv_prompt.connect_activate(move |_| s());
     }
+
+    refresh_sidebar(&ui);
     {
-        let label = ui.perm_label.clone();
-        let pv = pv_perm.clone();
-        pv.connect_clicked(move |_| {
-            let next = match label.text().as_str() {
-                "Auto" => "Manual",
-                "Manual" => "Bypass",
-                _ => "Auto",
-            };
-            label.set_text(next);
-            zo_core::Mode::parse(next).save();
-        });
+        let weak = Rc::downgrade(&ui);
+        chat_ctl.on_saved(Rc::new(move || {
+            if let Some(ui) = weak.upgrade() {
+                refresh_recents(&ui);
+            }
+        }));
+        refresh_recents(&ui);
     }
 
     // ---------- persistence on close ----------

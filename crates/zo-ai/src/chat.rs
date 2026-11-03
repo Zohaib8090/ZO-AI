@@ -1,6 +1,7 @@
 //! The chat: sending a message to the chosen model, showing what it says and the tools it runs,
 //! and the sheet where the person picks a provider, a model and an API key.
 
+use crate::chats::{self, Chat, Entry};
 use crate::{hbox, lbl, primary, secondary, sheet, vbox, Ui};
 use adw::prelude::*;
 use gtk4 as gtk;
@@ -24,6 +25,13 @@ pub struct Ctl {
     history: RefCell<Vec<Turn>>,
     /// Claude Code mode keeps its own conversation; this is its session id.
     session: RefCell<Option<String>>,
+    /// What the model should know about the project this chat belongs to.
+    extra: RefCell<String>,
+    title: RefCell<String>,
+    id: RefCell<String>,
+    /// Everything shown in this chat, so it can be saved and shown again.
+    entries: RefCell<Vec<Entry>>,
+    on_saved: RefCell<Option<Rc<dyn Fn()>>>,
     busy: Cell<bool>,
 }
 
@@ -45,7 +53,58 @@ impl Ctl {
         scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         scroll.set_visible(false);
         chat.insert_child_after(&scroll, Some(hero));
-        Rc::new(Ctl { chat: chat.clone(), hero: hero.clone(), thread, scroll, history: RefCell::new(Vec::new()), session: RefCell::new(None), busy: Cell::new(false) })
+        Rc::new(Ctl { chat: chat.clone(), hero: hero.clone(), thread, scroll, history: RefCell::new(Vec::new()), session: RefCell::new(None), extra: RefCell::new(String::new()), title: RefCell::new(String::new()), id: RefCell::new(String::new()), entries: RefCell::new(Vec::new()), on_saved: RefCell::new(None), busy: Cell::new(false) })
+    }
+
+    pub fn on_saved(&self, f: Rc<dyn Fn()>) {
+        *self.on_saved.borrow_mut() = Some(f);
+    }
+
+    fn persist(&self) {
+        let entries = self.entries.borrow().clone();
+        if entries.is_empty() {
+            return;
+        }
+        chats::upsert(Chat {
+            id: self.id.borrow().clone(),
+            title: self.title.borrow().clone(),
+            updated: chats::now_millis(),
+            entries,
+            history: self.history.borrow().clone(),
+            session: self.session.borrow().clone(),
+            context: self.extra.borrow().clone(),
+        });
+        let f = self.on_saved.borrow().clone();
+        if let Some(f) = f {
+            f();
+        }
+    }
+
+    /// Opens a saved chat again, ready to continue.
+    pub fn load_chat(&self, chat: Chat) {
+        if self.busy.get() {
+            return;
+        }
+        self.new_conversation();
+        *self.id.borrow_mut() = chat.id;
+        *self.title.borrow_mut() = chat.title;
+        *self.history.borrow_mut() = chat.history;
+        *self.session.borrow_mut() = chat.session;
+        *self.extra.borrow_mut() = chat.context;
+        self.hero.set_visible(false);
+        self.scroll.set_visible(true);
+        self.chat.set_valign(gtk::Align::Fill);
+        for e in chat.entries {
+            self.add(&e.text, &e.kind);
+        }
+    }
+
+    pub fn set_context(&self, text: String) {
+        *self.extra.borrow_mut() = text;
+    }
+
+    pub fn title(&self) -> String {
+        self.title.borrow().clone()
     }
 
     pub fn new_conversation(&self) {
@@ -54,6 +113,10 @@ impl Ctl {
         }
         self.history.borrow_mut().clear();
         *self.session.borrow_mut() = None;
+        self.extra.borrow_mut().clear();
+        self.title.borrow_mut().clear();
+        self.id.borrow_mut().clear();
+        self.entries.borrow_mut().clear();
         while let Some(c) = self.thread.first_child() {
             self.thread.remove(&c);
         }
@@ -62,7 +125,13 @@ impl Ctl {
         self.chat.set_valign(gtk::Align::Center);
     }
 
+    /// Shows a line and remembers it for saving.
     fn add(&self, text: &str, class: &str) -> gtk::Label {
+        self.entries.borrow_mut().push(Entry { kind: class.to_string(), text: text.to_string() });
+        self.add_plain(text, class)
+    }
+
+    fn add_plain(&self, text: &str, class: &str) -> gtk::Label {
         let l = lbl(text, class);
         l.set_wrap(true);
         l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
@@ -89,12 +158,18 @@ impl Ctl {
         self.chat.set_valign(gtk::Align::Fill);
         prompt.set_text("");
         self.add(&text, "msg-user");
+        if self.title.borrow().is_empty() {
+            let t: String = text.chars().take(48).collect();
+            *self.title.borrow_mut() = t;
+        }
+        let system = format!("{}\n\n{}", agent::SYSTEM_PROMPT, self.extra.borrow());
+        let extra = self.extra.borrow().clone();
 
         let claude = sel.provider == "claude-code";
         let cfg = if claude {
             None
         } else {
-            match Config::from_selection(&sel, agent::SYSTEM_PROMPT) {
+            match Config::from_selection(&sel, &system) {
                 Ok(c) => Some(c),
                 Err(e) => {
                     self.add(&e, "msg-error");
@@ -103,9 +178,12 @@ impl Ctl {
             }
         };
         let model = if sel.model.is_empty() { "sonnet".to_string() } else { sel.model.clone() };
+        if self.id.borrow().is_empty() {
+            *self.id.borrow_mut() = format!("c{}", chats::now_millis());
+        }
         self.busy.set(true);
         prompt.set_sensitive(false);
-        let thinking = self.add("Thinking…", "msg-tool");
+        let thinking = self.add_plain("Thinking…", "msg-tool");
         let (tx, rx) = mpsc::channel::<Msg>();
         let mut history = std::mem::take(&mut *self.history.borrow_mut());
         let mut session = self.session.borrow().clone();
@@ -115,7 +193,7 @@ impl Ctl {
                 let _ = tx2.send(Msg::Ev(e));
             };
             let r = match &cfg {
-                None => claude_code::run(&model, &mut session, &text, &mut emit),
+                None => claude_code::run(&model, &mut session, &text, &extra, &mut emit),
                 Some(cfg) => agent::run(cfg, &mut history, &text, zo_core::Mode::load(), &zo_core::approval::AppApprover, &mut emit),
             };
             let _ = tx.send(Msg::Done(r, history, session));
@@ -145,6 +223,7 @@ impl Ctl {
                         if let Err(e) = result {
                             me.add(&e, "msg-error");
                         }
+                        me.persist();
                         me.busy.set(false);
                         prompt.set_sensitive(true);
                         prompt.grab_focus();
@@ -162,10 +241,26 @@ impl Ctl {
     }
 }
 
-/// What the model pill says.
+/// A friendlier name for the model ids people know.
+fn nice_name(model: &str) -> String {
+    match model {
+        "claude-fable-5-1" => "Fable 5.1",
+        "claude-opus-5-5" => "Opus 5.5",
+        "claude-sonnet-5-5" => "Sonnet 5.5",
+        "claude-haiku-5-5" => "Haiku 5.5",
+        "sonnet" => "Sonnet",
+        "opus" => "Opus",
+        "haiku" => "Haiku",
+        other => other,
+    }
+    .to_string()
+}
+
+/// What the model button says.
 pub fn pill_text(sel: &Selection) -> String {
     match providers::find(&sel.provider) {
-        Some(_) if !sel.model.is_empty() => sel.model.clone(),
+        Some(_) if !sel.model.is_empty() => nice_name(&sel.model),
+        Some(p) if p.protocol == Protocol::ClaudeCode => "Sonnet".to_string(),
         _ => "Choose a model".to_string(),
     }
 }
@@ -328,9 +423,213 @@ pub fn models_sheet(ui: &Rc<Ui>) {
             }
             sel.save();
             ui2.model_label.set_text(&pill_text(&sel));
+            ui2.pv_model_label.set_text(&pill_text(&sel));
             w.close();
         });
     }
     win.present();
 }
 
+
+// ---------------------------------------------------------------- the home page pieces
+
+/// "Good evening, Zohaib": the greeting on the home page.
+pub fn greeting() -> String {
+    let hour = glib::DateTime::now_local().map(|d| d.hour()).unwrap_or(12);
+    let part = match hour {
+        5..=11 => "Good morning",
+        12..=17 => "Good afternoon",
+        _ => "Good evening",
+    };
+    let full = glib::real_name().to_string_lossy().into_owned();
+    let mut name = full.split_whitespace().next().unwrap_or("").to_string();
+    if name.is_empty() || name == "Unknown" {
+        name = glib::user_name().to_string_lossy().into_owned();
+        if let Some(c) = name.get(..1) {
+            name = format!("{}{}", c.to_uppercase(), &name[1..]);
+        }
+    }
+    if name.is_empty() {
+        part.to_string()
+    } else {
+        format!("{part}, {name}")
+    }
+}
+
+/// A flat text button for the line under the composer: the model, or the permission mode.
+pub fn pill_button(text: &str, chevron: bool) -> (gtk::Button, gtk::Label) {
+    let label = lbl(text, "");
+    let b = gtk::Button::new();
+    b.add_css_class("tool-btn");
+    b.add_css_class("pill");
+    let row = hbox(6);
+    row.append(&label);
+    if chevron {
+        row.append(&crate::icon("pan-down-symbolic", 12));
+    }
+    b.set_child(Some(&row));
+    (b, label)
+}
+
+fn new_popover(parent: &gtk::Button) -> gtk::Popover {
+    let pop = gtk::Popover::new();
+    pop.add_css_class("zo-popover");
+    pop.set_position(gtk::PositionType::Top);
+    pop.set_parent(parent);
+    pop.connect_closed(|p| {
+        let p = p.clone();
+        glib::idle_add_local_once(move || p.unparent());
+    });
+    pop
+}
+
+/// A row in a popover: a title, a small line under it, and a tick when it is the current choice.
+fn choice_row(title: &str, sub: Option<&str>, checked: bool) -> gtk::Button {
+    let b = gtk::Button::new();
+    b.set_has_frame(false);
+    b.add_css_class("pop-row");
+    let row = hbox(18);
+    let col = vbox(2);
+    col.set_hexpand(true);
+    col.append(&lbl(title, "pop-title"));
+    if let Some(s) = sub {
+        let l = lbl(s, "pop-sub");
+        l.set_wrap(true);
+        l.set_max_width_chars(34);
+        col.append(&l);
+    }
+    row.append(&col);
+    if checked {
+        let tick = crate::icon("object-select-symbolic", 16);
+        tick.add_css_class("pop-check");
+        row.append(&tick);
+    }
+    b.set_child(Some(&row));
+    b
+}
+
+fn separator() -> gtk::Box {
+    let sep = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    sep.add_css_class("pop-sep");
+    sep
+}
+
+fn model_choices(p: &providers::Provider, sel: &Selection) -> Vec<(String, String, Option<String>)> {
+    let claude = |id: &str, title: &str, desc: &str| (id.to_string(), title.to_string(), Some(desc.to_string()));
+    match p.id {
+        "anthropic" => vec![
+            claude("claude-fable-5-1", "Fable 5.1", "For your toughest challenges"),
+            claude("claude-opus-5-5", "Opus 5.5", "For complex work and everyday tasks"),
+            claude("claude-sonnet-5-5", "Sonnet 5.5", "Most efficient for simpler tasks"),
+            claude("claude-haiku-5-5", "Haiku 5.5", "Fastest for quick answers"),
+        ],
+        "claude-code" => vec![
+            claude("sonnet", "Sonnet", "Most efficient for simpler tasks"),
+            claude("opus", "Opus", "For complex work and everyday tasks"),
+            claude("haiku", "Haiku", "Fastest for quick answers"),
+        ],
+        _ => {
+            let mut v: Vec<(String, String, Option<String>)> = p.models.iter().map(|m| (m.to_string(), m.to_string(), None)).collect();
+            if !sel.model.is_empty() && sel.provider == p.id && !v.iter().any(|(id, _, _)| *id == sel.model) {
+                v.insert(0, (sel.model.clone(), sel.model.clone(), None));
+            }
+            v
+        }
+    }
+}
+
+/// The model menu above the model button.
+pub fn show_model_popover(ui: &Rc<Ui>, btn: &gtk::Button) {
+    let sel = Selection::load();
+    let pop = new_popover(btn);
+    let body = vbox(0);
+    match providers::find(&sel.provider) {
+        Some(p) => {
+            body.append(&lbl(p.name, "pop-head"));
+            for (id, title, desc) in model_choices(p, &sel) {
+                let row = choice_row(&title, desc.as_deref(), sel.provider == p.id && sel.model == id);
+                let (ui2, pop2, provider_id) = (ui.clone(), pop.clone(), p.id.to_string());
+                row.connect_clicked(move |_| {
+                    let mut s = Selection::load();
+                    s.provider = provider_id.clone();
+                    s.model = id.clone();
+                    s.save();
+                    ui2.model_label.set_text(&pill_text(&s));
+                    ui2.pv_model_label.set_text(&pill_text(&s));
+                    pop2.popdown();
+                });
+                body.append(&row);
+            }
+            body.append(&separator());
+        }
+        None => body.append(&lbl("Choose a provider to begin", "pop-head")),
+    }
+    let more = choice_row("Provider, key and address…", None, false);
+    let (ui2, pop2) = (ui.clone(), pop.clone());
+    more.connect_clicked(move |_| {
+        pop2.popdown();
+        models_sheet(&ui2);
+    });
+    body.append(&more);
+    pop.set_child(Some(&body));
+    pop.popup();
+}
+
+/// The permission menu above the mode button.
+pub fn show_perm_popover(ui: &Rc<Ui>, btn: &gtk::Button) {
+    let current = zo_core::Mode::load().name();
+    let pop = new_popover(btn);
+    let body = vbox(0);
+    body.append(&lbl("Permission mode", "pop-head"));
+    let modes = [
+        ("Manual", "ZO-AI asks before every change and every command."),
+        ("Auto", "Looking around runs on its own; changes and other commands ask first."),
+        ("Bypass", "Nothing asks. Use with care."),
+    ];
+    for (name, desc) in modes {
+        let row = choice_row(name, Some(desc), name == current);
+        let (ui2, pop2) = (ui.clone(), pop.clone());
+        row.connect_clicked(move |_| {
+            zo_core::Mode::parse(name).save();
+            ui2.perm_label.set_text(name);
+            ui2.pv_perm_label.set_text(name);
+            pop2.popdown();
+        });
+        body.append(&row);
+    }
+    pop.set_child(Some(&body));
+    pop.popup();
+}
+
+/// The "+" menu: put a file or a folder path into the message, so the model can look at it.
+pub fn show_plus_popover(prompt: &gtk::Entry, btn: &gtk::Button) {
+    let pop = new_popover(btn);
+    let body = vbox(0);
+    for (title, sub, folder) in [("Add a file", "Puts its path in your message", false), ("Add a folder", "Puts its path in your message", true)] {
+        let row = choice_row(title, Some(sub), false);
+        let (prompt2, pop2) = (prompt.clone(), pop.clone());
+        row.connect_clicked(move |_| {
+            pop2.popdown();
+            let dialog = gtk::FileDialog::new();
+            let window = prompt2.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+            let prompt3 = prompt2.clone();
+            let done = move |path: Option<std::path::PathBuf>| {
+                if let Some(p) = path {
+                    let old = prompt3.text();
+                    let sep = if old.is_empty() || old.ends_with(' ') { "" } else { " " };
+                    prompt3.set_text(&format!("{old}{sep}{} ", p.display()));
+                    prompt3.set_position(-1);
+                    prompt3.grab_focus();
+                }
+            };
+            if folder {
+                dialog.select_folder(window.as_ref(), gtk::gio::Cancellable::NONE, move |r| done(r.ok().and_then(|f| f.path())));
+            } else {
+                dialog.open(window.as_ref(), gtk::gio::Cancellable::NONE, move |r| done(r.ok().and_then(|f| f.path())));
+            }
+        });
+        body.append(&row);
+    }
+    pop.set_child(Some(&body));
+    pop.popup();
+}
