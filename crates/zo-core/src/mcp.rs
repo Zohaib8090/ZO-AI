@@ -5,6 +5,14 @@ use crate::policy::{decide, Decision, Mode, Risk};
 use crate::{audit, tools};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
+use std::sync::{Mutex, OnceLock};
+
+/// The MCP servers added in Settings, offered through this server too, so a client that only knows this one (Claude Code, started by ZO-AI)
+/// also gets their tools, and every call of theirs asks first just as in the chat. Only when `ZO_MCP_EXTERNAL=1` (ZO-AI sets it).
+fn external() -> Option<&'static Mutex<crate::mcp_client::External>> {
+    static EXTERNAL: OnceLock<Mutex<crate::mcp_client::External>> = OnceLock::new();
+    (std::env::var("ZO_MCP_EXTERNAL").as_deref() == Ok("1")).then(|| EXTERNAL.get_or_init(|| Mutex::new(crate::mcp_client::External::start())))
+}
 
 /// One line that says what is about to happen, for the approval dialog and the log.
 pub fn summarize(tool: &str, args: &Value) -> String {
@@ -21,7 +29,7 @@ pub fn summarize(tool: &str, args: &Value) -> String {
 
 /// Check the policy, ask if needed, run the tool, log it. Used by the app and by the MCP server.
 pub fn execute(name: &str, args: &Value, mode: Mode, approver: &dyn Approver) -> Result<String, String> {
-    let Some(def) = tools::definitions().iter().find(|d| d.name == name) else {
+    let Some(def) = tools::find(name) else {
         return Err(format!("unknown tool: {name}"));
     };
     let shell_cmd = (def.risk == Risk::Shell).then(|| args.get("cmd").and_then(Value::as_str).unwrap_or(""));
@@ -47,23 +55,55 @@ pub fn handle(msg: &Value, mode: Mode, approver: &dyn Approver) -> Option<Value>
     let id = msg.get("id")?; // no id: a notification
     let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
     Some(match method {
-        "initialize" => reply(id, json!({
-            "protocolVersion": msg["params"]["protocolVersion"].as_str().unwrap_or("2025-03-26"),
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "zo-mcp", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "Controls Zohara OS: files, shell, screenshots, processes, snapshots, Android. Risky tools ask the person first in the ZO-AI app.",
-        })),
+        "initialize" => {
+            let mut instructions = "Controls Zohara OS: files, shell, screenshots, processes, snapshots, Android. Risky tools ask the person first in the ZO-AI app.".to_string();
+            if let Some(ext) = external() {
+                let ext = ext.lock().unwrap_or_else(|p| p.into_inner());
+                for (server, text) in ext.instructions() {
+                    instructions.push_str(&format!("\n[{server}] {text}"));
+                }
+                if let Some(note) = ext.problems_note() {
+                    instructions.push_str(&format!("\n{note}"));
+                }
+            }
+            reply(id, json!({
+                "protocolVersion": msg["params"]["protocolVersion"].as_str().unwrap_or("2025-03-26"),
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "zo-mcp", "version": env!("CARGO_PKG_VERSION") },
+                "instructions": instructions,
+            }))
+        }
         "ping" => reply(id, json!({})),
-        "tools/list" => reply(id, json!({ "tools": tools::definitions().iter()
-            .map(|d| json!({ "name": d.name, "description": d.description, "inputSchema": d.schema() })).collect::<Vec<_>>() })),
+        "tools/list" => {
+            let mut list: Vec<Value> = tools::definitions().iter().map(|d| json!({ "name": d.name, "description": d.description, "inputSchema": d.schema() })).collect();
+            if let Some(ext) = external() {
+                let ext = ext.lock().unwrap_or_else(|p| p.into_inner());
+                list.extend(ext.tools().iter().map(|t| json!({ "name": t.public_name(), "description": t.description, "inputSchema": t.schema })));
+            }
+            reply(id, json!({ "tools": list }))
+        }
         "tools/call" => {
             let name = msg["params"]["name"].as_str().unwrap_or("");
             let args = msg["params"].get("arguments").cloned().unwrap_or_else(|| json!({}));
-            let (text, is_error) = match execute(name, &args, mode, approver) {
+            let outcome = match external() {
+                Some(ext) => {
+                    let mut ext = ext.lock().unwrap_or_else(|p| p.into_inner());
+                    if ext.owns(name) { ext.execute(name, &args, mode, approver) } else { execute(name, &args, mode, approver) }
+                }
+                None => execute(name, &args, mode, approver),
+            };
+            let (text, is_error) = match outcome {
                 Ok(t) => (t, false),
                 Err(e) => (e, true),
             };
-            reply(id, json!({ "content": [{ "type": "text", "text": text }], "isError": is_error }))
+            let mut content = vec![json!({ "type": "text", "text": text })];
+            // a screenshot or a picture file is returned as a picture too, so a client that can see (Claude Code, say) sees it
+            if !is_error && (name == "zohara_ss" || name == "zohara_view_image") {
+                if let Some((mime, data)) = crate::ai::wire::encode_path(text.trim()) {
+                    content.push(json!({ "type": "image", "data": data, "mimeType": mime }));
+                }
+            }
+            reply(id, json!({ "content": content, "isError": is_error }))
         }
         _ => failure(id, -32601, "method not found"),
     })
@@ -120,6 +160,20 @@ mod tests {
         let r = ask(json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"zohara_fs_rm","arguments":{"path":"/tmp/zo-never"}}}), Mode::Auto);
         assert_eq!(r["result"]["isError"], true);
         assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("did not approve"));
+    }
+
+    #[test]
+    fn a_picture_comes_back_as_an_image_for_clients_that_can_see() {
+        let f = std::env::temp_dir().join(format!("zo-mcp-pic-{}.png", std::process::id()));
+        std::fs::write(&f, b"abc").unwrap();
+        let r = ask(json!({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"zohara_view_image","arguments":{"path": f.to_string_lossy()}}}), Mode::Auto);
+        assert_eq!(r["result"]["isError"], false);
+        assert_eq!(r["result"]["content"][1]["type"], "image");
+        assert_eq!(r["result"]["content"][1]["mimeType"], "image/png");
+        assert_eq!(r["result"]["content"][1]["data"], "YWJj");
+        let r = ask(json!({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"zohara_view_image","arguments":{"path":"/no/such.png"}}}), Mode::Auto);
+        assert_eq!(r["result"]["isError"], true);
+        let _ = std::fs::remove_file(f);
     }
 
     #[test]

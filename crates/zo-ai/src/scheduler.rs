@@ -33,7 +33,7 @@ fn run_task(task: &Task) -> Chat {
     let mut session = None;
     let result = {
         let mut on = |e: Event| match e {
-            Event::TextDelta(_) => {}
+            Event::TextDelta(_) | Event::Usage(_) => {}
             Event::Text(t) => entries.push(entry("msg-ai", t)),
             Event::ToolStart { name, summary } => entries.push(entry("msg-tool", format!("▸ {name}  {}", summary.lines().nth(1).unwrap_or("")))),
             Event::ToolDone { ok, output, .. } => {
@@ -43,7 +43,7 @@ fn run_task(task: &Task) -> Chat {
         };
         if sel.provider == "claude-code" {
             let model = if sel.model.is_empty() { "sonnet".to_string() } else { sel.model.clone() };
-            claude_code::run(&model, &mut session, &task.prompt, &system, &Arc::new(AtomicBool::new(false)), &mut on)
+            claude_code::run(&model, sel.effort.as_deref(), &mut session, &task.prompt, &system, &Arc::new(AtomicBool::new(false)), &mut on)
         } else {
             match Config::from_selection(&sel, &system) {
                 Ok(cfg) => agent::run(&cfg, &mut history, &task.prompt, zo_core::Mode::load(), &zo_core::approval::AppApprover, &AtomicBool::new(false), &mut on),
@@ -54,7 +54,7 @@ fn run_task(task: &Task) -> Chat {
     if let Err(e) = result {
         entries.push(entry("msg-error", e));
     }
-    Chat { id: format!("c{now}"), title: format!("Scheduled: {}", task.title), updated: now, entries, history, session, context: String::new(), pinned: false }
+    Chat { id: format!("c{now}"), title: format!("Scheduled: {}", task.title), updated: now, entries, history, session, context: String::new(), pinned: false, branches: Default::default() }
 }
 
 thread_local! {

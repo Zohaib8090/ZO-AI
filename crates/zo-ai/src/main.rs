@@ -9,6 +9,7 @@ use zo_core::store::chats;
 use zo_core::store::artifacts;
 use zo_core::store::schedules;
 mod composer;
+mod dock;
 mod markdown;
 use zo_core::store::projects as model;
 mod quick;
@@ -23,6 +24,7 @@ use gtk::{gio, glib, Orientation};
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use model::{Attachment, Project, Schedule, Store};
@@ -56,15 +58,16 @@ pub(crate) fn mark(size: i32) -> gtk::Image {
         Ok(t) => gtk::Image::from_paintable(Some(&t)),
         Err(_) => gtk::Image::new(),
     };
-    img.set_pixel_size(size);
+    img.add_css_class(&format!("ic{}", size.clamp(8, 40)));
     img.set_halign(gtk::Align::Center);
     img.set_valign(gtk::Align::Center);
     img
 }
 
 fn icon(name: &str, size: i32) -> gtk::Image {
+    // the size comes from the stylesheet (class ic<size>), which scales with the interface size
     let img = gtk::Image::from_icon_name(name);
-    img.set_pixel_size(size);
+    img.add_css_class(&format!("ic{}", size.clamp(8, 40)));
     img
 }
 
@@ -155,8 +158,11 @@ fn pop_row(
 
 struct Ui {
     window: adw::ApplicationWindow,
+    /// What the panels of `sheet()` open over.
+    sheet_host: gtk::Overlay,
     stack: gtk::Stack,
     reveal: gtk::Revealer,
+    dock: Rc<dock::Dock>,
     pinned: Cell<bool>,
 
     store: RefCell<Store>,
@@ -492,8 +498,13 @@ fn open_new_task(ui: &Rc<Ui>, project: Option<String>) {
     body.append(&field("When", &when));
     let preview = lbl("", "field-hint");
     body.append(&preview);
-    let repeat = gtk::DropDown::from_strings(&["Once", "Every hour", "Every day", "Every week"]);
+    let repeat = gtk::DropDown::from_strings(&["Once", "Every hour", "Every day", "Every week", "Every month"]);
     body.append(&field("Repeat", &repeat));
+    // or your own interval, which wins over the choice above
+    let custom = gtk::Entry::new();
+    custom.set_placeholder_text(Some("or your own: every 3 days, every 90 minutes, every 2 months"));
+    custom.add_css_class("field-input");
+    body.append(&custom);
     let error = lbl("", "field-hint");
     body.append(&error);
     {
@@ -519,7 +530,9 @@ fn open_new_task(ui: &Rc<Ui>, project: Option<String>) {
     {
         let (w, ui2) = (win.clone(), ui.clone());
         create.connect_clicked(move |_| {
-            let repeat_id = ["once", "hourly", "daily", "weekly"][repeat.selected() as usize];
+            let chosen = ["once", "hourly", "daily", "weekly", "monthly"][repeat.selected() as usize];
+            let typed = custom.text().to_string();
+            let repeat_id = if typed.trim().is_empty() { chosen } else { typed.trim() };
             let result = schedules::parse_when(&when.text()).and_then(|ms| schedules::add("", &what.text(), ms, repeat_id, project.clone()));
             match result {
                 Ok(_) => {
@@ -596,6 +609,53 @@ fn refresh_search(ui: &Rc<Ui>) {
     }
 }
 
+/// Asks "are you sure?" before something is deleted; `on_yes` runs only when the person confirms.
+pub(crate) fn confirm_delete(ui: &Rc<Ui>, title: &str, body: &str, on_yes: impl Fn() + 'static) {
+    let dialog = adw::AlertDialog::new(Some(title), Some(body));
+    dialog.add_responses(&[("cancel", "Cancel"), ("delete", "Delete")]);
+    dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_close_response("cancel");
+    dialog.connect_response(None, move |_, id| {
+        if id == "delete" {
+            on_yes();
+        }
+    });
+    dialog.present(Some(&ui.window));
+}
+
+// ---------------------------------------------------------------- interface size (Ctrl +, Ctrl -, Ctrl 0)
+
+fn zoom_file() -> std::path::PathBuf {
+    zo_core::audit::config_dir().join("zoom")
+}
+
+fn saved_zoom() -> Option<f64> {
+    std::fs::read_to_string(zoom_file()).ok()?.trim().parse::<f64>().ok().filter(|z| (0.6..=2.0).contains(z))
+}
+
+/// A starting size that fits the screen: a little smaller on small screens, a little larger on very big ones.
+fn auto_zoom() -> f64 {
+    let geo = gtk::gdk::Display::default()
+        .and_then(|d| d.monitors().item(0))
+        .and_then(|m| m.downcast::<gtk::gdk::Monitor>().ok())
+        .map(|m| m.geometry());
+    match geo {
+        Some(g) if g.width() < 1280 || g.height() < 720 => 0.85,
+        Some(g) if g.width() < 1500 || g.height() < 800 => 0.92,
+        Some(g) if g.width() >= 3000 => 1.25,
+        Some(g) if g.width() >= 2400 => 1.12,
+        _ => 1.0,
+    }
+}
+
+/// Scales every text (and so every row and button that follows its text) through GTK's font resolution.
+fn apply_zoom(z: f64) {
+    if let Some(settings) = gtk::Settings::default() {
+        settings.set_gtk_xft_dpi((96.0 * 1024.0 * z).round() as i32);
+    }
+}
+
 /// The recent chats in the sidebar (the pinned ones are in the Pinned list above).
 pub(crate) fn refresh_recents(ui: &Rc<Ui>) {
     while let Some(c) = ui.recents_box.first_child() {
@@ -619,8 +679,11 @@ pub(crate) fn refresh_recents(ui: &Rc<Ui>) {
                     refresh_recents(&ui3);
                 }),
                 Box::new(move || {
-                    chats::delete(&id4);
-                    refresh_recents(&ui4);
+                    let (ui5, id5) = (ui4.clone(), id4.clone());
+                    confirm_delete(&ui4, "Delete this chat?", "The conversation is removed from this computer. This cannot be undone.", move || {
+                        chats::delete(&id5);
+                        refresh_recents(&ui5);
+                    });
                 }),
             ],
         );
@@ -862,47 +925,105 @@ fn update_rail(ui: &Rc<Ui>) {
 
 // ---------------------------------------------------------------- sheets
 
-pub(crate) fn sheet(ui: &Rc<Ui>, title: &str, width: i32) -> (gtk::Window, gtk::Box, gtk::Box) {
-    let win = gtk::Window::builder()
-        .title(title)
-        .transient_for(&ui.window)
-        .modal(true)
-        .default_width(width)
-        .build();
-    win.add_css_class("sheet");
+/// A panel that opens over the app's own window (not a window of its own). It scrolls when its content is taller than the window.
+/// A short message in the place of the prompt hint (the microphone has no other place to say what went wrong).
+fn mic_note(p: &composer::Prompt, msg: &str) {
+    p.set_placeholder(msg);
+    let p = p.clone();
+    glib::timeout_add_local_once(Duration::from_secs(6), move || p.set_placeholder("How can I help you today?"));
+}
 
-    let root = vbox(0);
-    root.add_css_class("zo-root");
+#[derive(Clone)]
+pub(crate) struct Sheet {
+    host: gtk::Overlay,
+    scrim: gtk::Box,
+}
+
+impl Sheet {
+    pub(crate) fn present(&self) {
+        if self.scrim.parent().is_none() {
+            self.host.add_overlay(&self.scrim);
+        }
+        self.scrim.grab_focus();
+    }
+
+    pub(crate) fn close(&self) {
+        if self.scrim.parent().is_some() {
+            self.host.remove_overlay(&self.scrim);
+        }
+    }
+}
+
+pub(crate) fn sheet(ui: &Rc<Ui>, title: &str, width: i32) -> (Sheet, gtk::Box, gtk::Box) {
+    // the dimmed backdrop, which also stops clicks from reaching what is behind
+    let scrim = vbox(0);
+    scrim.add_css_class("sheet-scrim");
+    scrim.set_hexpand(true);
+    scrim.set_vexpand(true);
+    scrim.set_focusable(true);
+
+    let clamp = adw::Clamp::new();
+    clamp.set_maximum_size(width);
+    clamp.set_tightening_threshold(width);
+    clamp.set_valign(gtk::Align::Center);
+    clamp.set_vexpand(true);
+    clamp.set_margin_start(24);
+    clamp.set_margin_end(24);
+    clamp.set_margin_top(24);
+    clamp.set_margin_bottom(24);
+
+    let card = vbox(0);
+    card.add_css_class("sheet-card");
 
     let head = hbox(8);
     head.add_css_class("sheet-head");
     let t = lbl(title, "sheet-title");
     t.set_hexpand(true);
+    t.set_xalign(0.0);
     head.append(&t);
-
     let close = icon_button("window-close-symbolic", "Close", "sheet-close");
     head.append(&close);
 
     let body = vbox(12);
     body.add_css_class("sheet-body");
-    body.set_vexpand(true);
 
     let foot = hbox(8);
     foot.add_css_class("sheet-foot");
     foot.set_halign(gtk::Align::End);
-    foot.set_valign(gtk::Align::End);
 
-    root.append(&head);
-    root.append(&body);
-    root.append(&foot);
-    win.set_child(Some(&root));
+    // the middle part scrolls: as tall as its content, but never taller than about two thirds of the window
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_child(Some(&body));
+    scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+    scroll.set_propagate_natural_height(true);
+    scroll.set_max_content_height(((ui.window.height() as f64) * 0.66).max(260.0) as i32);
 
+    card.append(&head);
+    card.append(&scroll);
+    card.append(&foot);
+    clamp.set_child(Some(&card));
+    scrim.append(&clamp);
+
+    let sheet = Sheet { host: ui.sheet_host.clone(), scrim: scrim.clone() };
     {
-        let w = win.clone();
-        close.connect_clicked(move |_| w.close());
+        let s = sheet.clone();
+        close.connect_clicked(move |_| s.close());
     }
-
-    (win, body, foot)
+    {
+        // Esc closes it
+        let s = sheet.clone();
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(move |_, key, _, _| {
+            if key == gtk::gdk::Key::Escape {
+                s.close();
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        scrim.add_controller(keys);
+    }
+    (sheet, body, foot)
 }
 
 pub(crate) fn field(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
@@ -1520,11 +1641,19 @@ fn build_ui(app: &adw::Application) {
 
     let sidebar = vbox(2);
     sidebar.add_css_class("sidebar");
-    sidebar.set_size_request(268, -1);
+    {
+        let sb = sidebar.clone();
+        theme::on_zoom(move |_| sb.set_size_request(theme::zs(268), -1));
+    }
     let brand = hbox(10);
     brand.set_margin_start(8);
     brand.append(&mark(26));
-    brand.append(&lbl("ZO-AI", "wordmark"));
+    let wordmark = lbl("ZO-AI", "wordmark");
+    wordmark.set_hexpand(true);
+    brand.append(&wordmark);
+    // while the sidebar is open, the button that closes it lives here; the top bar's copy only shows when it is closed
+    let side_toggle = icon_button("sidebar-show-symbolic", "Hide the sidebar", "icon-btn");
+    brand.append(&side_toggle);
     sidebar.append(&brand);
     sidebar.append(&nav_new);
     sidebar.append(&nav_search);
@@ -1574,15 +1703,36 @@ fn build_ui(app: &adw::Application) {
     reveal.set_reveal_child(true);
     reveal.set_child(Some(&sidebar));
 
+    // The sidebar floats over the window (so it can slide out over the chat when peeking); `space` pushes the chat aside
+    // by the same width while the sidebar is pinned open.
+    let space = gtk::Revealer::new();
+    space.set_transition_type(gtk::RevealerTransitionType::SlideRight);
+    space.set_transition_duration(180);
+    space.set_reveal_child(true);
+    let space_fill = vbox(0);
+    space.set_child(Some(&space_fill));
+    let same_width = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
+    same_width.add_widget(&sidebar);
+    same_width.add_widget(&space_fill);
+    reveal.set_halign(gtk::Align::Start);
+    reveal.set_valign(gtk::Align::Fill);
+
     // ---------- top bar ----------
     let toggle = icon_button("sidebar-show-symbolic", "Show or hide the sidebar", "icon-btn");
 
     let topbar = hbox(10);
     topbar.add_css_class("topbar");
-    topbar.append(&toggle);
+    // (the closed-sidebar button is an overlay in the window's top-left corner, added below)
     let top_title = lbl("", "top-title");
     top_title.set_hexpand(true);
     topbar.append(&top_title);
+    // The window has no title bar of its own, so it carries its own minimize, maximize and close buttons (they follow the
+    // desktop's button layout and style), and the bar drags the window and maximizes it on a double click.
+    let term_btn = icon_button("utilities-terminal-symbolic", "Terminal: the AI can use it too", "icon-btn");
+    let web_btn = icon_button("web-browser-symbolic", "Browser: the AI can use it too", "icon-btn");
+    topbar.append(&web_btn);
+    topbar.append(&term_btn);
+    topbar.append(&gtk::WindowControls::new(gtk::PackType::End));
 
     // ---------- stack ----------
     let stack = gtk::Stack::new();
@@ -1603,8 +1753,8 @@ fn build_ui(app: &adw::Application) {
     chat.append(&hero);
 
     let composer_wrap = vbox(6);
-    composer_wrap.set_halign(gtk::Align::Center);
-    composer_wrap.set_size_request(720, -1);
+    composer_wrap.set_halign(gtk::Align::Fill);
+    composer_wrap.set_hexpand(true);
     composer_wrap.set_margin_start(24);
     composer_wrap.set_margin_end(24);
 
@@ -1616,6 +1766,8 @@ fn build_ui(app: &adw::Application) {
     let tools = hbox(4);
     let plus = icon_button("list-add-symbolic", "Add a file or a screenshot", "tool-btn");
     tools.append(&plus);
+    let mic_btn = icon_button("audio-input-microphone-symbolic", "Speak instead of typing (Zohara voice to text)", "tool-btn mic");
+    tools.append(&mic_btn);
     let tools_spacer = gtk::Box::new(Orientation::Horizontal, 0);
     tools_spacer.set_hexpand(true);
     tools.append(&tools_spacer);
@@ -1637,8 +1789,41 @@ fn build_ui(app: &adw::Application) {
     note.set_margin_top(6);
     composer_wrap.append(&note);
 
-    chat.append(&composer_wrap);
+    // as wide as 720 px, and narrower when the window (or the side panel) leaves less room
+    let composer_clamp = adw::Clamp::new();
+    {
+        let cc = composer_clamp.clone();
+        theme::on_zoom(move |_| {
+            cc.set_maximum_size(theme::zs(720));
+            cc.set_tightening_threshold(theme::zs(600));
+        });
+    }
+    composer_clamp.set_child(Some(&composer_wrap));
+    chat.append(&composer_clamp);
     let chat_ctl = chat::Ctl::new(&chat, &hero);
+    // Copies the whole conversation (a drag-selection cannot cross from one message to the next).
+    let copy_all = icon_button("edit-copy-symbolic", "Copy the whole conversation", "icon-btn");
+    topbar.insert_child_after(&copy_all, Some(&top_title));
+    // Context: what fills the model's window
+    let ctx_btn = icon_button("dialog-information-symbolic", "Context: what fills the model's window", "icon-btn");
+    topbar.insert_child_after(&ctx_btn, Some(&top_title));
+    {
+        let (b, c) = (copy_all.clone(), ctx_btn.clone());
+        stack.connect_visible_child_name_notify(move |s| {
+            let chat_view = s.visible_child_name().as_deref() == Some("chat");
+            b.set_visible(chat_view);
+            c.set_visible(chat_view);
+        });
+    }
+    {
+        let c = chat_ctl.clone();
+        copy_all.connect_clicked(move |b| {
+            let t = c.transcript();
+            if !t.is_empty() {
+                b.clipboard().set_text(&t);
+            }
+        });
+    }
     stack.add_named(&chat, Some("chat"));
 
     // ---------- projects view ----------
@@ -1752,7 +1937,10 @@ fn build_ui(app: &adw::Application) {
 
     let rail = vbox(0);
     rail.add_css_class("pv-rail");
-    rail.set_size_request(296, -1);
+    {
+        let r = rail.clone();
+        theme::on_zoom(move |_| r.set_size_request(theme::zs(296), -1));
+    }
 
     let (r_instr, a_instr) = rail_button("text-x-generic-symbolic", "Instructions");
     let (r_ctx, a_ctx) = rail_button("mail-attachment-symbolic", "Context");
@@ -1868,18 +2056,33 @@ fn build_ui(app: &adw::Application) {
     // ---------- assemble ----------
     let main_col = vbox(0);
     main_col.set_hexpand(true);
-    main_col.append(&topbar);
+    let top_handle = gtk::WindowHandle::new();
+    top_handle.set_child(Some(&topbar));
+    main_col.append(&top_handle);
     main_col.append(&stack);
 
     let app_row = hbox(0);
-    app_row.append(&reveal);
-    app_row.append(&main_col);
-    window.set_content(Some(&app_row));
+    app_row.append(&space);
+    let dock = dock::Dock::new(&main_col);
+    app_row.append(&dock.paned);
+    // The "show the sidebar" button floats in the very top-left corner, so it never moves with the layout. It is only
+    // there while the sidebar is closed (the open sidebar has its own button).
+    toggle.set_halign(gtk::Align::Start);
+    toggle.set_valign(gtk::Align::Start);
+    toggle.set_margin_start(12);
+    toggle.set_margin_top(7);
+    let corner = gtk::Overlay::new();
+    corner.set_child(Some(&app_row));
+    corner.add_overlay(&reveal);
+    corner.add_overlay(&toggle);
+    window.set_content(Some(&corner));
 
     let ui = Rc::new(Ui {
         window: window.clone(),
+        sheet_host: corner.clone(),
         stack: stack.clone(),
         reveal: reveal.clone(),
+        dock: dock.clone(),
         pinned: Cell::new(true),
         store: RefCell::new(Store::load()),
         current: RefCell::new(None),
@@ -1917,6 +2120,57 @@ fn build_ui(app: &adw::Application) {
         rail_scheduled: a_sch,
     });
 
+    // ---------- the microphone: Zohara's own voice to text engine ----------
+    {
+        let rec: Rc<RefCell<Option<zo_core::voice::Recording>>> = Rc::new(RefCell::new(None));
+        let (p, mb) = (prompt.clone(), mic_btn.clone());
+        mic_btn.connect_clicked(move |b| {
+            let taken = rec.borrow_mut().take();
+            match taken {
+                None => match zo_core::voice::Recording::start() {
+                    Ok(r) => {
+                        *rec.borrow_mut() = Some(r);
+                        b.add_css_class("recording");
+                        b.set_tooltip_text(Some("Listening… press again to stop"));
+                    }
+                    Err(e) => mic_note(&p, &e),
+                },
+                Some(r) => {
+                    b.remove_css_class("recording");
+                    b.set_sensitive(false);
+                    b.set_tooltip_text(Some("Turning your voice into text…"));
+                    let (tx, rx) = mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = tx.send(r.finish());
+                    });
+                    let (p, mb) = (p.clone(), mb.clone());
+                    glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
+                        Ok(res) => {
+                            mb.set_sensitive(true);
+                            mb.set_tooltip_text(Some("Speak instead of typing (Zohara voice to text)"));
+                            match res {
+                                Ok(text) => {
+                                    let old = p.text();
+                                    let joined = if old.trim().is_empty() { text } else { format!("{} {}", old.trim_end(), text) };
+                                    p.set_text(&joined);
+                                    p.move_to_end();
+                                    p.grab_focus();
+                                }
+                                Err(e) => mic_note(&p, &e),
+                            }
+                            glib::ControlFlow::Break
+                        }
+                        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                        Err(_) => {
+                            mb.set_sensitive(true);
+                            glib::ControlFlow::Break
+                        }
+                    });
+                }
+            }
+        });
+    }
+
     // ---------- chat and model ----------
     {
         let (c, p, ui2) = (chat_ctl.clone(), prompt.clone(), ui.clone());
@@ -1930,9 +2184,17 @@ fn build_ui(app: &adw::Application) {
         });
         let (c, p) = (chat_ctl.clone(), prompt.clone());
         chat_ctl.on_retry(Rc::new(move || c.retry(&p)));
+        let (c, p) = (chat_ctl.clone(), prompt.clone());
+        chat_ctl.on_edit(Rc::new(move |nth, text| c.resend_from(nth, Some(text), &p)));
+        let c = chat_ctl.clone();
+        chat_ctl.on_switch(Rc::new(move |nth, d| c.switch_version(nth, d)));
         // while it works the send button turns into a stop button
         let sb = send_btn.clone();
+        let dock_ref = ui.dock.clone();
         chat_ctl.on_busy(Rc::new(move |busy| {
+            if !busy {
+                dock_ref.refresh_context_now();
+            }
             sb.set_icon_name(if busy { "media-playback-stop-symbolic" } else { "go-up-symbolic" });
             sb.set_tooltip_text(Some(if busy { "Stop" } else { "Send" }));
         }));
@@ -1949,49 +2211,144 @@ fn build_ui(app: &adw::Application) {
         plus.connect_clicked(move |b| chat::show_plus_popover(&p, b));
         let ui2 = ui.clone();
         ui.side_settings.connect_clicked(move |_| settings::show(&ui2));
+        let ui3 = ui.clone();
+        ctx_btn.connect_clicked(move |b| chat::show_context_popover(&ui3, b));
+        let d = ui.dock.clone();
+        term_btn.connect_clicked(move |_| d.toggle("terminal"));
+        let d = ui.dock.clone();
+        web_btn.connect_clicked(move |_| d.toggle("browser"));
+        // a pinned Context panel is rebuilt when it was left pinned, and follows the chat
+        if ui.dock.context_pinned() {
+            chat::pin_context(&ui);
+        }
         let c = chat_ctl.clone();
         nav_new.connect_clicked(move |_| c.new_conversation());
     }
 
     // ---------- sidebar behaviour ----------
-    {
-        let ui2 = ui.clone();
-        toggle.connect_clicked(move |_| {
+    // Pinned = open for good (the chat sits beside it). Not pinned = closed; the pointer on the corner button slides it out
+    // over the chat, and it slides back when the pointer leaves it.
+    let set_open = {
+        let (reveal, space) = (reveal.clone(), space.clone());
+        Rc::new(move |open: bool| {
+            reveal.set_reveal_child(open);
+            space.set_reveal_child(open);
+        })
+    };
+    let auto_closed = Rc::new(Cell::new(false));
+    for b in [&toggle, &side_toggle] {
+        let (ui2, auto, set_open) = (ui.clone(), auto_closed.clone(), set_open.clone());
+        b.connect_clicked(move |_| {
+            auto.set(false);
             let pinned = !ui2.pinned.get();
             ui2.pinned.set(pinned);
-            ui2.reveal.set_reveal_child(pinned);
+            set_open(pinned);
         });
     }
-
+    // The corner button shows only while the sidebar is out of sight; the title keeps clear of it.
     {
-        let reveal2 = reveal.clone();
-        let ui2 = ui.clone();
-        let motion = gtk::EventControllerMotion::new();
-        motion.connect_enter(move |_, _, _| {
-            if !ui2.pinned.get() {
+        let toggle2 = toggle.clone();
+        toggle2.set_visible(!reveal.reveals_child());
+        reveal.connect_reveal_child_notify(move |r| toggle2.set_visible(!r.reveals_child()));
+        let title2 = ui.top_title.clone();
+        title2.set_margin_start(if space.reveals_child() { 0 } else { 44 });
+        space.connect_reveal_child_notify(move |sp| title2.set_margin_start(if sp.reveals_child() { 0 } else { 44 }));
+    }
+    {
+        let inside = Rc::new(Cell::new(false));
+        // pointer on the corner button: slide the sidebar out (and close it again if the pointer never reaches it)
+        let on_corner = gtk::EventControllerMotion::new();
+        {
+            let (reveal2, ui2, inside2) = (reveal.clone(), ui.clone(), inside.clone());
+            on_corner.connect_enter(move |_, _, _| {
+                if ui2.pinned.get() {
+                    return;
+                }
                 reveal2.set_reveal_child(true);
+                let (reveal3, ui3, inside3) = (reveal2.clone(), ui2.clone(), inside2.clone());
+                glib::timeout_add_local_once(Duration::from_millis(900), move || {
+                    if !ui3.pinned.get() && !inside3.get() {
+                        reveal3.set_reveal_child(false);
+                    }
+                });
+            });
+        }
+        toggle.add_controller(on_corner);
+        // pointer leaves the sidebar: slide it back
+        let on_side = gtk::EventControllerMotion::new();
+        {
+            let inside2 = inside.clone();
+            on_side.connect_enter(move |_, _, _| inside2.set(true));
+        }
+        {
+            let (reveal2, ui2, inside2) = (reveal.clone(), ui.clone(), inside.clone());
+            on_side.connect_leave(move |_| {
+                inside2.set(false);
+                let (reveal3, ui3, inside3) = (reveal2.clone(), ui2.clone(), inside2.clone());
+                glib::timeout_add_local_once(Duration::from_millis(220), move || {
+                    if !ui3.pinned.get() && !inside3.get() {
+                        reveal3.set_reveal_child(false);
+                    }
+                });
+            });
+        }
+        sidebar.add_controller(on_side);
+    }
+    // A narrow window closes the sidebar by itself and brings it back when the window is wide again.
+    {
+        let (ui2, auto, set_open) = (ui.clone(), auto_closed.clone(), set_open.clone());
+        window.add_tick_callback(move |w, _| {
+            let width = w.width();
+            if width > 0 {
+                if width < 860 && ui2.pinned.get() {
+                    ui2.pinned.set(false);
+                    auto.set(true);
+                    set_open(false);
+                } else if width >= 900 && auto.get() {
+                    auto.set(false);
+                    ui2.pinned.set(true);
+                    set_open(true);
+                }
             }
+            glib::ControlFlow::Continue
         });
-        toggle.add_controller(motion);
     }
 
+    // Interface size: Ctrl + (or =), Ctrl -, Ctrl 0 (back to the size that suits this screen).
     {
-        let reveal2 = reveal.clone();
-        let ui2 = ui.clone();
-        let motion = gtk::EventControllerMotion::new();
-        motion.connect_enter({
-            let reveal3 = reveal2.clone();
-            move |_, _, _| reveal3.set_reveal_child(true)
-        });
-        motion.connect_leave(move |_| {
-            if !ui2.pinned.get() {
-                let reveal3 = reveal2.clone();
-                glib::timeout_add_local_once(Duration::from_millis(160), move || {
-                    reveal3.set_reveal_child(false);
-                });
+        let zoom = Rc::new(Cell::new(saved_zoom().unwrap_or_else(auto_zoom)));
+        apply_zoom(zoom.get());
+        theme::set_zoom(zoom.get());
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        keys.connect_key_pressed(move |_, key, _, state| {
+            use gtk::gdk::Key;
+            if !state.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+                return glib::Propagation::Proceed;
             }
+            let next = match key {
+                Key::plus | Key::equal | Key::KP_Add => zoom.get() + 0.1,
+                Key::minus | Key::underscore | Key::KP_Subtract => zoom.get() - 0.1,
+                Key::_0 | Key::KP_0 => auto_zoom(),
+                _ => return glib::Propagation::Proceed,
+            };
+            let next = (next.clamp(0.7, 1.8) * 100.0).round() / 100.0;
+            zoom.set(next);
+            apply_zoom(next);
+            theme::set_zoom(next);
+            let _ = std::fs::create_dir_all(zo_core::audit::config_dir());
+            let _ = std::fs::write(zoom_file(), format!("{next}"));
+            glib::Propagation::Stop
         });
-        sidebar.add_controller(motion);
+        window.add_controller(keys);
+    }
+
+    // for testing the closed-sidebar layout: ZO_AI_SIDEBAR=closed zo-ai
+    if std::env::var("ZO_AI_SIDEBAR").as_deref() == Ok("closed") {
+        ui.pinned.set(false);
+        reveal.set_transition_duration(0);
+        space.set_transition_duration(0);
+        set_open(false);
     }
 
     // ---------- navigation ----------
@@ -2184,12 +2541,18 @@ fn build_ui(app: &adw::Application) {
 
     refresh_projects(&ui);
 
-    // Optional start view, used for verification: ZO_AI_START_VIEW=projects|project
+    // Optional start view, used for verification: ZO_AI_START_VIEW=projects|project|settings|add-server|models
     match std::env::var("ZO_AI_START_VIEW").as_deref() {
         Ok("projects") => {
             ui.stack.set_visible_child_name("projects");
             set_nav(&ui, "projects");
         }
+        Ok("settings") => settings::show(&ui),
+        Ok("add-server") => {
+            settings::show(&ui);
+            settings::open_add_server(&ui);
+        }
+        Ok("models") => chat::models_sheet(&ui),
         Ok("project") => {
             let first = ui.store.borrow().projects.first().map(|p| p.id.clone());
             if let Some(id) = first {
@@ -2198,9 +2561,53 @@ fn build_ui(app: &adw::Application) {
         }
         _ => {}
     }
+    // for verification: ZO_AI_OPEN_CHAT=<chat id> opens that saved chat
+    if let Ok(id) = std::env::var("ZO_AI_OPEN_CHAT") {
+        if let Some(c) = chats::load().into_iter().find(|c| c.id == id) {
+            open_chat(&ui, c);
+        }
+    }
 
     MAIN.with(|m| *m.borrow_mut() = Some((window.clone(), stack.clone(), prompt.clone())));
     window.present();
+    // for verification: ZO_AI_SHOW=context opens the Context panel
+    if std::env::var("ZO_AI_SHOW").as_deref() == Ok("context") {
+        let (ui2, b) = (ui.clone(), ctx_btn.clone());
+        glib::timeout_add_local_once(Duration::from_millis(900), move || chat::show_context_popover(&ui2, &b));
+    }
+
+    // for verification: terminal / browser / pinned open the side panel, and the AI's tools are used on it
+    match std::env::var("ZO_AI_SHOW").as_deref() {
+        Ok("pinned") => {
+            let ui2 = ui.clone();
+            glib::timeout_add_local_once(Duration::from_millis(900), move || chat::pin_context(&ui2));
+        }
+        Ok("terminal") => {
+            glib::timeout_add_local_once(Duration::from_millis(900), || {
+                std::thread::spawn(|| {
+                    let r = zo_core::tools::call("zohara_term_open", &serde_json::json!({"name": "demo"}));
+                    eprintln!("open: {r:?}");
+                    let r = zo_core::tools::call("zohara_term_run", &serde_json::json!({"cmd": "ls --color=always /usr/lib/zohara; echo \"two plus two is $((2+2))\"", "id": 1}));
+                    eprintln!("run: {r:?}");
+                });
+            });
+        }
+        Ok("browser") => {
+            glib::timeout_add_local_once(Duration::from_millis(900), || {
+                std::thread::spawn(|| {
+                    let r = zo_core::tools::call("zohara_browser_open", &serde_json::json!({"url": "https://example.com"}));
+                    eprintln!("open: {r:?}");
+                    let r = zo_core::tools::call("zohara_browser_read", &serde_json::json!({}));
+                    eprintln!("read: {r:?}");
+                    let r = zo_core::tools::call("zohara_browser_click", &serde_json::json!({"target": "1"}));
+                    eprintln!("click: {r:?}");
+                    let r = zo_core::tools::call("zohara_browser_screenshot", &serde_json::json!({}));
+                    eprintln!("shot: {r:?}");
+                });
+            });
+        }
+        _ => {}
+    }
 
     // Headless verification: ZO_AI_SELFTEST=1 prints the real widget tree and exits.
     if std::env::var_os("ZO_AI_SELFTEST").is_some() {
@@ -2261,16 +2668,28 @@ fn walk_tree(widget: &gtk::Widget, depth: usize) {
 }
 
 fn main() -> glib::ExitCode {
-    let app = adw::Application::builder().application_id(APP_ID).flags(gtk::gio::ApplicationFlags::HANDLES_COMMAND_LINE).build();
+    let app = adw::Application::builder().application_id(std::env::var("ZO_AI_APP_ID").unwrap_or_else(|_| APP_ID.to_string()).as_str()).flags(gtk::gio::ApplicationFlags::HANDLES_COMMAND_LINE).build();
     app.connect_startup(|_| {
         theme::init();
         gtk::Window::set_default_icon_name("zo-ai");
     });
+    app.connect_activate(|_| show_main(""));
     app.connect_command_line(|app, cmd| {
         // first start: begin answering approval questions and stay alive after the window closes
         static FIRST: std::sync::Once = std::sync::Once::new();
         FIRST.call_once(|| {
             ask::start();
+            if let Err(e) = zo_core::service::start() {
+                eprintln!("zo-ai: the phone service did not start: {e}");
+            }
+            // the Claude model list is renewed once a day when there is an Anthropic key
+            std::thread::spawn(|| {
+                let sel = zo_core::ai::Selection::load();
+                if let Some(a) = zo_core::ai::providers::find("anthropic") {
+                    let key = zo_core::ai::profiles::get_key(&sel, "anthropic");
+                    zo_core::ai::models::refresh_if_stale(&sel.base_url_for(a), key.as_deref());
+                }
+            });
             scheduler::start(Rc::new(|| {
                 let f = TASKS_DONE.with(|t| t.borrow().clone());
                 if let Some(f) = f {

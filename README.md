@@ -25,7 +25,7 @@ From source:
 zo-ai --background  # starts it (it also starts after sign-in)
 ```
 
-`zo-ai` opens the full window. `zo-ai --quick` toggles the quick popup, which is also opened by the Copilot key or **Ctrl+Super+C** (change it in System Settings → Shortcuts).
+`zo-ai` opens the full window. `zo-ai --quick` toggles the quick popup, which is also opened by **Ctrl+Super+C** (change it in System Settings → Shortcuts → ZO-AI). The Copilot key cannot be used for this on Plasma yet: with the usual keyboard layout Plasma reads it as Touchpad Off.
 
 ## Choosing a model
 
@@ -65,6 +65,11 @@ cargo run -p zo-core --example mock-model   # a fake model server, to try the ch
 ```
 
 `packaging/PKGBUILD` builds the Arch package, and CI (`.github/workflows`) builds it on every push to `main`. `docs/design/zo-ai-design.html` is the design reference.
+
+## Documentation
+
+* [docs/ZO-AI.md](docs/ZO-AI.md): how the app, the model layer, context and compaction, profiles and storage work.
+* [docs/MCP.md](docs/MCP.md): MCP servers, sign-in and the redirect address.
 
 ## License
 

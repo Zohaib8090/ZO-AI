@@ -14,5 +14,6 @@ zo-core = { path = "../zo-core" }
 gtk4 = { version = "0.9", features = ["v4_12"] }
 libadwaita = { version = "0.7", package = "libadwaita", features = ["v1_6"] }
 glib = "0.20"
+webkit6 = "0.4"
 serde.workspace = true
 serde_json.workspace = true

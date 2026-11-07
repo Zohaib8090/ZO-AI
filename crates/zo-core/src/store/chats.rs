@@ -1,8 +1,26 @@
 //! Saved chats: what the sidebar lists under Recents, and what opens again when one is clicked.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use crate::ai::wire::Turn;
+
+/// One take of the rest of a conversation from a message on (what came after your message, as it was when you asked again).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Version {
+    pub entries: Vec<Entry>,
+    pub history: Vec<Turn>,
+    /// The other forks that were made later inside this take.
+    #[serde(default)]
+    pub sub: BTreeMap<usize, Branch>,
+}
+
+/// The takes of one message: asking again (retry) or editing it makes a new one; the arrows switch between them.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Branch {
+    pub versions: Vec<Version>,
+    pub current: usize,
+}
 
 /// One line of what the person sees in a chat. `kind` is the style it is shown in.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -27,6 +45,9 @@ pub struct Chat {
     pub context: String,
     #[serde(default)]
     pub pinned: bool,
+    /// By the number of your message (counting from 0): the takes it has had.
+    #[serde(default)]
+    pub branches: BTreeMap<usize, Branch>,
 }
 
 const KEEP: usize = 100;

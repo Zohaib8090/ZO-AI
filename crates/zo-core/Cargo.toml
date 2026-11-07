@@ -9,3 +9,5 @@ description = "ZO-AI core: the tools that control Zohara OS, the permission poli
 serde.workspace = true
 serde_json.workspace = true
 ureq = { version = "2.12", features = ["json"] }
+vt100 = "0.15"
+libc = "0.2"

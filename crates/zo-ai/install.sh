@@ -24,7 +24,7 @@ cargo build --release --quiet
 say "installing to $PREFIX"
 mkdir -p "$BIN" "$APPS" "$ICONS" "$META"
 install -m 0755 target/release/zo-ai "$BIN/zo-ai"
-install -m 0644 data/zo-ai.desktop "$APPS/zo-ai.desktop"
+install -m 0644 data/org.zohara.ZoAi.desktop "$APPS/org.zohara.ZoAi.desktop"
 install -m 0644 data/org.zohara.ZoAi.metainfo.xml "$META/org.zohara.ZoAi.metainfo.xml"
 [ -f data/zo-ai.svg ] && install -m 0644 data/zo-ai.svg "$ICONS/zo-ai.svg"
 

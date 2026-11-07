@@ -14,7 +14,7 @@ pub struct ToolSpec {
 
 /// ZO-AI's own tools.
 pub fn builtin_specs() -> Vec<ToolSpec> {
-    crate::tools::definitions().iter().map(|d: &ToolDef| ToolSpec { name: d.name.into(), description: d.description.into(), schema: d.schema() }).collect()
+    crate::tools::active().into_iter().map(|d: &ToolDef| ToolSpec { name: d.name.into(), description: d.description.into(), schema: d.schema() }).collect()
 }
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -26,26 +26,132 @@ pub struct ToolCall {
     pub args: Value,
 }
 
+/// A picture on disk that goes to the model along with a message or a tool result. Only the path is kept in a saved chat;
+/// the file is read when a request is made.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ImageRef {
+    pub path: String,
+    pub mime: String,
+}
+
+impl ImageRef {
+    /// `None` unless the path is an existing picture of a kind the model APIs take.
+    pub fn from_path(path: &str) -> Option<ImageRef> {
+        let lower = path.to_lowercase();
+        let mime = if lower.ends_with(".png") {
+            "image/png"
+        } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+            "image/jpeg"
+        } else if lower.ends_with(".webp") {
+            "image/webp"
+        } else if lower.ends_with(".gif") {
+            "image/gif"
+        } else {
+            return None;
+        };
+        let meta = std::fs::metadata(path).ok()?;
+        (meta.is_file() && meta.len() <= MAX_IMAGE_BYTES).then(|| ImageRef { path: path.to_string(), mime: mime.to_string() })
+    }
+}
+
+/// The largest picture that is sent (the model APIs refuse about 5 MB and more).
+pub const MAX_IMAGE_BYTES: u64 = 4_500_000;
+
+fn base64_std(data: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for c in data.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        out.push(A[(n >> 18) as usize & 63] as char);
+        out.push(A[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { A[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { A[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// (mime, base64) of the picture at `path`, for an MCP result; `None` if it is not a picture that can be sent.
+pub fn encode_path(path: &str) -> Option<(String, String)> {
+    encoded(&ImageRef::from_path(path)?)
+}
+
+/// (mime, base64) of a picture, read now; `None` if the file is gone or too large.
+fn encoded(img: &ImageRef) -> Option<(String, String)> {
+    let data = std::fs::read(&img.path).ok()?;
+    (data.len() as u64 <= MAX_IMAGE_BYTES).then(|| (img.mime.clone(), base64_std(&data)))
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolResult {
     pub id: String,
     pub name: String,
     pub content: String,
     pub is_error: bool,
+    /// Pictures the tool produced (a screenshot): the model is shown them next to the text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageRef>,
 }
 
 /// One step of a conversation, the same for every provider.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Turn {
     User(String),
+    /// A message that comes with pictures.
+    UserImages(String, Vec<ImageRef>),
     Assistant { text: String, calls: Vec<ToolCall> },
     Results(Vec<ToolResult>),
+}
+
+/// What one request used, as the provider reported it. `input` is what was sent fresh; `cached` came from the provider's cache (cheaper
+/// and quicker); `written` was put into the cache by this request (Anthropic). Together they are everything that was sent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Usage {
+    pub input: u64,
+    pub output: u64,
+    pub cached: u64,
+    pub written: u64,
+}
+
+impl Usage {
+    pub fn total_input(&self) -> u64 {
+        self.input + self.cached + self.written
+    }
+
+    fn is_empty(&self) -> bool {
+        *self == Usage::default()
+    }
+
+    /// Takes what a piece of an answer says about usage (a later piece may only know some of the numbers).
+    fn merge(&mut self, other: Usage) {
+        self.input = self.input.max(other.input);
+        self.output = self.output.max(other.output);
+        self.cached = self.cached.max(other.cached);
+        self.written = self.written.max(other.written);
+    }
+}
+
+/// The usage numbers inside an answer (or a piece of one), in each provider's own words.
+fn usage_in(protocol: Protocol, usage: &Value) -> Usage {
+    let n = |v: &Value| v.as_u64().unwrap_or(0);
+    match protocol {
+        Protocol::Anthropic => Usage { input: n(&usage["input_tokens"]), output: n(&usage["output_tokens"]), cached: n(&usage["cache_read_input_tokens"]), written: n(&usage["cache_creation_input_tokens"]) },
+        Protocol::OpenAi => {
+            let cached = n(&usage["prompt_tokens_details"]["cached_tokens"]);
+            Usage { input: n(&usage["prompt_tokens"]).saturating_sub(cached), output: n(&usage["completion_tokens"]), cached, written: 0 }
+        }
+        Protocol::Gemini => {
+            let cached = n(&usage["cachedContentTokenCount"]);
+            Usage { input: n(&usage["promptTokenCount"]).saturating_sub(cached), output: n(&usage["candidatesTokenCount"]), cached, written: 0 }
+        }
+        Protocol::ClaudeCode => Usage::default(),
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Reply {
     pub text: String,
     pub calls: Vec<ToolCall>,
+    pub usage: Option<Usage>,
 }
 
 pub struct Request {
@@ -64,6 +170,11 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
         Protocol::Anthropic => {
             let messages: Vec<Value> = turns.iter().map(|t| match t {
                 Turn::User(s) => json!({ "role": "user", "content": s }),
+                Turn::UserImages(s, imgs) => {
+                    let mut c: Vec<Value> = imgs.iter().filter_map(encoded).map(|(m, d)| json!({ "type": "image", "source": { "type": "base64", "media_type": m, "data": d } })).collect();
+                    c.push(json!({ "type": "text", "text": s }));
+                    json!({ "role": "user", "content": c })
+                }
                 Turn::Assistant { text, calls } => {
                     let mut c = Vec::new();
                     if !text.is_empty() {
@@ -74,10 +185,15 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
                     }
                     json!({ "role": "assistant", "content": c })
                 }
-                Turn::Results(rs) => json!({ "role": "user", "content": rs.iter().map(|r|
-                    json!({ "type": "tool_result", "tool_use_id": r.id, "content": r.content, "is_error": r.is_error })).collect::<Vec<_>>() }),
+                Turn::Results(rs) => json!({ "role": "user", "content": rs.iter().map(|r| {
+                    let pics: Vec<Value> = r.images.iter().filter_map(encoded).map(|(m, d)| json!({ "type": "image", "source": { "type": "base64", "media_type": m, "data": d } })).collect();
+                    let content = if pics.is_empty() { json!(r.content) } else { let mut c = vec![json!({ "type": "text", "text": r.content })]; c.extend(pics); json!(c) };
+                    json!({ "type": "tool_result", "tool_use_id": r.id, "content": content, "is_error": r.is_error })
+                }).collect::<Vec<_>>() }),
             }).collect();
-            let mut body = json!({ "model": model, "max_tokens": 4096, "messages": messages });
+            // top-level cache_control: the provider keeps the start of the conversation (tools, instructions, earlier messages) in its
+            // cache, so a long chat is read at a fraction of the price and much faster
+            let mut body = json!({ "model": model, "max_tokens": 4096, "messages": messages, "cache_control": { "type": "ephemeral" } });
             if !system.is_empty() {
                 body["system"] = json!(system);
             }
@@ -98,6 +214,11 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
             for t in turns {
                 match t {
                     Turn::User(s) => messages.push(json!({ "role": "user", "content": s })),
+                    Turn::UserImages(s, imgs) => {
+                        let mut c = vec![json!({ "type": "text", "text": s })];
+                        c.extend(imgs.iter().filter_map(encoded).map(|(m, d)| json!({ "type": "image_url", "image_url": { "url": format!("data:{m};base64,{d}") } })));
+                        messages.push(json!({ "role": "user", "content": c }));
+                    }
                     Turn::Assistant { text, calls } => {
                         let mut m = json!({ "role": "assistant", "content": if text.is_empty() { Value::Null } else { json!(text) } });
                         if !calls.is_empty() {
@@ -111,6 +232,17 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
                         for r in rs {
                             messages.push(json!({ "role": "tool", "tool_call_id": r.id, "content": r.content }));
                         }
+                        // a tool message can only hold text, so the pictures a tool made follow as a message of their own
+                        let mut pics: Vec<Value> = Vec::new();
+                        for r in rs {
+                            for (m, d) in r.images.iter().filter_map(encoded) {
+                                pics.push(json!({ "type": "text", "text": format!("The picture returned by {}:", r.name) }));
+                                pics.push(json!({ "type": "image_url", "image_url": { "url": format!("data:{m};base64,{d}") } }));
+                            }
+                        }
+                        if !pics.is_empty() {
+                            messages.push(json!({ "role": "user", "content": pics }));
+                        }
                     }
                 }
             }
@@ -123,21 +255,45 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
             Request { url: format!("{base}/chat/completions"), headers, body }
         }
         Protocol::Gemini => {
-            let contents: Vec<Value> = turns.iter().map(|t| match t {
-                Turn::User(s) => json!({ "role": "user", "parts": [{ "text": s }] }),
+            let contents: Vec<Value> = turns.iter().flat_map(|t| -> Vec<Value> { match t {
+                Turn::User(s) => vec![json!({ "role": "user", "parts": [{ "text": s }] })],
+                Turn::UserImages(s, imgs) => {
+                    let mut parts = vec![json!({ "text": s })];
+                    parts.extend(imgs.iter().filter_map(encoded).map(|(m, d)| json!({ "inlineData": { "mimeType": m, "data": d } })));
+                    vec![json!({ "role": "user", "parts": parts })]
+                }
                 Turn::Assistant { text, calls } => {
                     let mut parts = Vec::new();
                     if !text.is_empty() {
                         parts.push(json!({ "text": text }));
                     }
                     for k in calls {
-                        parts.push(json!({ "functionCall": { "name": k.name, "args": k.args } }));
+                        let mut part = json!({ "functionCall": { "name": k.name, "args": k.args } });
+                        // Gemini thinking models need their thoughtSignature handed back (kept after "~" in the id)
+                        if let Some((_, sig)) = k.id.split_once('~') {
+                            part["thoughtSignature"] = json!(sig);
+                        }
+                        parts.push(part);
                     }
-                    json!({ "role": "model", "parts": parts })
+                    vec![json!({ "role": "model", "parts": parts })]
                 }
-                Turn::Results(rs) => json!({ "role": "user", "parts": rs.iter().map(|r|
-                    json!({ "functionResponse": { "name": r.name, "response": { "content": r.content, "is_error": r.is_error } } })).collect::<Vec<_>>() }),
-            }).collect();
+                Turn::Results(rs) => {
+                    let mut out = vec![json!({ "role": "user", "parts": rs.iter().map(|r|
+                        json!({ "functionResponse": { "name": r.name, "response": { "content": r.content, "is_error": r.is_error } } })).collect::<Vec<_>>() })];
+                    // pictures cannot ride inside a function response, so they follow as a message of their own
+                    let mut pics: Vec<Value> = Vec::new();
+                    for r in rs {
+                        for (m, d) in r.images.iter().filter_map(encoded) {
+                            pics.push(json!({ "text": format!("The picture returned by {}:", r.name) }));
+                            pics.push(json!({ "inlineData": { "mimeType": m, "data": d } }));
+                        }
+                    }
+                    if !pics.is_empty() {
+                        out.push(json!({ "role": "user", "parts": pics }));
+                    }
+                    out
+                }
+            } }).collect();
             let mut body = json!({ "contents": contents });
             if !system.is_empty() {
                 body["systemInstruction"] = json!({ "parts": [{ "text": system }] });
@@ -147,7 +303,7 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
                 body["tools"] = json!([{ "functionDeclarations": tools.iter().map(|t| {
                     let mut d = json!({ "name": t.name, "description": t.description });
                     if has_params(t) {
-                        d["parameters"] = t.schema.clone();
+                        d["parameters"] = gemini_schema(&t.schema);
                     }
                     d
                 }).collect::<Vec<_>>() }]);
@@ -156,6 +312,65 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
             Request { url: format!("{base}/models/{model}:generateContent"), headers, body }
         }
         Protocol::ClaudeCode => Request { url: String::new(), headers: Vec::new(), body: Value::Null },
+    }
+}
+
+/// Gemini accepts only a small part of JSON Schema (an OpenAPI subset) and answers 400 to the rest
+/// ("Unknown name additionalProperties"), so tools from MCP servers are reduced to what it understands.
+/// Gemini puts a `thoughtSignature` beside a function call; it is kept in the call id after a "~" so it travels with the call.
+fn with_signature(id: String, part: &Value) -> String {
+    match part.get("thoughtSignature").or_else(|| part.get("thought_signature")).and_then(Value::as_str) {
+        Some(sig) => format!("{id}~{sig}"),
+        None => id,
+    }
+}
+
+pub fn gemini_schema(v: &Value) -> Value {
+    const KEEP: &[&str] = &["type", "format", "description", "nullable", "enum", "properties", "required", "items",
+        "minItems", "maxItems", "minimum", "maximum", "anyOf", "title"];
+    match v {
+        Value::Object(m) => {
+            let mut out = serde_json::Map::new();
+            for (k, val) in m {
+                if k == "const" {
+                    out.insert("enum".into(), json!([val]));
+                    continue;
+                }
+                if !KEEP.contains(&k.as_str()) {
+                    continue;
+                }
+                match k.as_str() {
+                    "properties" => {
+                        let props = val.as_object().map(|o| o.iter().map(|(n, p)| (n.clone(), gemini_schema(p))).collect()).unwrap_or_default();
+                        out.insert(k.clone(), Value::Object(props));
+                    }
+                    "type" if val.is_array() => {
+                        // ["string","null"] becomes type string + nullable
+                        let list = val.as_array().cloned().unwrap_or_default();
+                        if let Some(t) = list.iter().find(|t| t.as_str() != Some("null")) {
+                            out.insert("type".into(), t.clone());
+                        }
+                        if list.iter().any(|t| t.as_str() == Some("null")) {
+                            out.insert("nullable".into(), json!(true));
+                        }
+                    }
+                    "enum" | "required" | "type" | "format" | "description" | "title" | "nullable" | "minItems" | "maxItems"
+                    | "minimum" | "maximum" => {
+                        out.insert(k.clone(), val.clone());
+                    }
+                    _ => {
+                        out.insert(k.clone(), gemini_schema(val));
+                    }
+                }
+            }
+            // an object or array without the parts Gemini insists on
+            if out.get("type").and_then(Value::as_str) == Some("array") && !out.contains_key("items") {
+                out.insert("items".into(), json!({ "type": "string" }));
+            }
+            Value::Object(out)
+        }
+        Value::Array(a) => Value::Array(a.iter().map(gemini_schema).collect()),
+        other => other.clone(),
     }
 }
 
@@ -206,7 +421,7 @@ pub fn parse(protocol: Protocol, v: &Value) -> Result<Reply, String> {
                 }
                 if let Some(fc) = part.get("functionCall") {
                     reply.calls.push(ToolCall {
-                        id: format!("call_{i}"),
+                        id: with_signature(format!("call_{i}"), part),
                         name: fc["name"].as_str().unwrap_or("").into(),
                         args: fc.get("args").cloned().unwrap_or_else(|| json!({})),
                     });
@@ -214,6 +429,8 @@ pub fn parse(protocol: Protocol, v: &Value) -> Result<Reply, String> {
             }
         }
     }
+    let usage = usage_in(protocol, if protocol == Protocol::Gemini { &v["usageMetadata"] } else { &v["usage"] });
+    reply.usage = (!usage.is_empty()).then_some(usage);
     Ok(reply)
 }
 
@@ -242,7 +459,7 @@ mod tests {
         vec![
             Turn::User("what is running?".into()),
             Turn::Assistant { text: "Let me look.".into(), calls: vec![ToolCall { id: "t1".into(), name: "zohara_process_list".into(), args: json!({}) }] },
-            Turn::Results(vec![ToolResult { id: "t1".into(), name: "zohara_process_list".into(), content: "firefox".into(), is_error: false }]),
+            Turn::Results(vec![ToolResult { id: "t1".into(), name: "zohara_process_list".into(), content: "firefox".into(), is_error: false, images: Vec::new() }]),
         ]
     }
 
@@ -273,6 +490,31 @@ mod tests {
         let r = build(find("ollama").unwrap(), "http://127.0.0.1:11434/v1", None, "qwen", "", &[Turn::User("hi".into())], &[]);
         assert!(r.headers.is_empty());
         assert!(r.body.get("tools").is_none());
+    }
+
+    #[test]
+    fn gemini_thought_signature_comes_back_with_the_call() {
+        let g = parse(Protocol::Gemini, &json!({"candidates":[{"content":{"parts":[{"functionCall":{"name":"a","args":{}},"thoughtSignature":"AbC+/="}]}}]})).unwrap();
+        assert!(g.calls[0].id.ends_with("~AbC+/="));
+        let req = build(find("gemini").unwrap(), "https://x/v1beta", None, "m", "", &[Turn::Assistant { text: String::new(), calls: g.calls }], &[]);
+        assert_eq!(req.body["contents"][0]["parts"][0]["thoughtSignature"], "AbC+/=");
+    }
+
+    #[test]
+    fn gemini_schema_drops_what_gemini_does_not_know() {
+        let s = json!({"type":"object","additionalProperties":false,"$schema":"x",
+            "properties":{"q":{"type":["string","null"],"default":"a","additionalProperties":false},
+                          "additionalProperties":{"type":"object","additionalProperties":true,"properties":{}},
+                          "l":{"type":"array"}},
+            "required":["q"]});
+        let g = gemini_schema(&s);
+        assert!(g.get("additionalProperties").is_none() && g.get("$schema").is_none());
+        assert_eq!(g["properties"]["q"]["type"], "string");
+        assert_eq!(g["properties"]["q"]["nullable"], true);
+        assert!(g["properties"]["q"].get("default").is_none());
+        assert!(g["properties"]["additionalProperties"].get("additionalProperties").is_none());
+        assert_eq!(g["properties"]["l"]["items"]["type"], "string");
+        assert_eq!(g["required"][0], "q");
     }
 
     #[test]
@@ -317,7 +559,12 @@ mod tests {
 /// Turns a request into its streaming form: the provider then sends the answer in small pieces as it writes it.
 pub fn make_streaming(req: &mut Request, protocol: Protocol) {
     match protocol {
-        Protocol::OpenAi | Protocol::Anthropic => req.body["stream"] = json!(true),
+        Protocol::OpenAi => {
+            req.body["stream"] = json!(true);
+            // without this an OpenAI-style server does not say how many tokens were used
+            req.body["stream_options"] = json!({ "include_usage": true });
+        }
+        Protocol::Anthropic => req.body["stream"] = json!(true),
         Protocol::Gemini => req.url = req.url.replace(":generateContent", ":streamGenerateContent?alt=sse"),
         Protocol::ClaudeCode => {}
     }
@@ -337,6 +584,7 @@ pub struct StreamAcc {
     calls: Vec<PartialCall>,
     /// Anthropic numbers its content blocks; this maps a block number to its place in `calls`.
     blocks: std::collections::HashMap<u64, usize>,
+    usage: Usage,
 }
 
 impl StreamAcc {
@@ -351,6 +599,20 @@ impl StreamAcc {
             return Err(error_text(e));
         }
         let mut delta = String::new();
+        // token counts come with the first piece (Anthropic), the last (OpenAI) or every piece (Gemini)
+        let piece = match protocol {
+            Protocol::Anthropic => match v["type"].as_str() {
+                Some("message_start") => Some(&v["message"]["usage"]),
+                Some("message_delta") => Some(&v["usage"]),
+                _ => None,
+            },
+            Protocol::OpenAi => v.get("usage").filter(|u| !u.is_null()),
+            Protocol::Gemini => v.get("usageMetadata"),
+            Protocol::ClaudeCode => None,
+        };
+        if let Some(u) = piece {
+            self.usage.merge(usage_in(protocol, u));
+        }
         match protocol {
             Protocol::OpenAi => {
                 let d = &v["choices"][0]["delta"];
@@ -401,7 +663,7 @@ impl StreamAcc {
                     }
                     if let Some(fc) = part.get("functionCall") {
                         self.calls.push(PartialCall {
-                            id: String::new(),
+                            id: with_signature(String::new(), part),
                             name: fc["name"].as_str().unwrap_or("").into(),
                             args: fc.get("args").map(|a| a.to_string()).unwrap_or_default(),
                         });
@@ -416,11 +678,11 @@ impl StreamAcc {
 
     pub fn finish(self) -> Reply {
         let calls = self.calls.into_iter().enumerate().map(|(i, c)| ToolCall {
-            id: if c.id.is_empty() { format!("call_{i}") } else { c.id },
+            id: if c.id.is_empty() { format!("call_{i}") } else if c.id.starts_with('~') { format!("call_{i}{}", c.id) } else { c.id },
             name: c.name,
             args: serde_json::from_str(&c.args).ok().filter(Value::is_object).unwrap_or_else(|| json!({})),
         }).collect();
-        Reply { text: self.text, calls }
+        Reply { text: self.text, calls, usage: (!self.usage.is_empty()).then_some(self.usage) }
     }
 }
 
@@ -493,5 +755,74 @@ mod stream_tests {
         let mut o = Request { url: "u".into(), headers: vec![], body: json!({}) };
         make_streaming(&mut o, Protocol::OpenAi);
         assert_eq!(o.body["stream"], true);
+    }
+
+    #[test]
+    fn pictures_are_put_where_each_provider_expects_them() {
+        let dir = std::env::temp_dir().join(format!("zo-wire-pic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("a.png");
+        std::fs::write(&f, b"abc").unwrap();
+        let img = ImageRef::from_path(&f.to_string_lossy()).unwrap();
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(base64_std(b"abc"), "YWJj");
+        assert_eq!(base64_std(b"ab"), "YWI=");
+        assert!(ImageRef::from_path("/no/such/file.png").is_none() && ImageRef::from_path(&dir.join("x.txt").to_string_lossy()).is_none());
+        let turns = vec![
+            Turn::UserImages("look".into(), vec![img.clone()]),
+            Turn::Assistant { text: String::new(), calls: vec![ToolCall { id: "t".into(), name: "zohara_ss".into(), args: json!({}) }] },
+            Turn::Results(vec![ToolResult { id: "t".into(), name: "zohara_ss".into(), content: "shot".into(), is_error: false, images: vec![img] }]),
+        ];
+        let anth = build(crate::ai::providers::find("anthropic").unwrap(), "https://x", Some("k"), "m", "", &turns, &[]).body.to_string();
+        assert!(anth.contains("\"type\":\"image\"") && anth.contains("\"media_type\":\"image/png\"") && anth.contains("\"data\":\"YWJj\""));
+        let oa = build(crate::ai::providers::find("openai").unwrap(), "https://x", Some("k"), "m", "", &turns, &[]).body;
+        assert!(oa["messages"].to_string().contains("data:image/png;base64,YWJj"));
+        assert_eq!(oa["messages"].as_array().unwrap().last().unwrap()["role"], "user");
+        let gem = build(crate::ai::providers::find("gemini").unwrap(), "https://x", Some("k"), "m", "", &turns, &[]).body;
+        let contents = gem["contents"].as_array().unwrap();
+        assert!(contents[0]["parts"][1]["inlineData"]["data"] == "YWJj");
+        assert_eq!(contents.len(), 4, "the picture of a tool result follows its own message");
+        assert!(contents[3]["parts"].to_string().contains("inlineData"));
+        // a saved chat from before pictures still loads
+        let old: Vec<Turn> = serde_json::from_str(r#"[{"User":"hi"},{"Results":[{"id":"1","name":"n","content":"c","is_error":false}]}]"#).unwrap();
+        assert!(matches!(&old[1], Turn::Results(r) if r[0].images.is_empty()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn token_usage_is_read_from_each_provider_and_anthropic_is_asked_to_cache() {
+        // streamed: Anthropic says the input at the start and the output at the end
+        let mut acc = StreamAcc::default();
+        acc.feed(Protocol::Anthropic, r#"data: {"type":"message_start","message":{"usage":{"input_tokens":12,"cache_read_input_tokens":900,"cache_creation_input_tokens":40,"output_tokens":1}}}"#).unwrap();
+        acc.feed(Protocol::Anthropic, r#"data: {"type":"message_delta","usage":{"output_tokens":55}}"#).unwrap();
+        let u = acc.finish().usage.unwrap();
+        assert_eq!((u.input, u.cached, u.written, u.output, u.total_input()), (12, 900, 40, 55, 952));
+        // OpenAI counts the cached tokens inside the prompt tokens
+        let mut acc = StreamAcc::default();
+        acc.feed(Protocol::OpenAi, r#"data: {"choices":[{"delta":{"content":"hi"}}],"usage":null}"#).unwrap();
+        acc.feed(Protocol::OpenAi, r#"data: {"choices":[],"usage":{"prompt_tokens":1000,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":600}}}"#).unwrap();
+        let u = acc.finish().usage.unwrap();
+        assert_eq!((u.input, u.cached, u.output, u.total_input()), (400, 600, 7, 1000));
+        // not streamed, Gemini
+        let r = parse(Protocol::Gemini, &json!({ "candidates": [{ "content": { "parts": [{ "text": "x" }] } }], "usageMetadata": { "promptTokenCount": 50, "candidatesTokenCount": 3, "cachedContentTokenCount": 20 } })).unwrap();
+        assert_eq!((r.usage.unwrap().total_input(), r.usage.unwrap().cached), (50, 20));
+        assert!(parse(Protocol::OpenAi, &json!({ "choices": [{ "message": { "content": "x" } }] })).unwrap().usage.is_none());
+        // Anthropic requests carry the top-level cache setting; streaming OpenAI asks for the usage numbers
+        let req = build(crate::ai::providers::find("anthropic").unwrap(), "https://x", Some("k"), "m", "s", &[Turn::User("hi".into())], &[]);
+        assert_eq!(req.body["cache_control"]["type"], "ephemeral");
+        let mut oa = build(crate::ai::providers::find("openai").unwrap(), "https://x", Some("k"), "m", "s", &[Turn::User("hi".into())], &[]);
+        make_streaming(&mut oa, Protocol::OpenAi);
+        assert_eq!(oa.body["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn which_models_can_look_at_pictures() {
+        use crate::ai::providers::{can_see, find};
+        assert!(can_see(find("anthropic").unwrap(), "claude-sonnet-5-5"));
+        assert!(can_see(find("gemini").unwrap(), "gemini-2.5-flash"));
+        assert!(can_see(find("openai").unwrap(), "gpt-4o") && !can_see(find("openai").unwrap(), "gpt-3.5-turbo"));
+        assert!(can_see(find("openrouter").unwrap(), "qwen/qwen2.5-vl-72b-instruct") && can_see(find("openrouter").unwrap(), "anthropic/claude-3.5-sonnet"));
+        assert!(!can_see(find("openrouter").unwrap(), "cohere/north-mini-code:free") && !can_see(find("deepseek").unwrap(), "deepseek-chat"));
+        assert!(!can_see(find("claude-code").unwrap(), "sonnet"));
     }
 }

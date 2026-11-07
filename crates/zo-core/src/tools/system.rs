@@ -84,6 +84,18 @@ pub fn screenshot() -> Result<String, String> {
     Err("no screenshot tool worked (tried spectacle, grim, import)".into())
 }
 
+/// Checks that a picture can be shown to a model and returns its full path (the agent attaches the file to the result).
+pub fn view_image(path: &str) -> Result<String, String> {
+    let full = match path.strip_prefix("~/") {
+        Some(rest) => std::env::var("HOME").map(|h| format!("{h}/{rest}")).unwrap_or_else(|_| path.to_string()),
+        None => path.to_string(),
+    };
+    if !std::path::Path::new(&full).is_file() {
+        return Err(format!("There is no file at {path}."));
+    }
+    crate::ai::wire::ImageRef::from_path(&full).map(|_| full).ok_or_else(|| "That is not a picture ZO-AI can show (png, jpg, webp or gif, up to about 4 MB).".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

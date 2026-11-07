@@ -11,7 +11,13 @@ cargo build --release -p zo-ai -p zo-mcp
 printf 'installing to %s\n' "$PREFIX"
 install -Dm755 target/release/zo-ai  "$PREFIX/bin/zo-ai"
 install -Dm755 target/release/zo-mcp "$PREFIX/bin/zo-mcp"
-install -Dm644 $D/zo-ai.desktop            "$PREFIX/share/applications/zo-ai.desktop"
+# The launcher is named after the app's id (org.zohara.ZoAi), which is how Plasma ties the window in the task bar to its icon.
+install -Dm644 $D/org.zohara.ZoAi.desktop    "$PREFIX/share/applications/org.zohara.ZoAi.desktop"
+rm -f "$PREFIX/share/applications/zo-ai.desktop"
+# an older packaged copy under the old name would show a second "ZO-AI" in the menu: hide it for this user
+if [ -f /usr/share/applications/zo-ai.desktop ]; then
+    printf '[Desktop Entry]\nType=Application\nName=ZO-AI\nHidden=true\n' > "$PREFIX/share/applications/zo-ai.desktop"
+fi
 install -Dm644 $D/zo-ai-quick.desktop      "$PREFIX/share/applications/zo-ai-quick.desktop"
 install -Dm644 $D/zo-ai-background.desktop "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/zo-ai-background.desktop"
 install -Dm644 $D/org.zohara.ZoAi.metainfo.xml "$PREFIX/share/metainfo/org.zohara.ZoAi.metainfo.xml"

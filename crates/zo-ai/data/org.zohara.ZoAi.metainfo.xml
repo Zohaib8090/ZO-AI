@@ -12,7 +12,7 @@
       from the same knowledge every time you work inside a project.
     </p>
   </description>
-  <launchable type="desktop-id">zo-ai.desktop</launchable>
+  <launchable type="desktop-id">org.zohara.ZoAi.desktop</launchable>
   <provides>
     <binary>zo-ai</binary>
   </provides>

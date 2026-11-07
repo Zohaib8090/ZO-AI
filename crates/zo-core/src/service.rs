@@ -1,0 +1,408 @@
+//! The agent service: ZO-AI's brain on a local socket, so a program that is not the window can chat with it, run its tools and
+//! manage it. The first client is `zohara-linkd`, which carries it to the phone app (Zohara Link > ZoAI).
+//!
+//! Protocol: one JSON object per line. A client sends one request line; the answer is one line, or for `send` a stream of event
+//! lines that ends with `{"event":"done"}`. While a `send` runs the client may send `{"op":"approve","id":N,"yes":true}` for an
+//! approval the AI asked for, and `{"op":"stop"}` (closing the connection also stops it).
+//!
+//! The socket is private to the user (0600 inside a 0700 folder). Who may talk to it is decided by the client; `zohara-linkd` only
+//! forwards for phones that were allowed ZO-AI on the computer.
+
+use crate::ai::agent::{self, Config, Event};
+use crate::ai::{claude_code, providers, Selection};
+use crate::approval::Approver;
+use crate::policy::Mode;
+use crate::store::chats::{self, Chat, Entry};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+pub fn socket_path() -> PathBuf {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("/tmp/zo-ai-{}", unsafe { libc::getuid() })))
+        .join("zo-ai");
+    dir.join("agent.sock")
+}
+
+/// Starts listening (in the background). Safe to call once per process.
+pub fn start() -> Result<(), String> {
+    let path = socket_path();
+    let dir = path.parent().ok_or("no folder for the socket")?.to_path_buf();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    // another ZO-AI is already serving: leave its socket alone
+    if UnixStream::connect(&path).is_ok() {
+        return Err("another ZO-AI already serves the phone socket".into());
+    }
+    let _ = std::fs::remove_file(&path);
+    let listener = UnixListener::bind(&path).map_err(|e| format!("cannot listen on {}: {e}", path.display()))?;
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    std::thread::spawn(move || {
+        for conn in listener.incoming().flatten() {
+            std::thread::spawn(move || serve(conn));
+        }
+    });
+    Ok(())
+}
+
+fn line(w: &Mutex<UnixStream>, v: &Value) -> bool {
+    let mut w = w.lock().unwrap();
+    let mut s = v.to_string();
+    s.push('\n');
+    w.write_all(s.as_bytes()).is_ok()
+}
+
+fn serve(conn: UnixStream) {
+    let Ok(read) = conn.try_clone() else { return };
+    let writer = Arc::new(Mutex::new(conn));
+    let mut reader = BufReader::new(read);
+    let mut first = String::new();
+    if reader.read_line(&mut first).unwrap_or(0) == 0 {
+        return;
+    }
+    let req: Value = match serde_json::from_str(&first) {
+        Ok(v) => v,
+        Err(_) => {
+            line(&writer, &json!({"ok": false, "error": "not JSON"}));
+            return;
+        }
+    };
+    let op = req.get("op").and_then(Value::as_str).unwrap_or("").to_string();
+    if op == "send" {
+        send(&req, reader, writer);
+        return;
+    }
+    let reply = match handle(&op, &req) {
+        Ok(mut v) => {
+            if let Some(o) = v.as_object_mut() {
+                o.insert("ok".into(), json!(true));
+            }
+            v
+        }
+        Err(e) => json!({"ok": false, "error": e}),
+    };
+    line(&writer, &reply);
+}
+
+fn s<'a>(v: &'a Value, k: &str) -> &'a str {
+    v.get(k).and_then(Value::as_str).unwrap_or("")
+}
+
+fn handle(op: &str, req: &Value) -> Result<Value, String> {
+    match op {
+        "status" => {
+            let sel = Selection::load();
+            Ok(json!({
+                "provider": sel.provider, "model": sel.model, "mode": Mode::load().name(),
+                "ready": !sel.provider.is_empty(),
+                "version": env!("CARGO_PKG_VERSION"),
+            }))
+        }
+        "chats" => {
+            let all = chats::load();
+            Ok(json!({"chats": all.iter().take(60).map(|c| json!({"id": c.id, "title": c.title, "updated": c.updated, "pinned": c.pinned})).collect::<Vec<_>>()}))
+        }
+        "chat" => {
+            let id = s(req, "id");
+            let c = chats::load().into_iter().find(|c| c.id == id).ok_or("that chat is gone")?;
+            Ok(json!({"id": c.id, "title": c.title, "entries": c.entries.iter().map(|e| json!({"kind": e.kind, "text": e.text})).collect::<Vec<_>>()}))
+        }
+        "delete_chat" => {
+            chats::delete(s(req, "id"));
+            Ok(json!({}))
+        }
+        "pin_chat" => {
+            chats::set_pinned(s(req, "id"), req.get("on").and_then(Value::as_bool).unwrap_or(true));
+            Ok(json!({}))
+        }
+        "mode" => {
+            if let Some(m) = req.get("set").and_then(Value::as_str) {
+                Mode::parse(m).save();
+            }
+            Ok(json!({"mode": Mode::load().name()}))
+        }
+        "providers" => Ok(json!({"providers": providers::all().iter().map(|p| json!({"id": p.id, "name": p.name})).collect::<Vec<_>>()})),
+        "models" => {
+            let sel = Selection::load();
+            let pid = req.get("provider").and_then(Value::as_str).unwrap_or(&sel.provider).to_string();
+            let p = providers::find(&pid).ok_or("choose a provider on the computer first")?;
+            let key = crate::ai::profiles::get_key(&sel, p.id);
+            let list = agent::list_models(p, &sel.base_url_for(p), key.as_deref())?;
+            Ok(json!({"provider": p.id, "models": list, "current": sel.model}))
+        }
+        "select" => {
+            let mut sel = Selection::load();
+            if let Some(p) = req.get("provider").and_then(Value::as_str) {
+                providers::find(p).ok_or("unknown provider")?;
+                sel.provider = p.to_string();
+            }
+            if let Some(m) = req.get("model").and_then(Value::as_str) {
+                sel.model = m.to_string();
+            }
+            sel.save();
+            Ok(json!({"provider": sel.provider, "model": sel.model}))
+        }
+        "mcp_list" => {
+            let all = crate::mcp_client::load_servers();
+            Ok(json!({"servers": all.iter().map(|s| json!({"name": s.name, "command": s.command, "enabled": s.enabled})).collect::<Vec<_>>()}))
+        }
+        "mcp_add" => {
+            let mut a = json!({"name": s(req, "name"), "address": s(req, "address")});
+            if let Some(t) = req.get("token").and_then(Value::as_str) {
+                a["token"] = json!(t);
+            }
+            Ok(json!({"message": crate::tools::call("zohara_ai_add_mcp_server", &a)?}))
+        }
+        "mcp_import" => Ok(json!({"message": crate::tools::call("zohara_ai_add_mcp_config", &json!({"config": s(req, "config")}))?})),
+        "mcp_remove" => {
+            let name = s(req, "name");
+            let mut all = crate::mcp_client::load_servers();
+            let before = all.len();
+            all.retain(|x| x.name != name);
+            if all.len() == before {
+                return Err(format!("no server named {name}"));
+            }
+            crate::mcp_client::save_servers(&all);
+            Ok(json!({}))
+        }
+        "mcp_toggle" => {
+            let (name, on) = (s(req, "name"), req.get("enabled").and_then(Value::as_bool).unwrap_or(true));
+            let mut all = crate::mcp_client::load_servers();
+            let x = all.iter_mut().find(|x| x.name == name).ok_or("no such server")?;
+            x.enabled = on;
+            crate::mcp_client::save_servers(&all);
+            Ok(json!({}))
+        }
+        other => Err(format!("unknown request: {other}")),
+    }
+}
+
+/// Asks the connected client (the phone) for a yes.
+struct RemoteApprover {
+    out: Arc<Mutex<UnixStream>>,
+    pending: Arc<Mutex<HashMap<u64, mpsc::Sender<bool>>>>,
+    next: AtomicU64,
+}
+
+impl Approver for RemoteApprover {
+    fn approve(&self, tool: &str, summary: &str) -> bool {
+        let id = self.next.fetch_add(1, Ordering::SeqCst);
+        let (tx, rx) = mpsc::channel();
+        self.pending.lock().unwrap().insert(id, tx);
+        if !line(&self.out, &json!({"event": "approval", "id": id, "tool": tool, "summary": summary})) {
+            return false;
+        }
+        let yes = rx.recv_timeout(Duration::from_secs(180)).unwrap_or(false);
+        self.pending.lock().unwrap().remove(&id);
+        yes
+    }
+}
+
+fn entry(kind: &str, text: impl Into<String>) -> Entry {
+    Entry { kind: kind.into(), text: text.into() }
+}
+
+fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStream>>) {
+    let text = s(req, "text").trim().to_string();
+    if text.is_empty() {
+        line(&out, &json!({"event": "error", "error": "empty message"}));
+        line(&out, &json!({"event": "done"}));
+        return;
+    }
+    let sel = Selection::load();
+    if sel.provider.is_empty() {
+        line(&out, &json!({"event": "error", "error": "No model is chosen on the computer yet. Open ZO-AI there and choose one."}));
+        line(&out, &json!({"event": "done"}));
+        return;
+    }
+    // continue a saved chat, or start one
+    let mut chat = match req.get("chat").and_then(Value::as_str).filter(|c| !c.is_empty()) {
+        Some(id) => chats::load().into_iter().find(|c| c.id == id).unwrap_or_else(|| new_chat(&text)),
+        None => new_chat(&text),
+    };
+    line(&out, &json!({"event": "chat", "id": chat.id, "title": chat.title}));
+    if let Some(m) = req.get("mode").and_then(Value::as_str) {
+        Mode::parse(m).save();
+    }
+    let mode = Mode::load();
+
+    // the phone's answers and "stop" arrive while the AI works
+    let cancel = Arc::new(AtomicBool::new(false));
+    let pending: Arc<Mutex<HashMap<u64, mpsc::Sender<bool>>>> = Arc::new(Mutex::new(HashMap::new()));
+    {
+        let (cancel, pending) = (cancel.clone(), pending.clone());
+        std::thread::spawn(move || {
+            let mut buf = String::new();
+            loop {
+                buf.clear();
+                match reader.read_line(&mut buf) {
+                    Ok(0) | Err(_) => {
+                        cancel.store(true, Ordering::SeqCst);
+                        // nobody is left to answer
+                        pending.lock().unwrap().clear();
+                        return;
+                    }
+                    Ok(_) => {
+                        let Ok(v) = serde_json::from_str::<Value>(&buf) else { continue };
+                        match v.get("op").and_then(Value::as_str) {
+                            Some("approve") => {
+                                let id = v.get("id").and_then(Value::as_u64).unwrap_or(u64::MAX);
+                                if let Some(tx) = pending.lock().unwrap().get(&id) {
+                                    let _ = tx.send(v.get("yes").and_then(Value::as_bool).unwrap_or(false));
+                                }
+                            }
+                            Some("stop") => cancel.store(true, Ordering::SeqCst),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        });
+    }
+    let approver = RemoteApprover { out: out.clone(), pending, next: AtomicU64::new(1) };
+
+    chat.entries.push(entry("msg-user", text.clone()));
+    let system = format!("{}\n\nThe person is talking to you from their phone (Zohara Link). Keep answers short and easy to read on a small screen.", agent::SYSTEM_PROMPT);
+    let mut session = chat.session.clone();
+    let mut history = chat.history.clone();
+    let mut entries = std::mem::take(&mut chat.entries);
+    let result = {
+        let o = out.clone();
+        let mut on = |e: Event| match e {
+            Event::TextDelta(d) => {
+                line(&o, &json!({"event": "delta", "text": d}));
+            }
+            Event::Text(t) => {
+                entries.push(entry("msg-ai", t.clone()));
+                line(&o, &json!({"event": "text", "text": t}));
+            }
+            Event::ToolStart { name, summary } => {
+                entries.push(entry("msg-tool", format!("▸ {name}  {}", summary.lines().nth(1).unwrap_or(""))));
+                line(&o, &json!({"event": "tool_start", "name": name, "summary": summary}));
+            }
+            Event::ToolDone { name, ok, output } => {
+                let short: String = output.chars().take(300).collect();
+                entries.push(entry(if ok { "msg-tool-out" } else { "msg-error" }, format!("{} {short}", if ok { "✓" } else { "✗" })));
+                // the phone gets a short version: tool output can be long
+                let cut: String = output.chars().take(1500).collect();
+                line(&o, &json!({"event": "tool_done", "name": name, "ok": ok, "output": cut}));
+            }
+            Event::Usage(u) => {
+                line(&o, &json!({"event": "usage", "input": u.input, "output": u.output}));
+            }
+        };
+        if sel.provider == "claude-code" {
+            let model = if sel.model.is_empty() { "sonnet".to_string() } else { sel.model.clone() };
+            claude_code::run(&model, sel.effort.as_deref(), &mut session, &text, &system, &cancel, &mut on)
+        } else {
+            match Config::from_selection(&sel, &system) {
+                Ok(cfg) => agent::run(&cfg, &mut history, &text, mode, &approver, &cancel, &mut on),
+                Err(e) => Err(e),
+            }
+        }
+    };
+    if let Err(e) = result {
+        if e != agent::STOPPED {
+            entries.push(entry("msg-error", e.clone()));
+            line(&out, &json!({"event": "error", "error": e}));
+        } else {
+            line(&out, &json!({"event": "stopped"}));
+        }
+    }
+    chat.entries = entries;
+    chat.history = history;
+    chat.session = session;
+    chat.updated = chats::now_millis();
+    chats::upsert(chat);
+    line(&out, &json!({"event": "done"}));
+    // the helper thread that listens for answers still holds the other end: close the connection so the client sees the end
+    let _ = out.lock().unwrap().shutdown(std::net::Shutdown::Both);
+}
+
+fn new_chat(first: &str) -> Chat {
+    let now = chats::now_millis();
+    let title: String = first.chars().take(40).collect();
+    Chat { id: format!("c{now}"), title, updated: now, ..Default::default() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    /// A tiny model server that answers one request.
+    fn model(answer: Value) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = Vec::new();
+            let mut tmp = [0u8; 4096];
+            loop {
+                let n = s.read(&mut tmp).unwrap();
+                buf.extend_from_slice(&tmp[..n]);
+                if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                    let len = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                    while buf.len() < i + 4 + len {
+                        let n = s.read(&mut tmp).unwrap();
+                        buf.extend_from_slice(&tmp[..n]);
+                    }
+                    break;
+                }
+            }
+            let body = answer.to_string();
+            write!(s, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).unwrap();
+        });
+        url
+    }
+
+    #[test]
+    fn a_message_comes_back_as_events_and_is_saved_as_a_chat() {
+        let dir = std::env::temp_dir().join(format!("zo-service-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", dir.join("config"));
+        std::env::set_var("XDG_DATA_HOME", dir.join("data"));
+        let url = model(json!({"choices":[{"message":{"content":"Hello from the laptop."}}]}));
+        let mut sel = Selection { provider: "ollama".into(), model: "m".into(), ..Default::default() };
+        sel.base_urls.insert("ollama".into(), url);
+        sel.save();
+
+        let (client, server) = UnixStream::pair().unwrap();
+        std::thread::spawn(move || serve(server));
+        let mut w = client.try_clone().unwrap();
+        writeln!(w, "{}", json!({"op": "send", "text": "hi from the phone"})).unwrap();
+        let mut events = Vec::new();
+        for l in BufReader::new(client).lines() {
+            let v: Value = serde_json::from_str(&l.unwrap()).unwrap();
+            let done = v["event"] == "done";
+            events.push(v);
+            if done {
+                break;
+            }
+        }
+        let kinds: Vec<String> = events.iter().map(|e| e["event"].as_str().unwrap().to_string()).collect();
+        assert_eq!(kinds.first().map(String::as_str), Some("chat"), "{kinds:?}");
+        assert!(events.iter().any(|e| e["event"] == "text" && e["text"] == "Hello from the laptop."), "{events:?}");
+        let saved = chats::load();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].title, "hi from the phone");
+        assert!(saved[0].entries.iter().any(|e| e.kind == "msg-ai"));
+
+        // the other requests
+        let r = handle("chats", &json!({})).unwrap();
+        assert_eq!(r["chats"].as_array().unwrap().len(), 1);
+        assert_eq!(handle("mode", &json!({"set": "manual"})).unwrap()["mode"], "Manual");
+        assert!(handle("nonsense", &json!({})).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

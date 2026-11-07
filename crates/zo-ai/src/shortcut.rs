@@ -8,8 +8,23 @@ use gtk4::glib::{self, prelude::ToVariant, Variant};
 const COMPONENT: &str = "zo-ai";
 const ACTION: &str = "quick";
 
-// Qt key codes: Ctrl+Meta+C and Meta+Shift+F23 (what the Copilot key sends)
+// Qt key codes: Ctrl+Meta+C, and Meta+Shift+F23 (what the Copilot key sends on the keyboard).
+// The Copilot key cannot be made to work through Plasma's shortcuts yet: with the usual keyboard layout, F23 held with Shift or
+// Meta is the "assistant" key, which Qt has no code for, and Plasma then reads it as Touchpad Off, which it keeps for itself
+// ("Disable Touchpad"). Checked on 2026-11-08 by sending the real key events. Meta+Shift+F23 stays for layouts that deliver F23 as is.
 const KEYS: [i32; 2] = [0x1400_0043, 0x1300_0046];
+/// Keys that earlier versions of ZO-AI set; a person who never changed them gets the current ones.
+const OLD_DEFAULTS: [[i32; 3]; 1] = [[0x1100_0112, 0x1400_0043, 0x1300_0046]];
+
+fn is_old_default(chosen: &[i32]) -> bool {
+    let mut c = chosen.to_vec();
+    c.sort_unstable();
+    OLD_DEFAULTS.iter().any(|d| {
+        let mut d = d.to_vec();
+        d.sort_unstable();
+        d == c
+    })
+}
 
 fn call(conn: &gio::DBusConnection, path: &str, iface: &str, method: &str, args: Variant) -> Result<Variant, glib::Error> {
     conn.call_sync(Some("org.kde.kglobalaccel"), path, iface, method, Some(&args), None, gio::DBusCallFlags::NONE, 3000, None::<&gio::Cancellable>)
@@ -27,16 +42,21 @@ fn try_register(on_press: impl Fn() + 'static) -> Result<(), glib::Error> {
     let iface = "org.kde.KGlobalAccel";
 
     call(&conn, "/kglobalaccel", iface, "doRegister", (id.clone(),).to_variant())?;
-    // keep what the person chose in System Settings; only fill in our defaults when nothing is bound yet
+    // Keep what the person chose in System Settings; only fill in our defaults when nothing is bound yet.
+    const SET_PRESENT: u32 = 2;
+    const NO_AUTOLOADING: u32 = 4;
+    const IS_DEFAULT: u32 = 8;
     let current = call(&conn, "/kglobalaccel", iface, "shortcut", (id.clone(),).to_variant())?;
-    let bound = current.child_value(0).n_children() > 0;
-    if !bound {
-        const SET_PRESENT: u32 = 2;
-        const NO_AUTOLOADING: u32 = 4;
-        const IS_DEFAULT: u32 = 8;
+    let chosen: Vec<i32> = current.child_value(0).iter().filter_map(|k| k.get::<i32>()).collect();
+    let reset = chosen.is_empty() || is_old_default(&chosen);
+    if reset {
         call(&conn, "/kglobalaccel", iface, "setShortcut", (id.clone(), KEYS.to_vec(), SET_PRESENT | IS_DEFAULT | NO_AUTOLOADING).to_variant())?;
-        call(&conn, "/kglobalaccel", iface, "setShortcut", (id, KEYS.to_vec(), SET_PRESENT | NO_AUTOLOADING).to_variant())?;
     }
+    // Every start must mark the action as present with its keys. Plasma restores the saved keys by itself, but it only
+    // grabs them (so the keys really do something) once the program has said the action is here; without this call the
+    // shortcut looked set in System Settings and never fired after the first run.
+    let keys = if reset { KEYS.to_vec() } else { chosen };
+    call(&conn, "/kglobalaccel", iface, "setShortcut", (id, keys, SET_PRESENT | NO_AUTOLOADING).to_variant())?;
 
     let path = call(&conn, "/kglobalaccel", iface, "getComponent", (COMPONENT,).to_variant())?;
     let path = path.child_value(0).get::<String>().unwrap_or_default();
@@ -49,6 +69,9 @@ fn try_register(on_press: impl Fn() + 'static) -> Result<(), glib::Error> {
         gio::DBusSignalFlags::NONE,
         move |_, _, _, _, _, params| {
             if params.child_value(1).get::<String>().as_deref() == Some(ACTION) {
+                if std::env::var_os("ZO_AI_DEBUG").is_some() {
+                    eprintln!("zo-ai: the quick-ask shortcut was pressed");
+                }
                 on_press();
             }
         },

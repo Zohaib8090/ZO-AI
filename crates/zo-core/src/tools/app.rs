@@ -82,6 +82,75 @@ pub fn pin_chat(a: &Value) -> Result<String, String> {
     Ok(format!("{} \"{}\".", if on { "Pinned" } else { "Unpinned" }, found.title))
 }
 
+pub fn add_mcp_server(a: &Value) -> Result<String, String> {
+    use crate::mcp_client::{self, ServerConfig};
+    let name = mcp_client::clean_name(text(a, "name")?);
+    let address = text(a, "address")?.trim().to_string();
+    if name.is_empty() {
+        return Err("The name has no letters or digits.".into());
+    }
+    if mcp_client::load_servers().iter().any(|s| s.name == name) {
+        return Err(format!("A server named \"{name}\" is already added."));
+    }
+    let cfg = ServerConfig { name: name.clone(), command: address, enabled: true, ..Default::default() };
+    let tools = mcp_client::connect(&cfg, a.get("token").and_then(Value::as_str), &mcp_client::open_in_browser)?;
+    let mut all = mcp_client::load_servers();
+    all.push(cfg);
+    mcp_client::save_servers(&all);
+    Ok(format!("Added \"{name}\". Its tools ({}) are yours from the next message on. It is listed in ZO-AI > Settings > MCP servers.", tools.join(", ")))
+}
+
+pub fn add_mcp_config(config: &str) -> Result<String, String> {
+    use crate::mcp_client;
+    let found = mcp_client::import_json(config)?;
+    let have: Vec<String> = mcp_client::load_servers().into_iter().map(|s| s.name).collect();
+    let mut report = Vec::new();
+    for cfg in found {
+        if have.contains(&cfg.name) {
+            report.push(format!("{}: already added", cfg.name));
+            continue;
+        }
+        match mcp_client::connect(&cfg, None, &mcp_client::open_in_browser) {
+            Ok(tools) => {
+                let mut all = mcp_client::load_servers();
+                all.push(cfg.clone());
+                mcp_client::save_servers(&all);
+                report.push(format!("{}: added, {} tools (yours from the next message on)", cfg.name, tools.len()));
+            }
+            Err(e) => report.push(format!("{}: not added: {e}", cfg.name)),
+        }
+    }
+    Ok(report.join("\n"))
+}
+
+pub fn mcp_status() -> Result<String, String> {
+    use crate::mcp_client;
+    let all = mcp_client::load_servers();
+    if all.is_empty() {
+        return Ok("No MCP servers are added.".into());
+    }
+    let mut lines = Vec::new();
+    for cfg in all {
+        if !cfg.enabled {
+            lines.push(format!("{}: switched off", cfg.name));
+            continue;
+        }
+        lines.push(match mcp_client::test(&cfg) {
+            Ok(tools) => format!("{}: works, {} tools (for example {})", cfg.name, tools.len(), tools.iter().take(6).cloned().collect::<Vec<_>>().join(", ")),
+            Err(e) => format!("{}: not working: {e}", cfg.name),
+        });
+    }
+    Ok(lines.join("\n"))
+}
+
+pub fn list_mcp_servers() -> Result<String, String> {
+    let all = crate::mcp_client::load_servers();
+    if all.is_empty() {
+        return Ok("No MCP servers are added.".into());
+    }
+    Ok(all.iter().map(|s| format!("{} | {} | {}", s.name, s.command, if s.enabled { "on" } else { "off" })).collect::<Vec<_>>().join("\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

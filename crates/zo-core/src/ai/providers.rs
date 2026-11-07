@@ -73,3 +73,21 @@ pub fn all() -> &'static [Provider] {
 pub fn find(id: &str) -> Option<&'static Provider> {
     ALL.iter().find(|p| p.id == id)
 }
+
+/// Can this model look at pictures? Anthropic and Gemini models can; OpenAI's, apart from a few old and small ones. For the many
+/// other hosts it depends on the model, so its name decides. A model that is not recognised is treated as text-only, and the
+/// person can say otherwise in the model settings (`Selection::vision`).
+pub fn can_see(p: &Provider, model: &str) -> bool {
+    let m = model.to_lowercase();
+    match p.id {
+        "claude-code" => false,
+        "anthropic" => true,
+        "gemini" => !(m.contains("embedding") || m.contains("aqa")),
+        "openai" => !["gpt-3.5", "o1-mini", "o3-mini", "gpt-oss", "embedding", "whisper", "tts", "davinci", "babbage", "moderation", "instruct"].iter().any(|bad| m.contains(bad)),
+        _ => [
+            "vision", "-vl", "vl-", "_vl", "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-5", "claude", "gemini", "gemma-3", "gemma3", "llama-3.2", "llama3.2",
+            "llama-4", "llama4", "pixtral", "llava", "minicpm-v", "internvl", "glm-4v", "glm-4.5v", "glm-4.6v", "kimi-vl", "step-1v", "step-3",
+            "mistral-small-3", "mistral-medium", "grok-4", "nova-", "phi-4-multimodal", "molmo", "omni", "multimodal",
+        ].iter().any(|k| m.contains(k)),
+    }
+}

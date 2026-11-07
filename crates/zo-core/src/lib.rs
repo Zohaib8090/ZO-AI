@@ -7,8 +7,13 @@ pub mod audit;
 pub mod exec;
 pub mod mcp;
 pub mod mcp_client;
+pub mod mcp_oauth;
 pub mod policy;
+pub mod service;
 pub mod store;
+pub mod term;
+pub mod uibridge;
+pub mod voice;
 pub mod tools;
 
 pub use policy::{Decision, Mode, Risk};

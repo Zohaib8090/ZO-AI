@@ -2,7 +2,10 @@
 
 pub mod agent;
 pub mod claude_code;
+pub mod context;
 pub mod keys;
+pub mod models;
+pub mod profiles;
 pub mod providers;
 pub mod wire;
 
@@ -20,6 +23,15 @@ pub struct Selection {
     pub model: String,
     #[serde(default)]
     pub base_urls: HashMap<String, String>,
+    /// The person's word on whether the chosen model can look at pictures; none means "decide from the model's name".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision: Option<bool>,
+    /// How hard the model should think (low, medium, high, xhigh, max); none means the program's own default. Used by Claude Code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    /// The saved profile in use (see `profiles`): it decides which API key is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 impl Selection {

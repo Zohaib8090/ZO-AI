@@ -8,7 +8,7 @@ pkgdesc="ZO-AI: the AI built into Zohara OS, with an MCP server that lets any MC
 arch=('x86_64')
 url="https://github.com/Zohaib8090/ZO-AI"
 license=('GPL-3.0-or-later')
-depends=('gtk4' 'libadwaita' 'libsecret')   # libsecret: secret-tool keeps API keys in the system keyring
+depends=('gtk4' 'libadwaita' 'libsecret' 'webkitgtk-6.0')   # libsecret: secret-tool keeps API keys in the system keyring; webkitgtk-6.0: the built-in browser
 makedepends=('cargo')
 optdepends=('android-tools: control Android devices over adb'
             'waydroid: control Android apps'
@@ -20,7 +20,7 @@ package() {
   local d=crates/zo-ai/data
   install -Dm755 target/release/zo-ai  "$pkgdir/usr/bin/zo-ai"
   install -Dm755 target/release/zo-mcp "$pkgdir/usr/bin/zo-mcp"
-  install -Dm644 $d/zo-ai.desktop            "$pkgdir/usr/share/applications/zo-ai.desktop"
+  install -Dm644 $d/org.zohara.ZoAi.desktop    "$pkgdir/usr/share/applications/org.zohara.ZoAi.desktop"
   install -Dm644 $d/zo-ai-quick.desktop      "$pkgdir/usr/share/applications/zo-ai-quick.desktop"
   install -Dm644 $d/zo-ai-background.desktop "$pkgdir/etc/xdg/autostart/zo-ai-background.desktop"
   install -Dm644 $d/org.zohara.ZoAi.metainfo.xml "$pkgdir/usr/share/metainfo/org.zohara.ZoAi.metainfo.xml"

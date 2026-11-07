@@ -83,16 +83,22 @@ fn handle_line(v: &Value, session: &mut Option<String>, names: &mut Vec<(String,
 }
 
 /// Send one message. `session` is remembered between calls so the conversation continues.
-pub fn run(model: &str, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+pub fn run(model: &str, effort: Option<&str>, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     let system = if system_extra.trim().is_empty() { SYSTEM_PROMPT.to_string() } else { format!("{SYSTEM_PROMPT}\n\n{system_extra}") };
+    // Claude can look at what the tools return as pictures (a screenshot comes back as an image)
+    let system = format!("{system}\n\n{}", super::agent::VISION_YES);
     let bin = binary().ok_or("Claude Code is not installed. Install it (npm install -g @anthropic-ai/claude-code), then sign in with: claude auth login")?;
-    let config = json!({ "mcpServers": { "zohara": { "command": mcp_binary() } } }).to_string();
+    let config = json!({ "mcpServers": { "zohara": { "command": mcp_binary(), "env": { "ZO_MCP_EXTERNAL": "1" } } } }).to_string();
     let mut cmd = Command::new(bin);
     cmd.args(["-p", prompt, "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--strict-mcp-config", "--mcp-config", &config,
         // Claude's own file and shell tools are off: everything goes through ZO-AI's tools, so ZO-AI's permission modes apply
         "--tools", "", "--allowedTools", "mcp__zohara__*", "--append-system-prompt", &system]);
     if !model.is_empty() {
         cmd.args(["--model", model]);
+    }
+    // how hard it thinks: only the levels the program knows
+    if let Some(level) = effort.filter(|l| ["low", "medium", "high", "xhigh", "max"].contains(l)) {
+        cmd.args(["--effort", level]);
     }
     if let Some(id) = session.as_deref() {
         cmd.args(["--resume", id]);
@@ -165,6 +171,7 @@ mod tests {
                 Event::Text(t) => format!("text:{t}"),
                 Event::ToolStart { name, .. } => format!("start:{name}"),
                 Event::ToolDone { name, ok, output } => format!("done:{name}:{ok}:{output}"),
+                Event::Usage(_) => "usage".to_string(),
             })).is_none());
         }
         assert_eq!(out, ["start:zohara_system", "done:zohara_system:true:OS: Linux", "text:Kernel: Linux"]);
@@ -192,7 +199,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("claude");
         let args_log = dir.join("args");
-        std::fs::write(&script, format!("#!/bin/sh\necho \"$@\" >> {}\n\
+        std::fs::write(&script, format!("#!/bin/sh\n(echo \"$@\" | tr '\\n' ' '; echo) >> {}\n\
             echo '{{\"type\":\"system\",\"session_id\":\"fake-1\"}}'\n\
             echo '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"hi\"}}]}}}}'\n", args_log.display())).unwrap();
         use std::os::unix::fs::PermissionsExt;
@@ -200,13 +207,14 @@ mod tests {
         std::env::set_var("ZOAI_CLAUDE_BIN", &script);
 
         let (mut session, mut texts) = (None, Vec::new());
-        run("sonnet", &mut session, "one", "", &Arc::new(AtomicBool::new(false)), &mut |e| if let Event::Text(t) = e { texts.push(t) }).unwrap();
-        run("sonnet", &mut session, "two", "", &Arc::new(AtomicBool::new(false)), &mut |_| {}).unwrap();
+        run("sonnet", None, &mut session, "one", "", &Arc::new(AtomicBool::new(false)), &mut |e| if let Event::Text(t) = e { texts.push(t) }).unwrap();
+        run("sonnet", Some("high"), &mut session, "two", "", &Arc::new(AtomicBool::new(false)), &mut |_| {}).unwrap();
         assert_eq!(texts, ["hi"]);
         assert_eq!(session.as_deref(), Some("fake-1"));
         let log = std::fs::read_to_string(&args_log).unwrap();
         let calls: Vec<&str> = log.lines().collect();
         assert!(!calls[0].contains("--resume") && calls[1].contains("--resume fake-1"));
+        assert!(!calls[0].contains("--effort") && calls[1].contains("--effort high"));
         assert!(calls[0].contains("--tools") && calls[0].contains("--allowedTools mcp__zohara__*") && calls[0].contains("--model sonnet"));
         std::env::remove_var("ZOAI_CLAUDE_BIN");
         let _ = std::fs::remove_dir_all(&dir);

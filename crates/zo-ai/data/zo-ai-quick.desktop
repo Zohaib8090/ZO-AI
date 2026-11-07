@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=ZO-AI Quick Ask
-Comment=Open the ZO-AI popup (Copilot key or Ctrl+Super+C)
+Comment=Open the ZO-AI popup (Ctrl+Super+C)
 Exec=zo-ai --quick
 Icon=zo-ai
 Terminal=false

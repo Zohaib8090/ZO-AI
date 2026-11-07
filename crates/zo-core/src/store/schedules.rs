@@ -13,7 +13,7 @@ pub struct Task {
     pub prompt: String,
     /// When it runs next, in milliseconds since 1970.
     pub next_run: u64,
-    /// once, hourly, daily or weekly.
+    /// once, hourly, daily, weekly, monthly, or "every N minutes|hours|days|weeks|months".
     pub repeat: String,
     pub enabled: bool,
     #[serde(default)]
@@ -27,7 +27,101 @@ pub struct Task {
     pub last_chat: Option<String>,
 }
 
-pub const REPEATS: [&str; 4] = ["once", "hourly", "daily", "weekly"];
+pub const REPEATS: [&str; 5] = ["once", "hourly", "daily", "weekly", "monthly"];
+
+/// The shortest repeat there is: a task that runs more often than this would swamp the computer.
+const MIN_EVERY_MS: u64 = 5 * 60_000;
+
+/// Reads a repeat: one of `REPEATS`, or "every N minutes|hours|days|weeks|months" ("every 3 days", "every 90 minutes", "every other week"
+/// is not understood). Returns the form that is stored.
+pub fn normalize_repeat(text: &str) -> Result<String, String> {
+    let t = text.trim().to_lowercase();
+    if REPEATS.contains(&t.as_str()) {
+        return Ok(t);
+    }
+    let words: Vec<&str> = t.split_whitespace().collect();
+    if let ["every", n, unit] = words.as_slice() {
+        let n: u64 = n.parse().map_err(|_| "After \"every\" give a number, for example: every 3 days.".to_string())?;
+        let unit = unit.trim_end_matches('s');
+        if n == 0 {
+            return Err("Every 0 of anything is not a repeat.".into());
+        }
+        let ok = ["minute", "hour", "day", "week", "month"].contains(&unit);
+        if !ok {
+            return Err("The unit must be minutes, hours, days, weeks or months.".into());
+        }
+        let r = format!("every {n} {unit}{}", if n == 1 { "" } else { "s" });
+        return match interval_ms(&r) {
+            Some(ms) if ms >= MIN_EVERY_MS => Ok(r),
+            Some(_) => Err("A task can repeat at most every 5 minutes.".into()),
+            None => Ok(r), // months
+        };
+    }
+    Err(format!("repeat must be one of: {}, or something like \"every 3 days\" (every N minutes, hours, days, weeks or months).", REPEATS.join(", ")))
+}
+
+/// The length of a repeat in milliseconds, when it is a fixed length (months are not).
+fn interval_ms(repeat: &str) -> Option<u64> {
+    match repeat {
+        "hourly" => Some(3_600_000),
+        "daily" => Some(86_400_000),
+        "weekly" => Some(7 * 86_400_000),
+        _ => {
+            let words: Vec<&str> = repeat.split_whitespace().collect();
+            let ["every", n, unit] = words.as_slice() else { return None };
+            let n: u64 = n.parse().ok()?;
+            let unit = unit.trim_end_matches('s');
+            Some(n * match unit {
+                "minute" => 60_000,
+                "hour" => 3_600_000,
+                "day" => 86_400_000,
+                "week" => 7 * 86_400_000,
+                _ => return None,
+            })
+        }
+    }
+}
+
+/// How many months a repeat is, when it is counted in months.
+fn months_of(repeat: &str) -> Option<u32> {
+    if repeat == "monthly" {
+        return Some(1);
+    }
+    let words: Vec<&str> = repeat.split_whitespace().collect();
+    let ["every", n, unit] = words.as_slice() else { return None };
+    (unit.trim_end_matches('s') == "month").then(|| n.parse().ok()).flatten()
+}
+
+/// `ms` moved on by `months` calendar months (the same day and time of day in the later month), by the system's own calendar.
+fn add_months(ms: u64, months: u32) -> Option<u64> {
+    // `date` cannot add months to an "@seconds" time directly, so the local date and time are written out first
+    let local = Command::new("date").args(["-d", &format!("@{}", ms / 1000), "+%Y-%m-%d %H:%M:%S"]).output().ok()?;
+    let local = String::from_utf8_lossy(&local.stdout).trim().to_string();
+    if local.is_empty() {
+        return None;
+    }
+    let out = Command::new("date").args(["-d", &format!("{local} +{months} months"), "+%s"]).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().ok().map(|s| s * 1000)
+}
+
+/// The next time after `after` that a repeating task runs, counted from `next_run`.
+fn next_after(next_run: u64, repeat: &str, after: u64) -> Option<u64> {
+    let mut t = next_run;
+    if let Some(step) = interval_ms(repeat).filter(|s| *s > 0) {
+        while t <= after {
+            t += step;
+        }
+        return Some(t);
+    }
+    let months = months_of(repeat)?;
+    for _ in 0..1200 {
+        if t > after {
+            return Some(t);
+        }
+        t = add_months(t, months)?;
+    }
+    None
+}
 
 fn path() -> PathBuf {
     let base = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| {
@@ -87,9 +181,8 @@ pub fn add(title: &str, prompt: &str, next_run: u64, repeat: &str, project: Opti
     if prompt.trim().is_empty() {
         return Err("Say what ZO-AI should do.".into());
     }
-    if !REPEATS.contains(&repeat) {
-        return Err(format!("repeat must be one of: {}", REPEATS.join(", ")));
-    }
+    let repeat = normalize_repeat(repeat)?;
+    let repeat = repeat.as_str();
     let now = now_millis();
     let title = if title.trim().is_empty() { prompt.trim().chars().take(48).collect() } else { title.trim().to_string() };
     let task = Task { id: format!("t{now}{}", load().len()), title, prompt: prompt.trim().to_string(), next_run, repeat: repeat.into(), enabled: true, project, created: now, last_run: None, last_chat: None };
@@ -133,27 +226,14 @@ pub fn due(now: u64) -> Vec<Task> {
     load().into_iter().filter(|t| t.enabled && t.next_run <= now).collect()
 }
 
-fn step(repeat: &str) -> Option<u64> {
-    match repeat {
-        "hourly" => Some(3_600_000),
-        "daily" => Some(86_400_000),
-        "weekly" => Some(7 * 86_400_000),
-        _ => None,
-    }
-}
-
 /// Record that a task ran: a repeating one moves to its next time (never into the past), a one-off switches itself off.
 pub fn mark_ran(id: &str, now: u64, chat: Option<String>) {
     let mut all = load();
     if let Some(t) = all.iter_mut().find(|t| t.id == id) {
         t.last_run = Some(now);
         t.last_chat = chat;
-        match step(&t.repeat) {
-            Some(s) => {
-                while t.next_run <= now {
-                    t.next_run += s;
-                }
-            }
+        match next_after(t.next_run, &t.repeat, now) {
+            Some(next) => t.next_run = next,
             None => t.enabled = false,
         }
     }
@@ -194,7 +274,17 @@ mod tests {
             assert_eq!(all[0].title, "do a thing that has a long description");
             assert_eq!(all[0].project.as_deref(), Some("p1"));
             assert!(add("x", "  ", 1, "once", None).is_err());
-            assert!(add("x", "y", 1, "monthly", None).is_err());
+            assert!(add("x", "y", 1, "yearly", None).is_err());
+            assert!(normalize_repeat("every 2 minutes").is_err(), "too often");
+            assert_eq!(normalize_repeat("Every 3 days").unwrap(), "every 3 days");
+            assert_eq!(normalize_repeat("every 1 hours").unwrap(), "every 1 hour");
+            assert_eq!(normalize_repeat("monthly").unwrap(), "monthly");
+            assert!(normalize_repeat("every x days").is_err() && normalize_repeat("every 3 years").is_err());
+            assert_eq!(next_after(1_000, "every 90 minutes", 1_000 + 3 * 90 * 60_000), Some(1_000 + 4 * 90 * 60_000));
+            // a month later is the same moment next month (checked against the system calendar)
+            let jan = 1_800_000_000_000u64; // 2027-01-15
+            let feb = next_after(jan, "monthly", jan).unwrap();
+            assert!(feb > jan + 27 * 86_400_000 && feb < jan + 32 * 86_400_000);
             assert!(remove(&all[0].id));
             assert_eq!(load().len(), 1);
         });
