@@ -19,3 +19,8 @@ pub fn call(name: &str, args: &Value) -> Result<String, String> {
         None => Err("This needs the ZO-AI window.".into()),
     }
 }
+
+/// Is a window there to do the work (the browser tools are only offered then)?
+pub fn available() -> bool {
+    HANDLER.get().is_some()
+}

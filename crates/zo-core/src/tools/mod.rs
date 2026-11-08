@@ -71,7 +71,8 @@ pub fn app_definitions() -> &'static [ToolDef] {
 pub fn active() -> Vec<&'static ToolDef> {
     let mut v: Vec<&'static ToolDef> = definitions().iter().collect();
     if crate::term::enabled() {
-        v.extend(app_definitions().iter());
+        // terminals work without a window; the browser needs the window that shows it
+        v.extend(app_definitions().iter().filter(|d| !d.name.starts_with("zohara_browser_") || crate::uibridge::available()));
     }
     v
 }

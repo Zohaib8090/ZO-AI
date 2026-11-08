@@ -2679,6 +2679,8 @@ fn main() -> glib::ExitCode {
         static FIRST: std::sync::Once = std::sync::Once::new();
         FIRST.call_once(|| {
             ask::start();
+            // terminals (and so the AI terminal tools) live in this process, with or without a window
+            zo_core::term::enable_in_app();
             if let Err(e) = zo_core::service::start() {
                 eprintln!("zo-ai: the phone service did not start: {e}");
             }

@@ -239,3 +239,123 @@ mod search_tests {
         assert_eq!(snippet_around("short", "x"), None);
     }
 }
+
+// ---- takes: asking again or editing a message keeps what was there as an earlier take ----------------------------------------
+
+impl Chat {
+    /// The entry and turn at which your message number `nth` (counting from 0) starts.
+    pub fn tail_start(&self, nth: usize) -> Option<(usize, usize)> {
+        let at = self.entries.iter().enumerate().filter(|(_, e)| e.kind == "msg-user").map(|(i, _)| i).nth(nth)?;
+        let turn_at = self.history.iter().enumerate().filter(|(_, t)| matches!(t, Turn::User(_) | Turn::UserImages(..))).map(|(i, _)| i).nth(nth).unwrap_or(self.history.len());
+        Some((at, turn_at))
+    }
+
+    /// Keeps the conversation from message `nth` on as a take of its own, opens a new empty one in its place, and cuts the chat there.
+    pub fn fork_at(&mut self, nth: usize) -> Option<String> {
+        let (at, turn_at) = self.tail_start(nth)?;
+        let text = self.entries[at].text.clone();
+        let later: Vec<usize> = self.branches.range(nth + 1..).map(|(k, _)| *k).collect();
+        let sub: BTreeMap<usize, Branch> = later.into_iter().filter_map(|k| self.branches.remove(&k).map(|b| (k, b))).collect();
+        let tail = Version { entries: self.entries.get(at..).map(<[_]>::to_vec).unwrap_or_default(), history: self.history.get(turn_at..).map(<[_]>::to_vec).unwrap_or_default(), sub };
+        let b = self.branches.entry(nth).or_insert_with(|| Branch { versions: vec![Version::default()], current: 0 });
+        let cur = b.current.min(b.versions.len() - 1);
+        b.versions[cur] = tail;
+        b.versions.push(Version::default());
+        b.current = b.versions.len() - 1;
+        let is_last = self.entries.iter().filter(|e| e.kind == "msg-user").count() == nth + 1;
+        self.entries.truncate(at);
+        self.history.truncate(turn_at);
+        if !is_last {
+            // Claude Code's own memory of the conversation cannot go back
+            self.session = None;
+        }
+        Some(text)
+    }
+
+    /// The takes as they should be stored: the one on show is updated with what is there now.
+    pub fn snapshot_branches(&self) -> BTreeMap<usize, Branch> {
+        let mut snap = self.branches.clone();
+        let keys: Vec<usize> = snap.keys().copied().collect();
+        for k in keys.into_iter().rev() {
+            let Some((at, turn_at)) = self.tail_start(k) else { continue };
+            let sub: BTreeMap<usize, Branch> = snap.range(k + 1..).map(|(i, b)| (*i, b.clone())).collect();
+            let tail = Version { entries: self.entries[at..].to_vec(), history: self.history.get(turn_at..).map(<[_]>::to_vec).unwrap_or_default(), sub };
+            if let Some(b) = snap.get_mut(&k) {
+                let cur = b.current.min(b.versions.len().saturating_sub(1));
+                if cur < b.versions.len() {
+                    b.versions[cur] = tail;
+                }
+            }
+        }
+        snap
+    }
+
+    /// Shows an other take of your message number `nth`: `delta` is -1 for the one before and 1 for the one after.
+    pub fn switch_version(&mut self, nth: usize, delta: i32) -> bool {
+        let Some((at, turn_at)) = self.tail_start(nth) else { return false };
+        let (cur, count) = match self.branches.get(&nth) {
+            Some(b) => (b.current, b.versions.len()),
+            None => return false,
+        };
+        let next = cur as i32 + delta;
+        if next < 0 || next as usize >= count {
+            return false;
+        }
+        let next = next as usize;
+        let later: Vec<usize> = self.branches.range(nth + 1..).map(|(k, _)| *k).collect();
+        let sub: BTreeMap<usize, Branch> = later.into_iter().filter_map(|k| self.branches.remove(&k).map(|b| (k, b))).collect();
+        let outgoing = Version { entries: self.entries[at..].to_vec(), history: self.history.get(turn_at..).map(<[_]>::to_vec).unwrap_or_default(), sub };
+        let b = self.branches.get_mut(&nth).expect("checked above");
+        b.versions[cur] = outgoing;
+        let incoming = b.versions[next].clone();
+        b.current = next;
+        self.branches.extend(incoming.sub);
+        self.entries.truncate(at);
+        self.entries.extend(incoming.entries);
+        self.history.truncate(turn_at);
+        self.history.extend(incoming.history);
+        self.session = None;
+        true
+    }
+
+    /// For each of your messages that has had more than one take: (message number, shown take, how many takes).
+    pub fn take_counts(&self) -> Vec<(usize, usize, usize)> {
+        self.branches.iter().filter(|(_, b)| b.versions.len() > 1).map(|(k, b)| (*k, b.current, b.versions.len())).collect()
+    }
+}
+
+#[cfg(test)]
+mod take_tests {
+    use super::*;
+
+    fn chat() -> Chat {
+        let e = |k: &str, t: &str| Entry { kind: k.into(), text: t.into() };
+        Chat {
+            id: "c".into(),
+            entries: vec![e("msg-user", "one"), e("msg-ai", "a1"), e("msg-user", "two"), e("msg-ai", "a2")],
+            history: vec![Turn::User("one".into()), Turn::Assistant { text: "a1".into(), calls: vec![] }, Turn::User("two".into()), Turn::Assistant { text: "a2".into(), calls: vec![] }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn editing_keeps_the_old_take_and_switching_brings_it_back() {
+        let mut c = chat();
+        assert_eq!(c.fork_at(1).as_deref(), Some("two"));
+        assert_eq!(c.entries.len(), 2);
+        // the new take is answered
+        c.entries.push(Entry { kind: "msg-user".into(), text: "two, edited".into() });
+        c.entries.push(Entry { kind: "msg-ai".into(), text: "a2b".into() });
+        c.history.push(Turn::User("two, edited".into()));
+        c.history.push(Turn::Assistant { text: "a2b".into(), calls: vec![] });
+        c.branches = c.snapshot_branches();
+        assert_eq!(c.take_counts(), vec![(1, 1, 2)]);
+        assert!(c.switch_version(1, -1));
+        assert_eq!(c.entries[2].text, "two");
+        assert_eq!(c.entries[3].text, "a2");
+        assert_eq!(c.history.len(), 4);
+        assert!(c.switch_version(1, 1));
+        assert_eq!(c.entries[2].text, "two, edited");
+        assert!(!c.switch_version(1, 1), "no take after the last");
+    }
+}

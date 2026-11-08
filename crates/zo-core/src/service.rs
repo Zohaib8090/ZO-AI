@@ -113,7 +113,21 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
         "chat" => {
             let id = s(req, "id");
             let c = chats::load().into_iter().find(|c| c.id == id).ok_or("that chat is gone")?;
-            Ok(json!({"id": c.id, "title": c.title, "entries": c.entries.iter().map(|e| json!({"kind": e.kind, "text": e.text})).collect::<Vec<_>>()}))
+            Ok(json!({"id": c.id, "title": c.title, "entries": c.entries.iter().map(|e| json!({"kind": e.kind, "text": e.text})).collect::<Vec<_>>(),
+                "takes": c.take_counts().iter().map(|(n, cur, count)| json!({"nth": n, "current": cur, "count": count})).collect::<Vec<_>>()}))
+        }
+        "switch" => {
+            // show an other take of one of your messages
+            let id = s(req, "id");
+            let mut c = chats::load().into_iter().find(|c| c.id == id).ok_or("that chat is gone")?;
+            let (nth, delta) = (req.get("nth").and_then(Value::as_u64).unwrap_or(0) as usize, req.get("delta").and_then(Value::as_i64).unwrap_or(0) as i32);
+            if !c.switch_version(nth, delta) {
+                return Err("There is no such take.".into());
+            }
+            c.branches = c.snapshot_branches();
+            c.updated = chats::now_millis();
+            chats::upsert(c);
+            handle("chat", &json!({"id": id}))
         }
         "delete_chat" => {
             chats::delete(s(req, "id"));
@@ -129,26 +143,131 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             }
             Ok(json!({"mode": Mode::load().name()}))
         }
-        "providers" => Ok(json!({"providers": providers::all().iter().map(|p| json!({"id": p.id, "name": p.name})).collect::<Vec<_>>()})),
+        "providers" => {
+            let sel = Selection::load();
+            Ok(json!({
+                "current": sel.provider,
+                "providers": providers::all().iter().map(|p| json!({
+                    "id": p.id, "name": p.name, "local": p.local,
+                    "has_key": p.local || p.protocol == crate::ai::providers::Protocol::ClaudeCode || crate::ai::profiles::get_key(&sel, p.id).is_some(),
+                })).collect::<Vec<_>>(),
+            }))
+        }
         "models" => {
             let sel = Selection::load();
             let pid = req.get("provider").and_then(Value::as_str).unwrap_or(&sel.provider).to_string();
             let p = providers::find(&pid).ok_or("choose a provider on the computer first")?;
             let key = crate::ai::profiles::get_key(&sel, p.id);
             let list = agent::list_models(p, &sel.base_url_for(p), key.as_deref())?;
-            Ok(json!({"provider": p.id, "models": list, "current": sel.model}))
+            Ok(json!({"provider": p.id, "models": list, "current": sel.model, "efforts": crate::ai::models::effort_levels(&sel.model), "effort": sel.effort}))
         }
         "select" => {
             let mut sel = Selection::load();
             if let Some(p) = req.get("provider").and_then(Value::as_str) {
-                providers::find(p).ok_or("unknown provider")?;
-                sel.provider = p.to_string();
+                let prov = providers::find(p).ok_or("unknown provider")?;
+                if sel.provider != p {
+                    sel.provider = p.to_string();
+                    // a new provider starts without the old provider's model
+                    sel.model = prov.models.first().map(|m| m.to_string()).unwrap_or_default();
+                    sel.effort = None;
+                }
             }
             if let Some(m) = req.get("model").and_then(Value::as_str) {
                 sel.model = m.to_string();
             }
+            if let Some(e) = req.get("effort").and_then(Value::as_str) {
+                sel.effort = Some(e.to_string()).filter(|e| !e.is_empty());
+            }
+            crate::ai::profiles::update_active(&sel);
             sel.save();
-            Ok(json!({"provider": sel.provider, "model": sel.model}))
+            Ok(json!({"provider": sel.provider, "model": sel.model, "effort": sel.effort}))
+        }
+        "set_key" => {
+            let sel = Selection::load();
+            let pid = req.get("provider").and_then(Value::as_str).unwrap_or(&sel.provider).to_string();
+            providers::find(&pid).ok_or("unknown provider")?;
+            let key = s(req, "key").trim().to_string();
+            if key.is_empty() {
+                return Err("The key is empty.".into());
+            }
+            crate::ai::keys::set(&crate::ai::profiles::key_id(&sel, &pid), &key)?;
+            Ok(json!({}))
+        }
+        "profiles" => {
+            let sel = Selection::load();
+            Ok(json!({"active": sel.profile, "profiles": crate::ai::profiles::load().iter().map(|p| json!({
+                "id": p.id, "name": p.name, "provider": p.provider, "model": p.model, "effort": p.effort, "pinned": p.pinned,
+            })).collect::<Vec<_>>()}))
+        }
+        "profile_use" => {
+            let id = s(req, "id");
+            let p = crate::ai::profiles::load().into_iter().find(|p| p.id == id).ok_or("that profile is gone")?;
+            let mut sel = Selection::load();
+            sel.apply_profile(&p);
+            sel.profile = Some(p.id.clone());
+            sel.save();
+            Ok(json!({"provider": sel.provider, "model": sel.model, "effort": sel.effort}))
+        }
+        "profile_create" => {
+            let mut sel = Selection::load();
+            let p = crate::ai::profiles::create(s(req, "name"), &sel)?;
+            sel.profile = Some(p.id.clone());
+            sel.save();
+            Ok(json!({"id": p.id}))
+        }
+        "profile_rename" => {
+            crate::ai::profiles::rename(s(req, "id"), s(req, "name"))?;
+            Ok(json!({}))
+        }
+        "profile_delete" => {
+            let id = s(req, "id").to_string();
+            crate::ai::profiles::delete(&id);
+            let mut sel = Selection::load();
+            if sel.profile.as_deref() == Some(id.as_str()) {
+                sel.profile = None;
+                sel.save();
+            }
+            Ok(json!({}))
+        }
+        "profile_pin" => {
+            let (id, model) = (s(req, "id"), s(req, "model"));
+            if req.get("on").and_then(Value::as_bool).unwrap_or(true) {
+                crate::ai::profiles::pin(id, model);
+            } else {
+                crate::ai::profiles::unpin(id, model);
+            }
+            Ok(json!({}))
+        }
+        "scheduled" => Ok(json!({"tasks": crate::store::schedules::load().iter().map(|t| json!({
+            "id": t.id, "title": t.title, "prompt": t.prompt, "next_run": t.next_run, "repeat": t.repeat, "enabled": t.enabled,
+        })).collect::<Vec<_>>()})),
+        "schedule_cancel" => {
+            if crate::store::schedules::remove(s(req, "id")) { Ok(json!({})) } else { Err("That task is gone.".into()) }
+        }
+        "schedule_add" => {
+            let mut a = json!({"task": s(req, "task"), "when": s(req, "when")});
+            for k in ["repeat", "title"] {
+                if let Some(v) = req.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()) {
+                    a[k] = json!(v);
+                }
+            }
+            Ok(json!({"message": crate::tools::call("zohara_ai_schedule", &a)?}))
+        }
+        "projects" => Ok(json!({"text": crate::tools::call("zohara_ai_projects", &json!({}))?})),
+        "project_create" => Ok(json!({"message": crate::tools::call("zohara_ai_create_project", &json!({"name": s(req, "name"), "goal": s(req, "goal")}))?})),
+        "compact" => {
+            // summarize the older part of a chat, as the Compact session button does on the computer
+            let id = s(req, "id");
+            let mut c = chats::load().into_iter().find(|c| c.id == id).ok_or("that chat is gone")?;
+            let sel = Selection::load();
+            if sel.provider == "claude-code" {
+                return Err("Claude Code keeps and compacts this conversation itself.".into());
+            }
+            let cfg = Config::from_selection(&sel, agent::SYSTEM_PROMPT)?;
+            agent::compact(&cfg, &mut c.history, &AtomicBool::new(false), &mut |_| {})?;
+            c.entries.push(entry("msg-tool", "The earlier part of this conversation was summarized, so there is more room to go on."));
+            chats::upsert(c);
+            Ok(json!({}))
         }
         "mcp_list" => {
             let all = crate::mcp_client::load_servers();
@@ -211,8 +330,9 @@ fn entry(kind: &str, text: impl Into<String>) -> Entry {
 }
 
 fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStream>>) {
-    let text = s(req, "text").trim().to_string();
-    if text.is_empty() {
+    let mut text = s(req, "text").trim().to_string();
+    let edit = req.get("edit").and_then(Value::as_u64).map(|n| n as usize);
+    if text.is_empty() && edit.is_none() {
         line(&out, &json!({"event": "error", "error": "empty message"}));
         line(&out, &json!({"event": "done"}));
         return;
@@ -228,6 +348,21 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
         Some(id) => chats::load().into_iter().find(|c| c.id == id).unwrap_or_else(|| new_chat(&text)),
         None => new_chat(&text),
     };
+    // editing or asking again: what is there from that message on is kept as an earlier take
+    if let Some(n) = edit {
+        match chat.fork_at(n) {
+            Some(old) => {
+                if text.is_empty() {
+                    text = old;
+                }
+            }
+            None => {
+                line(&out, &json!({"event": "error", "error": "That message is gone."}));
+                line(&out, &json!({"event": "done"}));
+                return;
+            }
+        }
+    }
     line(&out, &json!({"event": "chat", "id": chat.id, "title": chat.title}));
     if let Some(m) = req.get("mode").and_then(Value::as_str) {
         Mode::parse(m).save();
@@ -320,6 +455,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
     chat.entries = entries;
     chat.history = history;
     chat.session = session;
+    chat.branches = chat.snapshot_branches();
     chat.updated = chats::now_millis();
     chats::upsert(chat);
     line(&out, &json!({"event": "done"}));
@@ -403,6 +539,39 @@ mod tests {
         assert_eq!(r["chats"].as_array().unwrap().len(), 1);
         assert_eq!(handle("mode", &json!({"set": "manual"})).unwrap()["mode"], "Manual");
         assert!(handle("nonsense", &json!({})).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod edit_tests {
+    use super::*;
+
+    #[test]
+    fn editing_a_message_over_the_socket_keeps_the_old_take() {
+        let dir = std::env::temp_dir().join(format!("zo-service-edit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("XDG_DATA_HOME", dir.join("data"));
+        let e = |k: &str, t: &str| chats::Entry { kind: k.into(), text: t.into() };
+        chats::upsert(Chat {
+            id: "c1".into(), title: "t".into(),
+            entries: vec![e("msg-user", "one"), e("msg-ai", "a1")],
+            history: vec![crate::ai::wire::Turn::User("one".into()), crate::ai::wire::Turn::Assistant { text: "a1".into(), calls: vec![] }],
+            ..Default::default()
+        });
+        // the part that does not need a model: fork, switch, and the counts
+        let mut c = chats::load().remove(0);
+        assert_eq!(c.fork_at(0).as_deref(), Some("one"));
+        c.entries.push(e("msg-user", "one, edited"));
+        c.branches = c.snapshot_branches();
+        chats::upsert(c);
+        let r = handle("chat", &json!({"id": "c1"})).unwrap();
+        assert_eq!(r["takes"][0]["count"], 2);
+        let r = handle("switch", &json!({"id": "c1", "nth": 0, "delta": -1})).unwrap();
+        assert_eq!(r["entries"][0]["text"], "one");
+        assert_eq!(r["entries"].as_array().unwrap().len(), 2);
+        assert!(handle("switch", &json!({"id": "c1", "nth": 0, "delta": -1})).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
