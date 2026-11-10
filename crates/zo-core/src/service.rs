@@ -269,6 +269,33 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             chats::upsert(c);
             Ok(json!({}))
         }
+        "memory" => {
+            // the long-term memory, for the phone's Memory page
+            let st = crate::store::memory::load();
+            let mut items = st.items.clone();
+            items.sort_by(|a, b| (b.pinned, b.updated).cmp(&(a.pinned, a.updated)));
+            Ok(json!({"enabled": st.enabled, "every": st.every, "items": items.iter().take(300).map(|i| json!({"id": i.id, "text": i.text, "kind": i.kind, "title": i.title, "chat": i.chat, "pinned": i.pinned, "updated": i.updated})).collect::<Vec<_>>()}))
+        }
+        "memory_add" => {
+            let (_, new) = crate::store::memory::remember(s(req, "text"), if s(req, "kind").is_empty() { "fact" } else { s(req, "kind") }, "").ok_or("That note is too short.")?;
+            Ok(json!({"new": new}))
+        }
+        "memory_forget" => {
+            crate::store::memory::forget(s(req, "id"));
+            Ok(json!({}))
+        }
+        "memory_pin" => {
+            crate::store::memory::set_pinned(s(req, "id"), req.get("on").and_then(Value::as_bool).unwrap_or(true));
+            Ok(json!({}))
+        }
+        "memory_enable" => {
+            crate::store::memory::set_enabled(req.get("on").and_then(Value::as_bool).unwrap_or(true));
+            Ok(json!({}))
+        }
+        "memory_clear" => {
+            crate::store::memory::clear_all();
+            Ok(json!({}))
+        }
         "mcp_list" => {
             let all = crate::mcp_client::load_servers();
             Ok(json!({"servers": all.iter().map(|s| json!({"name": s.name, "command": s.command, "enabled": s.enabled})).collect::<Vec<_>>()}))
@@ -405,7 +432,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
     let approver = RemoteApprover { out: out.clone(), pending, next: AtomicU64::new(1) };
 
     chat.entries.push(entry("msg-user", text.clone()));
-    let system = format!("{}\n\nThe person is talking to you from their phone (Zohara Link). Keep answers short and easy to read on a small screen.", agent::SYSTEM_PROMPT);
+    let system = format!("{}\n\nThe person is talking to you from their phone (Zohara Link). Keep answers short and easy to read on a small screen.", crate::store::memory::system_with(agent::SYSTEM_PROMPT, &text));
     let mut session = chat.session.clone();
     let mut history = chat.history.clone();
     let mut entries = std::mem::take(&mut chat.entries);
@@ -457,6 +484,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
     chat.session = session;
     chat.branches = chat.snapshot_branches();
     chat.updated = chats::now_millis();
+    crate::ai::memory_agent::after_turn(&chat.id, &chat.title, &chat.entries);
     chats::upsert(chat);
     line(&out, &json!({"event": "done"}));
     // the helper thread that listens for answers still holds the other end: close the connection so the client sees the end
@@ -503,6 +531,7 @@ mod tests {
 
     #[test]
     fn a_message_comes_back_as_events_and_is_saved_as_a_chat() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("zo-service-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -549,6 +578,7 @@ mod edit_tests {
 
     #[test]
     fn editing_a_message_over_the_socket_keeps_the_old_take() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("zo-service-edit-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

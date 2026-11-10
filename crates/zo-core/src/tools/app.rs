@@ -72,6 +72,42 @@ pub fn search_chats(a: &Value) -> Result<String, String> {
     Ok(hits.iter().take(15).map(|h| format!("{} | {} | {}", h.id, h.title, h.snippet)).collect::<Vec<_>>().join("\n"))
 }
 
+pub fn memory_search(a: &Value) -> Result<String, String> {
+    use crate::store::memory;
+    let store = memory::load();
+    if !store.enabled {
+        return Ok("Memory is switched off.".into());
+    }
+    let hits = memory::search(&store, text(a, "query")?, 8);
+    if hits.is_empty() {
+        return Ok("Nothing in memory matches.".into());
+    }
+    Ok(hits.iter().map(|h| if h.item.kind == "episode" { format!("[chat {}] \"{}\": {}", h.item.chat, h.item.title, h.item.text) } else { format!("({}) {}", h.item.kind, h.item.text) }).collect::<Vec<_>>().join("\n"))
+}
+
+pub fn memory_save(a: &Value) -> Result<String, String> {
+    use crate::store::memory;
+    if !memory::load().enabled {
+        return Err("Memory is switched off, so nothing was saved.".into());
+    }
+    let note = text(a, "text")?;
+    let kind = a.get("kind").and_then(Value::as_str).unwrap_or("fact");
+    match memory::remember(note, kind, "") {
+        Some((_, true)) => Ok("Remembered.".into()),
+        Some((_, false)) => Ok("Updated what I remembered about this.".into()),
+        None => Err("That note is too short to keep.".into()),
+    }
+}
+
+pub fn memory_forget(a: &Value) -> Result<String, String> {
+    use crate::store::memory;
+    let gone = memory::forget_matching(text(a, "what")?);
+    if gone.is_empty() {
+        return Ok("Nothing in memory matched that closely enough to forget. Use zohara_memory_search to see the notes.".into());
+    }
+    Ok(format!("Forgot: {}", gone.join(" | ")))
+}
+
 pub fn pin_chat(a: &Value) -> Result<String, String> {
     let key = text(a, "chat")?;
     let on = a.get("pinned").and_then(Value::as_bool).unwrap_or(true);

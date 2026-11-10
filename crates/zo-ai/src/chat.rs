@@ -111,6 +111,7 @@ impl Ctl {
             pinned: false,
             branches: self.snapshot_branches(),
         });
+        zo_core::ai::memory_agent::after_turn(&self.id.borrow(), &self.title.borrow(), &self.entries.borrow());
         let f = self.on_saved.borrow().clone();
         if let Some(f) = f {
             f();
@@ -715,7 +716,7 @@ impl Ctl {
             let t: String = text.chars().take(48).collect();
             *self.title.borrow_mut() = t;
         }
-        let system = format!("{}\n\n{}", agent::SYSTEM_PROMPT, self.extra.borrow());
+        let system = format!("{}\n\n{}", zo_core::store::memory::system_with(agent::SYSTEM_PROMPT, &text), self.extra.borrow());
         let extra = self.extra.borrow().clone();
 
         let claude = sel.provider == "claude-code";

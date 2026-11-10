@@ -168,6 +168,12 @@ fn ask(cfg: &Config, turns: &[Turn], specs: &[wire::ToolSpec], cancel: &AtomicBo
 /// Run one user message to the end. `history` gets every step appended, so it can be saved and continued.
 pub const STOPPED: &str = "Stopped.";
 
+/// One plain question to the model, no tools: the answer as text. Used for small jobs such as the memory agent.
+pub fn complete(cfg: &Config, system: &str, prompt: &str, cancel: &AtomicBool) -> Result<String, String> {
+    let c = Config { provider: cfg.provider, base_url: cfg.base_url.clone(), model: cfg.model.clone(), key: cfg.key.clone(), system: system.to_string(), vision: false };
+    Ok(ask(&c, &[Turn::User(prompt.to_string())], &[], cancel, &mut |_| {})?.text)
+}
+
 pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approver: &dyn Approver, cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     // pictures named in the message (a path the person added with "Add a file", say) go to a model that can see
     let pics: Vec<wire::ImageRef> = if cfg.vision { user.split_whitespace().map(|w| w.trim_matches(|c| "\"'`()[]{}<>,;:!?".contains(c))).filter_map(wire::ImageRef::from_path).collect() } else { Vec::new() };

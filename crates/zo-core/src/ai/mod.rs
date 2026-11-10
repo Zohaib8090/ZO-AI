@@ -4,6 +4,7 @@ pub mod agent;
 pub mod claude_code;
 pub mod context;
 pub mod keys;
+pub mod memory_agent;
 pub mod models;
 pub mod profiles;
 pub mod providers;

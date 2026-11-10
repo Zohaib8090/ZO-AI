@@ -3,6 +3,7 @@
 
 pub mod artifacts;
 pub mod chats;
+pub mod memory;
 pub mod projects;
 pub mod schedules;
 
