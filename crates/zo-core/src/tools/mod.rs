@@ -8,6 +8,7 @@ mod app;
 mod fs;
 mod system;
 mod terminals;
+mod web;
 
 pub struct ToolDef {
     pub name: &'static str,
@@ -136,6 +137,10 @@ pub fn definitions() -> &'static [ToolDef] {
         ToolDef { name: "zohara_ai_mcp_status", description: "Connect to each MCP server that is added to ZO-AI and say whether it works: how many tools it has (and the first few names), or what is wrong (a sign-in is needed, it is not reachable). Use it when a server's tools are missing.", risk: Read, params: &[] },
         ToolDef { name: "zohara_ai_list_mcp_servers", description: "List the MCP servers that are added to ZO-AI.", risk: Read, params: &[] },
         ToolDef { name: "zohara_ai_search_chats", description: "Search the saved chats.", risk: Read, params: &[("query", "string", "Words to look for", true)] },
+        ToolDef { name: "zohara_web_search", description: "Search the web (like a Google search) and get the top results: title, address and a short snippet. Use it for anything that may have changed or that you are not sure of (news, versions, prices, documentation, \"what is ...\"). Then read the best result with zohara_web_fetch.", risk: Read,
+            params: &[("query", "string", "The search words", true)] },
+        ToolDef { name: "zohara_web_fetch", description: "Read a web page: fetches a public http(s) address and returns its text (scripts and menus removed). Pages on this computer or its home network are refused. For a page that needs a sign-in or clicks, use the built-in browser instead.", risk: Read,
+            params: &[("url", "string", "The full address", true), ("max_chars", "integer", "How much text to return (default 8000, at most 20000)", false)] },
         ToolDef { name: "zohara_memory_search", description: "Search your long-term memory of the person: notes from earlier chats (who they are, what they like, what they are working on, and a summary of each earlier chat). Use it when the person refers to something from before, or when a fact about them would help.", risk: Read,
             params: &[("query", "string", "What to look for, in plain words", true)] },
         ToolDef { name: "zohara_memory_save", description: "Remember something lasting about the person for all later chats (on the computer and the phone): a fact, a preference, who they are, a project. Use it when they tell you to remember something, or when they correct a note you were told. One short sentence. Never save passwords, keys or other secrets.", risk: Change,
@@ -218,6 +223,8 @@ fn call_inner(name: &str, a: &Value) -> Result<String, String> {
         "zohara_ai_add_memory" => app::add_memory(a),
         "zohara_ai_search_chats" => app::search_chats(a),
         "zohara_ai_pin_chat" => app::pin_chat(a),
+        "zohara_web_search" => web::search(a),
+        "zohara_web_fetch" => web::fetch(a),
         "zohara_memory_search" => app::memory_search(a),
         "zohara_memory_save" => app::memory_save(a),
         "zohara_memory_forget" => app::memory_forget(a),

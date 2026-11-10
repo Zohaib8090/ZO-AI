@@ -299,6 +299,165 @@ pub fn show(ui: &Rc<Ui>) {
     }
     content.append(&sec);
 
+    // ---- personality: how ZO-AI talks ----
+    {
+        use zo_core::store::personality as pers;
+        let (sec, card) = section("Personality");
+        let st = pers::load();
+        let plain = hbox(6);
+        let plain_btn = if st.active.is_empty() {
+            let b = secondary("In use");
+            b.set_sensitive(false);
+            b
+        } else {
+            crate::primary("Use")
+        };
+        {
+            let ui2 = ui.clone();
+            plain_btn.connect_clicked(move |_| {
+                let _ = pers::set_active("");
+                show(&ui2);
+            });
+        }
+        plain.append(&plain_btn);
+        card.append(&row("Plain", "ZO-AI's own manner: clear and to the point.", Some(&plain)));
+        let builtin_ids: Vec<String> = pers::builtin().into_iter().map(|b| b.id).collect();
+        for p in pers::all() {
+            let active = st.active == p.id;
+            let controls = hbox(6);
+            let b = if active {
+                let b = secondary("In use");
+                b.set_sensitive(false);
+                b
+            } else {
+                crate::primary("Use")
+            };
+            {
+                let (ui2, id) = (ui.clone(), p.id.clone());
+                b.connect_clicked(move |_| {
+                    let _ = pers::set_active(&id);
+                    show(&ui2);
+                });
+            }
+            controls.append(&b);
+            if !builtin_ids.contains(&p.id) {
+                let del = crate::icon_button("edit-delete-symbolic", "Delete this personality", "icon-btn");
+                let (ui2, id) = (ui.clone(), p.id.clone());
+                del.connect_clicked(move |_| {
+                    pers::remove(&id);
+                    show(&ui2);
+                });
+                controls.append(&del);
+            }
+            let tag = if p.generated { " · written by the AI" } else { "" };
+            card.append(&row(&format!("{}{}", p.name, tag), &p.prompt, Some(&controls)));
+        }
+        let make = crate::primary("Describe one…");
+        {
+            let ui2 = ui.clone();
+            make.connect_clicked(move |_| {
+                let ui3 = ui2.clone();
+                text_sheet(&ui2, "Make a personality", "What should it be like?", "A patient teacher who explains with small everyday examples and never rushes me", "Write it", true, |d| {
+                    zo_core::ai::personality_gen::generate(&d).map(|p| p.name)
+                }, move || show(&ui3));
+            });
+        }
+        let own = secondary("Write my own…");
+        {
+            let ui2 = ui.clone();
+            own.connect_clicked(move |_| {
+                let ui3 = ui2.clone();
+                text_sheet(&ui2, "Write a personality", "How should it sound? (4 to 7 sentences)", "Sound like …", "Save", false, |t| {
+                    let name: String = t.split_whitespace().take(3).collect::<Vec<_>>().join(" ");
+                    zo_core::store::personality::add(&name, &t, false).map(|p| p.name)
+                }, move || show(&ui3));
+            });
+        }
+        let both = hbox(6);
+        both.append(&own);
+        both.append(&make);
+        card.append(&row("Add a personality", "The AI can write one from a description (it uses the model you chose). A personality changes the voice only, never the rules or what ZO-AI may do.", Some(&both)));
+        content.append(&sec);
+    }
+
+    // ---- memory: what ZO-AI remembers about you ----
+    {
+        use zo_core::store::memory as mem;
+        let (sec, card) = section("Memory");
+        let st = mem::load();
+        let sw = gtk::Switch::new();
+        sw.set_active(st.enabled);
+        sw.connect_state_set(|_, on| {
+            mem::set_enabled(on);
+            gtk::glib::Propagation::Proceed
+        });
+        let notes = st.items.iter().filter(|i| i.kind != "episode").count();
+        let chats_n = st.items.len() - notes;
+        card.append(&row(
+            "Remember things between chats",
+            &format!("{notes} notes about you and {chats_n} chat summaries, shared with the phone. After every {} messages of yours, ZO-AI reads the chat in the background and keeps what is worth remembering. Never passwords or keys.", st.every),
+            Some(&sw),
+        ));
+        let mut items = st.items.clone();
+        items.sort_by(|a, b| (b.pinned, b.updated).cmp(&(a.pinned, a.updated)));
+        for it in items.iter().take(80) {
+            let controls = hbox(6);
+            let pin = crate::icon_button(if it.pinned { "starred-symbolic" } else { "non-starred-symbolic" }, if it.pinned { "Always tell the AI (pinned)" } else { "Pin: always tell the AI" }, "icon-btn");
+            {
+                let (ui2, id, on) = (ui.clone(), it.id.clone(), !it.pinned);
+                pin.connect_clicked(move |_| {
+                    mem::set_pinned(&id, on);
+                    show(&ui2);
+                });
+            }
+            controls.append(&pin);
+            let del = crate::icon_button("edit-delete-symbolic", "Forget this", "icon-btn");
+            {
+                let (ui2, id) = (ui.clone(), it.id.clone());
+                del.connect_clicked(move |_| {
+                    mem::forget(&id);
+                    show(&ui2);
+                });
+            }
+            controls.append(&del);
+            let title = match it.kind.as_str() {
+                "episode" => format!("Chat: {}", it.title),
+                k => k.to_string(),
+            };
+            card.append(&row(&title, &it.text, Some(&controls)));
+        }
+        if items.len() > 80 {
+            card.append(&row("…", &format!("{} more are kept; the AI can search all of them.", items.len() - 80), no_control()));
+        }
+        let add = secondary("Add a note…");
+        {
+            let ui2 = ui.clone();
+            add.connect_clicked(move |_| {
+                let ui3 = ui2.clone();
+                text_sheet(&ui2, "Add a note", "What should ZO-AI remember?", "I prefer short answers", "Add", false, |t| {
+                    mem::remember(&t, "fact", "").map(|_| "Remembered".to_string()).ok_or_else(|| "That note is too short.".to_string())
+                }, move || show(&ui3));
+            });
+        }
+        let forget = secondary("Forget everything");
+        forget.add_css_class("danger");
+        {
+            let ui2 = ui.clone();
+            forget.connect_clicked(move |_| {
+                let ui3 = ui2.clone();
+                crate::confirm_delete(&ui2, "Forget everything?", "All notes and chat summaries are removed, on the computer and for the phone. Saved chats stay.", move || {
+                    mem::clear_all();
+                    show(&ui3);
+                });
+            });
+        }
+        let both = hbox(6);
+        both.append(&add);
+        both.append(&forget);
+        card.append(&row("Your notes", "Pin a note to make sure the AI always knows it. Delete one that is wrong. You can also just tell ZO-AI: \"remember that ...\" or \"forget that ...\".", Some(&both)));
+        content.append(&sec);
+    }
+
     // ---- data ----
     let (sec, card) = section("Data");
     let n = chats::load().len();
@@ -343,6 +502,69 @@ pub fn show(ui: &Rc<Ui>) {
     ui.stack.set_visible_child_name("settings");
     set_nav(ui, "settings");
     ui.top_title.set_text("Settings");
+}
+
+/// A small panel with one text box. `work` gets the text and runs off the main thread (it may call the model); `done` runs on the
+/// main thread when it succeeded. While it works the panel says so; an error stays on the panel.
+fn text_sheet(ui: &Rc<Ui>, title: &str, label: &str, placeholder: &str, ok_text: &str, multi: bool, work: impl Fn(String) -> Result<String, String> + Send + Sync + 'static, done: impl Fn() + 'static) {
+    let (win, body, foot) = crate::sheet(ui, title, 460);
+    let view = gtk::TextView::new();
+    view.set_wrap_mode(gtk::WrapMode::WordChar);
+    view.set_top_margin(8);
+    view.set_bottom_margin(8);
+    view.set_left_margin(10);
+    view.set_right_margin(10);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_child(Some(&view));
+    scroll.set_min_content_height(if multi { 96 } else { 56 });
+    scroll.add_css_class("field-input");
+    body.append(&crate::field(label, &scroll));
+    body.append(&lbl(&format!("For example: {placeholder}"), "field-hint"));
+    let status = lbl("", "field-hint");
+    status.set_wrap(true);
+    status.set_xalign(0.0);
+    body.append(&status);
+    let cancel = secondary("Cancel");
+    let ok = crate::primary(ok_text);
+    foot.append(&cancel);
+    foot.append(&ok);
+    {
+        let w = win.clone();
+        cancel.connect_clicked(move |_| w.close());
+    }
+    let work = std::sync::Arc::new(work);
+    let done: Rc<dyn Fn()> = Rc::new(done);
+    {
+        let (w, view, status, okb) = (win.clone(), view.clone(), status.clone(), ok.clone());
+        ok.connect_clicked(move |_| {
+            let buf = view.buffer();
+            let text = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
+            okb.set_sensitive(false);
+            status.set_text("Working on it…");
+            let (tx, rx) = mpsc::channel();
+            let work = work.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(work(text));
+            });
+            let (w, status, okb, done) = (w.clone(), status.clone(), okb.clone(), done.clone());
+            gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || match rx.try_recv() {
+                Ok(Ok(_)) => {
+                    w.close();
+                    done();
+                    gtk::glib::ControlFlow::Break
+                }
+                Ok(Err(e)) => {
+                    status.set_text(&e);
+                    okb.set_sensitive(true);
+                    gtk::glib::ControlFlow::Break
+                }
+                Err(mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
+                Err(_) => gtk::glib::ControlFlow::Break,
+            });
+        });
+    }
+    win.present();
+    view.grab_focus();
 }
 
 /// For verification: opens the "Add server" panel straight away.

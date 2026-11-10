@@ -304,14 +304,21 @@ pub fn briefing(query: &str) -> String {
     out
 }
 
-/// `base` followed by the briefing for `query`, when there is one.
+/// `base` followed by the personality in use and the briefing for `query`, when there are any.
 pub fn system_with(base: &str, query: &str) -> String {
-    let b = briefing(query);
-    if b.is_empty() {
-        base.to_string()
-    } else {
-        format!("{base}\n\n{b}")
+    let mut out = base.to_string();
+    for part in [super::personality::instructions(), briefing(query)] {
+        if !part.is_empty() {
+            out.push_str("\n\n");
+            out.push_str(&part);
+        }
     }
+    out
+}
+
+/// The personality and the briefing as one piece, for programs that take extra instructions (Claude Code).
+pub fn extras(query: &str) -> String {
+    [super::personality::instructions(), briefing(query)].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("\n\n")
 }
 
 // ---------- writing ----------

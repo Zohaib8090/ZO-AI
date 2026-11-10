@@ -296,6 +296,27 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             crate::store::memory::clear_all();
             Ok(json!({}))
         }
+        "personalities" => {
+            let st = crate::store::personality::load();
+            let builtin = crate::store::personality::builtin();
+            Ok(json!({"active": st.active, "items": crate::store::personality::all().iter().map(|p| json!({"id": p.id, "name": p.name, "prompt": p.prompt, "generated": p.generated, "builtin": builtin.iter().any(|b| b.id == p.id)})).collect::<Vec<_>>()}))
+        }
+        "personality_use" => {
+            crate::store::personality::set_active(s(req, "id"))?;
+            Ok(json!({}))
+        }
+        "personality_add" => {
+            let p = crate::store::personality::add(s(req, "name"), s(req, "prompt"), false)?;
+            Ok(json!({"id": p.id}))
+        }
+        "personality_generate" => {
+            let p = crate::ai::personality_gen::generate(s(req, "description"))?;
+            Ok(json!({"id": p.id, "name": p.name, "prompt": p.prompt}))
+        }
+        "personality_remove" => {
+            crate::store::personality::remove(s(req, "id"));
+            Ok(json!({}))
+        }
         "mcp_list" => {
             let all = crate::mcp_client::load_servers();
             Ok(json!({"servers": all.iter().map(|s| json!({"name": s.name, "command": s.command, "enabled": s.enabled})).collect::<Vec<_>>()}))

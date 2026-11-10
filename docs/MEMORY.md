@@ -30,6 +30,15 @@ model-based embedder can be added later and the notes made again without changin
 ## Phone
 Service ops: `memory`, `memory_add`, `memory_forget`, `memory_pin`, `memory_enable`, `memory_clear` (allowed in `zohara-linkd`'s list).
 
+## Web search and pages
+`zohara_web_search` (DuckDuckGo's lite page, no key) and `zohara_web_fetch` (public http/https only; loopback, home-network and
+`.local` addresses are refused) in `tools/web.rs`. The phone gets them too, since the tools are shared.
+
+## Personalities
+`store/personality.rs`: four built-in voices (friendly buddy, straight engineer, calm mentor, dry and witty), the person's own, and ones
+the AI writes from a description (`ai/personality_gen.rs`, uses the chat model; Claude Code works too). The one in use is added to the system
+prompt as "PERSONALITY": voice only, never the rules. Settings has the Personality and Memory sections (checked headless in a container under
+Xvfb). Phone service ops: `personalities`, `personality_use`, `personality_add`, `personality_generate`, `personality_remove`.
+
 ## Not done yet
-A memory page in the phone app and in ZO-AI's settings; a model-based embedder; web search as its own tool (today the built-in
-browser does it); personalities.
+The Memory and Personality pages in the phone app (the service ops are ready); a model-based embedder; RAG over the person's files.
