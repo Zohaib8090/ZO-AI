@@ -12,8 +12,9 @@ ZO-AI remembers the person across chats, on the computer and on the phone. It is
 * **The memory agent** (`zo-core/src/ai/memory_agent.rs`): after every 3 new messages of the person in a chat (and for chats left idle
   more than 10 minutes with unread messages) a background job reads the new part and asks the chosen model, with no tools, for a JSON
   answer: notes to add, notes to update, ids to delete, and the chat summary. It runs on its own thread, one job at a time, and never
-  blocks the chat. Anything that looks like a password, key or token is dropped before it is saved. It does nothing with Claude Code
-  (no API) and when memory is off.
+  blocks the chat. Anything that looks like a password, key or token is dropped before it is saved. With Claude Code as the chat model the job runs on `haiku` through
+  `claude -p` (no tools, nothing saved); it does nothing when memory is off. Checked live with the real `claude` (ignored test
+  `real_claude_writes_the_memory`).
 * **The AI itself**, with `zohara_memory_save`, `zohara_memory_forget`, `zohara_memory_search` (and `zohara_ai_search_chats`).
 
 ## How it is used

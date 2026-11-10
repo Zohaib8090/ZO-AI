@@ -151,6 +151,50 @@ pub fn run(model: &str, effort: Option<&str>, session: &mut Option<String>, prom
     }
 }
 
+/// One plain question to Claude Code, no tools and nothing saved: the answer as text. Used for small background jobs such as the
+/// memory agent.
+pub fn complete(model: &str, system: &str, prompt: &str, cancel: &Arc<AtomicBool>) -> Result<String, String> {
+    let bin = binary().ok_or("Claude Code is not installed.")?;
+    let mut cmd = Command::new(bin);
+    cmd.args(["-p", prompt, "--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--tools", "", "--no-session-persistence", "--system-prompt", system]);
+    if !model.is_empty() {
+        cmd.args(["--model", model]);
+    }
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("Could not start Claude Code: {e}"))?;
+    let stdout = child.stdout.take().ok_or("no output")?;
+    let child = Arc::new(Mutex::new(child));
+    let finished = Arc::new(AtomicBool::new(false));
+    {
+        let (child, cancel, finished) = (child.clone(), cancel.clone(), finished.clone());
+        std::thread::spawn(move || {
+            while !finished.load(Ordering::Relaxed) {
+                if cancel.load(Ordering::Relaxed) {
+                    if let Ok(mut c) = child.lock() {
+                        let _ = c.kill();
+                    }
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        });
+    }
+    let (mut text, mut failure, mut session, mut names) = (String::new(), None, None, Vec::new());
+    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        if let Ok(v) = serde_json::from_str::<Value>(&line) {
+            if let Some(e) = handle_line(&v, &mut session, &mut names, &mut |ev| if let Event::Text(t) = ev { text.push_str(&t) }) {
+                failure = Some(e);
+            }
+        }
+    }
+    let ok = child.lock().map_err(|_| "lock".to_string())?.wait().map(|s| s.success()).unwrap_or(false);
+    finished.store(true, Ordering::Relaxed);
+    match failure {
+        Some(e) => Err(e),
+        None if ok && !text.trim().is_empty() => Ok(text),
+        None => Err("Claude Code gave no answer.".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -716,8 +716,10 @@ impl Ctl {
             let t: String = text.chars().take(48).collect();
             *self.title.borrow_mut() = t;
         }
-        let system = format!("{}\n\n{}", zo_core::store::memory::system_with(agent::SYSTEM_PROMPT, &text), self.extra.borrow());
-        let extra = self.extra.borrow().clone();
+        let brief = zo_core::store::memory::briefing(&text);
+        let system = format!("{}\n\n{}\n\n{}", agent::SYSTEM_PROMPT, brief, self.extra.borrow());
+        // Claude Code gets the same notes about the person, as extra instructions
+        let extra = format!("{}\n\n{}", self.extra.borrow(), brief);
 
         let claude = sel.provider == "claude-code";
         let cfg = if claude {

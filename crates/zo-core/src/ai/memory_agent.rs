@@ -16,7 +16,7 @@ static RUNNING: AtomicBool = AtomicBool::new(false);
 const IDLE_MS: u64 = 10 * 60 * 1000;
 
 const SYSTEM: &str = "You are the memory of an AI assistant called ZO-AI. You read a conversation between ZO-AI and the person it works for, and keep a short list of what is worth remembering about that person for later conversations. \
-You only write down what the person said or clearly showed. You never guess, and you never write down secrets (passwords, keys, tokens, card or ID numbers). You answer with one JSON object and nothing else.";
+You only write down what the person said or clearly showed. You never guess, and you never write down secrets (passwords, keys, tokens, card or ID numbers), and you do not even mention that a secret was shared. You answer with one JSON object and nothing else.";
 
 fn user_count(entries: &[Entry]) -> usize {
     entries.iter().filter(|e| e.kind == "msg-user").count()
@@ -137,8 +137,8 @@ fn looks_secret(text: &str) -> bool {
     })
 }
 
-/// Reads one chat now: returns what changed, or why it could not.
-fn process(cfg: &Config, chat: &str, title: &str, entries: &[Entry], cancel: &AtomicBool) -> Result<(usize, usize, usize), String> {
+/// Reads one chat now: returns what changed, or why it could not. `ask` sends one prompt to the model and returns its answer.
+fn process(ask: &dyn Fn(&str) -> Result<String, String>, chat: &str, title: &str, entries: &[Entry]) -> Result<(usize, usize, usize), String> {
     let count = user_count(entries);
     let read = memory::load().read.get(chat).copied().unwrap_or(0);
     let text = transcript(entries, read);
@@ -146,7 +146,7 @@ fn process(cfg: &Config, chat: &str, title: &str, entries: &[Entry], cancel: &At
         return Ok((0, 0, 0));
     }
     let episode = memory::load().items.into_iter().find(|i| i.kind == "episode" && i.chat == chat).map(|i| i.text);
-    let answer = agent::complete(cfg, SYSTEM, &prompt_for(title, chat, &text, episode.as_deref()), cancel)?;
+    let answer = ask(&prompt_for(title, chat, &text, episode.as_deref()))?;
     let v = parse(&answer).ok_or("The memory agent's answer was not JSON.")?;
     let r = apply(&v, chat, title);
     memory::change(|s| {
@@ -156,7 +156,8 @@ fn process(cfg: &Config, chat: &str, title: &str, entries: &[Entry], cancel: &At
 }
 
 /// Call after each answer is saved. When the person has written `every` new messages in this chat (or other chats were left idle with unread
-/// messages), a background job brings the memory up to date. Does nothing when memory is off or the model is Claude Code.
+/// messages), a background job brings the memory up to date. Does nothing when memory is off or no model is set up. With Claude Code
+/// as the model, the small and quick `haiku` does the reading.
 pub fn after_turn(chat_id: &str, title: &str, entries: &[Entry]) {
     let store = memory::load();
     if !store.enabled || chat_id.is_empty() {
@@ -173,21 +174,30 @@ pub fn after_turn(chat_id: &str, title: &str, entries: &[Entry]) {
         return;
     }
     let sel = Selection::load();
-    if sel.provider == "claude-code" || sel.provider.is_empty() {
-        return;
-    }
-    let Ok(cfg) = Config::from_selection(&sel, SYSTEM) else { return };
+    let ask: Box<dyn Fn(&str) -> Result<String, String> + Send> = if sel.provider == "claude-code" {
+        if super::claude_code::binary().is_none() {
+            return;
+        }
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        Box::new(move |prompt| super::claude_code::complete("haiku", SYSTEM, prompt, &cancel))
+    } else {
+        if sel.provider.is_empty() {
+            return;
+        }
+        let Ok(cfg) = Config::from_selection(&sel, SYSTEM) else { return };
+        let cancel = AtomicBool::new(false);
+        Box::new(move |prompt| agent::complete(&cfg, SYSTEM, prompt, &cancel))
+    };
     if RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
         return;
     }
     let (id, title, entries) = (chat_id.to_string(), title.to_string(), entries.to_vec());
     std::thread::spawn(move || {
-        let cancel = AtomicBool::new(false);
         if due_here {
-            let _ = process(&cfg, &id, &title, &entries, &cancel);
+            let _ = process(&*ask, &id, &title, &entries);
         }
         for c in idle {
-            let _ = process(&cfg, &c.id, &c.title, &c.entries, &cancel);
+            let _ = process(&*ask, &c.id, &c.title, &c.entries);
         }
         RUNNING.store(false, Ordering::SeqCst);
     });
@@ -312,6 +322,44 @@ mod tests {
         // a new chat on the phone or the computer is told, without being asked
         let sys = memory::system_with("BASE", "how is my phone app going");
         assert!(sys.starts_with("BASE") && sys.contains("short sentences") && sys.contains("Earlier chat \"Phone app\""), "{sys}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Needs the real `claude` program, signed in: `cargo test -p zo-core real_claude -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_claude_writes_the_memory() {
+        let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("zo-magent-real-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", dir.join("config"));
+        std::env::set_var("XDG_DATA_HOME", dir.join("data"));
+        super::super::Selection { provider: "claude-code".into(), model: "haiku".into(), ..Default::default() }.save();
+        let es = vec![
+            e("msg-user", "Hi, I'm Zohaib. I'm building an Arch based OS called Zohara OS with KDE Plasma."),
+            e("msg-ai", "Nice to meet you, Zohaib. How can I help with Zohara OS?"),
+            e("msg-user", "I test my phone app on a Samsung A26. Please keep your answers short, I don't like long explanations."),
+            e("msg-ai", "Got it, short answers."),
+            e("msg-user", "The wifi password is hunter22 by the way. Can you check the Profiles list in the phone app?"),
+            e("msg-ai", "Sure, checking."),
+        ];
+        after_turn("real1", "Phone app testing", &es);
+        for _ in 0..240 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if !RUNNING.load(Ordering::SeqCst) {
+                break;
+            }
+        }
+        let st = memory::load();
+        for i in &st.items {
+            println!("[{}] {} :: {}", i.kind, i.title, i.text);
+        }
+        println!("read = {:?}", st.read);
+        assert!(st.read.get("real1") == Some(&3), "the agent did not finish");
+        assert!(!st.items.is_empty());
+        assert!(!st.items.iter().any(|i| i.text.contains("hunter22")));
+        println!("{}", memory::briefing("what phone do I test on"));
         let _ = std::fs::remove_dir_all(dir);
     }
 }
