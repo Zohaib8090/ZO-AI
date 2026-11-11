@@ -78,3 +78,14 @@ A locked laptop still runs its agent, so tools keep working while it is locked. 
   call, operation whitelist, an audit log, and a kill switch in the desktop app ("disconnect from the web").
 * Sync conflicts when two devices write the same chat at once: keep it simple (newest wins) and show both takes as branches.
 * Cost: Firestore and the model APIs are pay-per-use; the Oracle VM is free.
+
+## Decisions from the owner (2026-11-12)
+
+* **Server: Render**, with a self-ping so the free instance does not sleep. Render's free tier has no disk that survives a
+  redeploy, so everything that must last lives in Firestore, never on the server's disk.
+* **Firebase project exists.** Needed from the owner: the web app config (public), the service account key (secret: goes into
+  Render's environment by the owner, never into the repo or a chat), Google sign-in turned on, Firestore created.
+* **Claude Code mode on the server and on VMs**: the server (and any VM added over SSH) runs `claude` itself, signed in with a
+  long-lived token the owner makes once with `claude setup-token` and stores as the secret `CLAUDE_CODE_OAUTH_TOKEN`. So
+  Claude Code mode works from the web with the laptop off. For the owner's own use only.
+* **SSH machines**: the owner adds a host, user and key; ZO-AI's shell and file tools, and Claude Code, can then run there.
