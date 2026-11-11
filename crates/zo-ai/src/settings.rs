@@ -461,14 +461,12 @@ pub fn show(ui: &Rc<Ui>) {
     // ---- data ----
     let (sec, card) = section("Data");
     let n = chats::load().len();
-    let open = secondary("Open folder");
-    open.connect_clicked(|b| {
-        let dir = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{}/.local/share", std::env::var("HOME").unwrap_or_default()));
-        let launcher = gtk::UriLauncher::new(&format!("file://{dir}/zo-ai"));
-        let win = b.root().and_then(|r| r.downcast::<gtk::Window>().ok());
-        launcher.launch(win.as_ref(), gtk::gio::Cancellable::NONE, |_| {});
-    });
-    card.append(&row("Saved chats, projects and tasks", &format!("{n} saved chats. Everything ZO-AI does is also written to an action log in the same folder."), Some(&open)));
+    let open = secondary("View chats");
+    {
+        let ui2 = ui.clone();
+        open.connect_clicked(move |_| saved_chats_sheet(&ui2));
+    }
+    card.append(&row("Saved chats, projects and tasks", &format!("{n} saved chats, kept on this computer. Open the list to read them here."), Some(&open)));
     let clear = secondary("Delete all chats");
     clear.add_css_class("danger");
     let ui2 = ui.clone();
@@ -841,4 +839,77 @@ fn link_row() -> (gtk::Box, Rc<dyn Fn(&str)>) {
         })
     };
     (row, show)
+}
+
+/// The saved chats, inside the app: a list, and a click shows that conversation in the same panel (with a button to continue it).
+fn saved_chats_sheet(ui: &Rc<Ui>) {
+    let (win, body, foot) = crate::sheet(ui, "Saved chats", 720);
+    let close = secondary("Close");
+    foot.append(&close);
+    {
+        let w = win.clone();
+        close.connect_clicked(move |_| w.close());
+    }
+    fn list(ui: &Rc<Ui>, win: &crate::Sheet, body: &gtk::Box) {
+        while let Some(c) = body.first_child() {
+            body.remove(&c);
+        }
+        let all = chats::load();
+        if all.is_empty() {
+            body.append(&lbl("No saved chats yet.", "pc-meta"));
+            return;
+        }
+        for chat in all {
+            let r = hbox(10);
+            r.add_css_class("settings-row");
+            let col = vbox(3);
+            col.set_hexpand(true);
+            let title = if chat.title.trim().is_empty() { "Untitled chat".to_string() } else { chat.title.clone() };
+            col.append(&lbl(&title, "pc-name"));
+            let msgs = chat.entries.iter().filter(|e| e.kind == "msg-user").count();
+            col.append(&lbl(&format!("{msgs} messages"), "pc-meta"));
+            r.append(&col);
+            let view = secondary("Read");
+            view.set_valign(gtk::Align::Center);
+            r.append(&view);
+            let (ui2, win2, body2) = (ui.clone(), win.clone(), body.clone());
+            view.connect_clicked(move |_| preview(&ui2, &win2, &body2, chat.clone()));
+            body.append(&r);
+        }
+    }
+    fn preview(ui: &Rc<Ui>, win: &crate::Sheet, body: &gtk::Box, chat: chats::Chat) {
+        while let Some(c) = body.first_child() {
+            body.remove(&c);
+        }
+        let bar = hbox(8);
+        let back = secondary("‹ All chats");
+        let cont = crate::primary("Continue this chat");
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        bar.append(&back);
+        bar.append(&spacer);
+        bar.append(&cont);
+        body.append(&bar);
+        body.append(&lbl(&chat.title, "pc-name"));
+        for e in &chat.entries {
+            let who = if e.kind == "msg-user" { "You" } else if e.kind == "msg-error" { "Error" } else { "ZO-AI" };
+            let t = lbl(who, "pc-meta");
+            t.set_xalign(0.0);
+            body.append(&t);
+            let m = lbl(&e.text, "pc-name");
+            m.set_wrap(true);
+            m.set_selectable(true);
+            m.set_xalign(0.0);
+            body.append(&m);
+        }
+        let (ui2, win2, body2) = (ui.clone(), win.clone(), body.clone());
+        back.connect_clicked(move |_| list(&ui2, &win2, &body2));
+        let (ui3, win3) = (ui.clone(), win.clone());
+        cont.connect_clicked(move |_| {
+            win3.close();
+            crate::open_chat(&ui3, chat.clone());
+        });
+    }
+    list(ui, &win, &body);
+    win.present();
 }
