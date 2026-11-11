@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ZO-AI</title>
+<style>
+:root{--bg:#191919;--panel:#242424;--raise:#2e2e2e;--line:rgba(255,255,255,.08);--fg:#ececec;--dim:#9a9a9a;--accent:#3b82f6;--danger:#e5484d;--user:#2b2b2b}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button{font:inherit;color:inherit;background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:7px 14px;cursor:pointer}
+button:hover{background:#383838}button.primary{background:var(--accent);border-color:transparent;color:#fff}button.primary:hover{background:#4f8ff7}
+button.danger{color:var(--danger)}button:disabled{opacity:.5;cursor:default}
+input,textarea,select{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;width:100%}
+textarea{resize:none}
+.hide{display:none!important}
+#login{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center}
+#login h1{margin:0;font:600 34px Georgia,serif}#login p{color:var(--dim);max-width:340px;margin:0}
+#err{color:var(--danger);min-height:1.4em}
+#app{height:100%;display:flex}
+#side{width:270px;background:var(--bg);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:12px 10px;gap:6px;flex:none}
+#side .brand{font:600 22px Georgia,serif;padding:4px 8px 10px}
+.nav{display:block;width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:8px 10px}
+.nav:hover,.nav.on{background:var(--panel)}
+#list{flex:1;overflow:auto;display:flex;flex-direction:column;gap:2px;margin-top:6px}
+.chat{display:flex;align-items:center;border-radius:8px}.chat:hover,.chat.on{background:var(--panel)}
+.chat span{flex:1;padding:7px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.chat b{font-weight:400;color:var(--dim);cursor:pointer;padding:4px 9px;visibility:hidden}.chat:hover b{visibility:visible}
+#who{font-size:12px;color:var(--dim);padding:6px 8px;display:flex;justify-content:space-between;gap:6px;align-items:center}
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+#top{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line)}
+#top .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#menu{display:none}
+#msgs{flex:1;overflow:auto;padding:20px 16px}
+.wrap{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.u{align-self:flex-end;background:var(--user);border-radius:14px;padding:9px 14px;max-width:85%;white-space:pre-wrap;word-break:break-word}
+.a{word-break:break-word}.a p{margin:.4em 0}
+.a pre,.tool pre{background:#111;border:1px solid var(--line);border-radius:10px;padding:10px;overflow:auto;font:13px/1.45 ui-monospace,Menlo,monospace}
+.a code{background:#111;border-radius:5px;padding:1px 5px;font:13px ui-monospace,Menlo,monospace}.a pre code{background:none;padding:0}
+.tool{font-size:13px;color:var(--dim);border:1px solid var(--line);border-radius:10px;padding:6px 10px}
+.tool pre{margin:6px 0 0;max-height:180px;color:var(--fg)}
+.note{color:var(--dim);font-size:13px;text-align:center}.bad{color:var(--danger)}
+.ask{border:1px solid var(--accent);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.ask .row{display:flex;gap:8px}
+#bar{padding:10px 16px 16px}#bar .wrap{flex-direction:row;align-items:flex-end;gap:8px}
+#hello{text-align:center;color:var(--dim);margin-top:18vh}#hello h2{font:600 30px Georgia,serif;color:var(--fg);margin:0 0 6px}
+#settings{padding:20px 16px;overflow:auto;flex:1}#settings .wrap{gap:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.card h3{margin:0;font-size:15px}.card .dim{color:var(--dim);font-size:13px}.row2{display:flex;gap:8px;align-items:center}.row2>*:first-child{flex:1}
+.mem{display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line)}.mem div{flex:1}.mem small{color:var(--dim)}
+@media(max-width:760px){#side{position:fixed;inset:0 auto 0 0;z-index:5;transform:translateX(-100%);transition:transform .15s}#side.open{transform:none;box-shadow:0 0 0 100vmax rgba(0,0,0,.5)}#menu{display:inline-block}}
+</style>
+</head>
+<body>
+<div id="login" class="hide">
+  <h1>ZO-AI</h1>
+  <p>Your AI, from any browser. Sign in with the Google account that owns it.</p>
+  <button class="primary" id="signin">Sign in with Google</button>
+  <div id="err"></div>
+</div>
+
+<div id="app" class="hide">
+  <aside id="side">
+    <div class="brand">ZO-AI</div>
+    <button class="nav" id="new">＋ New chat</button>
+    <button class="nav" id="goMem">Memory &amp; settings</button>
+    <div id="list"></div>
+    <div id="who"><span id="email"></span><button id="out" style="padding:3px 9px">Sign out</button></div>
+  </aside>
+  <section id="main">
+    <div id="top"><button id="menu">☰</button><div class="t" id="title">New chat</div><button id="model" title="Change the model"></button></div>
+    <div id="msgs"><div class="wrap" id="wrap"></div></div>
+    <div id="settings" class="hide"><div class="wrap" id="sw"></div></div>
+    <div id="bar"><div class="wrap">
+      <textarea id="text" rows="1" placeholder="Message ZO-AI"></textarea>
+      <button class="primary" id="send">Send</button><button class="danger hide" id="stop">Stop</button>
+    </div></div>
+  </section>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBU_nnDL5JKXwWHNTRMKYK2RCvNGXv4PaQ",
+  authDomain: "zo-ai-144.firebaseapp.com",
+  projectId: "zo-ai-144",
+  appId: "1:400907264776:web:d619df222014561add02bd"
+};
+const fb = initializeApp(firebaseConfig);
+const auth = getAuth(fb);
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let chatId = "", stream = 0, busy = false, view = "chat";
+
+// ---------- server calls ----------
+// ?noauth only skips the sign-in screen: a server with a login check still refuses the calls. It exists to try the page on a local test server.
+const NOAUTH = location.search.includes("noauth");
+async function token() { return NOAUTH ? "" : await auth.currentUser.getIdToken(); }
+async function api(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + await token() }, body: JSON.stringify(body) });
+  let j = {}; try { j = await r.json(); } catch {}
+  if (!r.ok || j.ok === false) throw new Error(j.error || ("Error " + r.status));
+  return j;
+}
+const op = (o, extra = {}) => api("/api/op", { op: o, ...extra });
+
+// ---------- a tiny markdown ----------
+function md(src) {
+  const parts = String(src).split(/```/);
+  return parts.map((p, i) => {
+    if (i % 2) { const nl = p.indexOf("\n"); return "<pre><code>" + esc(nl >= 0 ? p.slice(nl + 1) : p) + "</code></pre>"; }
+    return esc(p).split(/\n{2,}/).map(par => "<p>" + par
+      .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+      .replace(/\n/g, "<br>") + "</p>").join("");
+  }).join("");
+}
+
+// ---------- chat view ----------
+function scroll() { const m = $("msgs"); m.scrollTop = m.scrollHeight; }
+function put(cls, html) { const d = document.createElement("div"); d.className = cls; d.innerHTML = html; $("wrap").appendChild(d); scroll(); return d; }
+function showEntry(e) {
+  const k = e.kind || "";
+  if (k === "msg-user") put("u", esc(e.text));
+  else if (k === "msg-error") put("note bad", esc(e.text));
+  else if (k.startsWith("msg-tool") || k === "tool") put("tool", esc(e.text).slice(0, 400));
+  else put("a", md(e.text));
+}
+function hello() { $("wrap").innerHTML = '<div id="hello"><h2>What can I help with?</h2>Ask anything. ZO-AI remembers what matters between chats.</div>'; }
+
+async function openChat(id) {
+  setView("chat"); chatId = id; $("wrap").innerHTML = ""; $("side").classList.remove("open");
+  if (!id) { $("title").textContent = "New chat"; hello(); markList(); return; }
+  try {
+    const c = await op("chat", { id });
+    $("title").textContent = c.title || "Chat";
+    c.entries.forEach(showEntry);
+  } catch (e) { put("note bad", esc(e.message)); }
+  markList(); scroll();
+}
+
+async function refreshList() {
+  try {
+    const r = await op("chats");
+    const l = $("list"); l.innerHTML = "";
+    r.chats.forEach(c => {
+      const d = document.createElement("div"); d.className = "chat"; d.dataset.id = c.id;
+      d.innerHTML = "<span></span><b title='Delete'>✕</b>";
+      d.firstChild.textContent = (c.pinned ? "📌 " : "") + (c.title || "Untitled");
+      d.firstChild.onclick = () => openChat(c.id);
+      d.lastChild.onclick = async () => { if (confirm("Delete this chat?")) { await op("delete_chat", { id: c.id }); if (chatId === c.id) openChat(""); refreshList(); } };
+      l.appendChild(d);
+    });
+    markList();
+  } catch (e) { console.warn(e); }
+}
+function markList() { document.querySelectorAll(".chat").forEach(d => d.classList.toggle("on", d.dataset.id === chatId && view === "chat")); }
+
+async function refreshModel() {
+  try { const s = await op("status"); $("model").textContent = s.ready ? (s.model || s.provider) : "Choose a model"; } catch { $("model").textContent = "Model"; }
+}
+
+// ---------- sending ----------
+function setBusy(b) { busy = b; $("send").classList.toggle("hide", b); $("stop").classList.toggle("hide", !b); $("text").disabled = b; }
+
+async function send() {
+  const text = $("text").value.trim();
+  if (!text || busy) return;
+  $("text").value = ""; autosize();
+  if (!$("wrap").querySelector(".u,.a")) $("wrap").innerHTML = "";
+  put("u", esc(text));
+  setBusy(true);
+  let ai = null, acc = "";
+  try {
+    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId }) });
+    if (!r.ok || !r.body) { let j = {}; try { j = await r.json(); } catch {} throw new Error(j.error || "Error " + r.status); }
+    const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
+    for (;;) {
+      const { value, done } = await rd.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i; while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue;
+        let ev; try { ev = JSON.parse(line); } catch { continue; }
+        switch (ev.event) {
+          case "stream": stream = ev.id; break;
+          case "chat": chatId = ev.id; $("title").textContent = ev.title || "Chat"; break;
+          case "delta": acc += ev.text; if (!ai) ai = put("a", ""); ai.innerHTML = md(acc); scroll(); break;
+          case "text": if (!acc) { acc = ev.text; if (!ai) ai = put("a", ""); ai.innerHTML = md(acc); scroll(); } break;
+          case "tool_start": ai = null; acc = ""; put("tool", "⚙ " + esc(ev.summary || ev.name)); break;
+          case "tool_done": { const t = [...$("wrap").querySelectorAll(".tool")].pop(); if (t && ev.output) t.insertAdjacentHTML("beforeend", "<pre>" + esc(ev.output) + "</pre>"); break; }
+          case "approval": ask(ev); break;
+          case "error": put("note bad", esc(ev.error)); break;
+          case "stopped": put("note", "Stopped."); break;
+        }
+      }
+    }
+  } catch (e) { put("note bad", esc(e.message)); }
+  stream = 0; setBusy(false); $("text").focus(); refreshList();
+}
+
+function ask(ev) {
+  const d = put("ask", "<div><b>ZO-AI wants to:</b> " + esc(ev.summary || ev.tool) + "</div><div class='row'><button class='primary'>Allow</button><button>Deny</button></div>");
+  const [yes, no] = d.querySelectorAll("button");
+  const answer = ok => { api("/api/reply", { stream, op: "approve", id: ev.id, yes: ok }).catch(() => {}); d.innerHTML = "<span class='note'>" + (ok ? "Allowed" : "Denied") + ": " + esc(ev.summary || ev.tool) + "</span>"; };
+  yes.onclick = () => answer(true); no.onclick = () => answer(false);
+}
+
+function autosize() { const t = $("text"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; }
+
+// ---------- settings: model, key, mode, personality, memory ----------
+function setView(v) {
+  view = v;
+  $("msgs").classList.toggle("hide", v !== "chat"); $("bar").classList.toggle("hide", v !== "chat"); $("settings").classList.toggle("hide", v !== "settings");
+  markList();
+}
+function card(title, html) { const d = document.createElement("div"); d.className = "card"; d.innerHTML = "<h3>" + esc(title) + "</h3>" + html; return d; }
+
+async function showSettings() {
+  setView("settings"); $("title").textContent = "Memory & settings"; $("side").classList.remove("open");
+  const sw = $("sw"); sw.innerHTML = '<div class="note">Loading…</div>';
+  const [prov, mode, pers, mem, st] = await Promise.all([op("providers"), op("mode"), op("personalities"), op("memory"), op("status")]).catch(e => { sw.innerHTML = '<div class="note bad">' + esc(e.message) + "</div>"; return []; });
+  if (!prov) return;
+  sw.innerHTML = "";
+
+  // model
+  const m = card("Model", `<div class="dim">Pick the provider, then the model. Keys are kept on the server, encrypted.</div>
+    <select id="sProv"></select><select id="sModel"></select>
+    <div class="row2"><input id="sKey" type="password" placeholder="API key for this provider (leave empty to keep the saved one)" autocomplete="off"><button id="sSave">Save key</button></div><div class="dim" id="sMsg"></div>`);
+  sw.appendChild(m);
+  const sp = m.querySelector("#sProv"), sm = m.querySelector("#sModel"), msg = m.querySelector("#sMsg");
+  prov.providers.forEach(p => sp.insertAdjacentHTML("beforeend", `<option value="${esc(p.id)}" ${p.id === prov.current ? "selected" : ""}>${esc(p.name)}${p.has_key ? " ✓" : ""}</option>`));
+  async function loadModels() {
+    sm.innerHTML = "<option>Loading models…</option>";
+    try {
+      const r = await op("models", { provider: sp.value });
+      sm.innerHTML = ""; (r.models || []).forEach(x => sm.insertAdjacentHTML("beforeend", `<option ${x === r.current && sp.value === prov.current ? "selected" : ""}>${esc(x)}</option>`));
+      if (!r.models.length) sm.innerHTML = "<option value=''>No models listed: save the key first</option>";
+    } catch (e) { sm.innerHTML = "<option value=''>" + esc(e.message) + "</option>"; }
+  }
+  sp.onchange = async () => { await op("select", { provider: sp.value }); prov.current = sp.value; loadModels(); refreshModel(); };
+  sm.onchange = async () => { if (sm.value) { await op("select", { model: sm.value }); refreshModel(); msg.textContent = "Model chosen."; } };
+  m.querySelector("#sSave").onclick = async () => {
+    const k = m.querySelector("#sKey").value.trim(); if (!k) return;
+    try { await op("set_key", { provider: sp.value, key: k }); m.querySelector("#sKey").value = ""; msg.textContent = "Key saved on the server."; loadModels(); } catch (e) { msg.textContent = e.message; }
+  };
+  if (prov.current) loadModels(); else sm.innerHTML = "<option value=''>Pick a provider first</option>";
+
+  // permission mode
+  const pm = card("What ZO-AI may do", `<div class="dim">Manual asks before every change. Auto asks before changes only. Bypass never asks.</div><select id="sMode"><option>Manual</option><option>Auto</option><option>Bypass</option></select>`);
+  pm.querySelector("#sMode").value = mode.mode; pm.querySelector("#sMode").onchange = e => op("mode", { set: e.target.value });
+  sw.appendChild(pm);
+
+  // personality
+  const pc = card("Personality", `<div class="dim">How ZO-AI talks. It changes the voice only.</div><select id="sPers"></select>`);
+  const ps = pc.querySelector("#sPers");
+  ps.insertAdjacentHTML("beforeend", `<option value="">Plain</option>`);
+  pers.items.forEach(p => ps.insertAdjacentHTML("beforeend", `<option value="${esc(p.id)}" ${p.id === pers.active ? "selected" : ""}>${esc(p.name)}</option>`));
+  ps.onchange = () => op("personality_use", { id: ps.value });
+  sw.appendChild(pc);
+
+  // memory
+  const mc = card("Memory", `<div class="row2"><span class="dim">${mem.items.length} notes and summaries, shared with the computer and the phone.</span><label class="dim"><input type="checkbox" id="mOn" style="width:auto" ${mem.enabled ? "checked" : ""}> on</label></div>
+    <div class="row2"><input id="mNew" placeholder="Add a note, for example: I prefer short answers"><button id="mAdd">Add</button></div><div id="mList"></div>`);
+  mc.querySelector("#mOn").onchange = e => op("memory_enable", { on: e.target.checked });
+  mc.querySelector("#mAdd").onclick = async () => { const t = mc.querySelector("#mNew").value.trim(); if (t) { await op("memory_add", { text: t }).catch(e => alert(e.message)); showSettings(); } };
+  const ml = mc.querySelector("#mList");
+  const names = { person: "About you", preference: "Preference", project: "Project", fact: "Fact", episode: "Chat" };
+  mem.items.forEach(i => {
+    const d = document.createElement("div"); d.className = "mem";
+    d.innerHTML = `<div><small>${esc(names[i.kind] || i.kind)}${i.kind === "episode" && i.title ? ": " + esc(i.title) : ""}</small><br>${esc(i.text)}</div><button title="Always tell the AI">${i.pinned ? "★" : "☆"}</button><button class="danger" title="Forget">✕</button>`;
+    const [pin, del] = d.querySelectorAll("button");
+    pin.onclick = async () => { await op("memory_pin", { id: i.id, on: !i.pinned }); showSettings(); };
+    del.onclick = async () => { await op("memory_forget", { id: i.id }); showSettings(); };
+    ml.appendChild(d);
+  });
+  sw.appendChild(mc);
+}
+
+// ---------- start ----------
+$("signin").onclick = async () => {
+  $("err").textContent = "";
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { $("err").textContent = e.code === "auth/unauthorized-domain" ? "This web address is not allowed in Firebase yet (Authentication > Settings > Authorized domains)." : e.message; }
+};
+$("out").onclick = () => signOut(auth);
+$("new").onclick = () => openChat("");
+$("goMem").onclick = showSettings;
+$("menu").onclick = () => $("side").classList.toggle("open");
+$("model").onclick = showSettings;
+$("send").onclick = send;
+$("stop").onclick = () => { if (stream) api("/api/reply", { stream, op: "stop" }).catch(() => {}); };
+$("text").addEventListener("input", autosize);
+$("text").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+
+async function start() { $("login").classList.add("hide"); $("app").classList.remove("hide"); $("email").textContent = "test"; openChat(""); refreshList(); refreshModel(); }
+if (NOAUTH) start();
+else onAuthStateChanged(auth, async u => {
+  $("login").classList.toggle("hide", !!u); $("app").classList.toggle("hide", !u);
+  if (!u) return;
+  $("email").textContent = u.email;
+  try { await op("status"); } catch (e) {
+    $("app").classList.add("hide"); $("login").classList.remove("hide"); $("err").textContent = e.message; signOut(auth); return;
+  }
+  openChat(""); refreshList(); refreshModel();
+});
+</script>
+</body>
+</html>

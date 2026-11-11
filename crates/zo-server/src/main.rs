@@ -144,7 +144,10 @@ fn route(app: Arc<App>, mut req: Request) {
     match (req.method().clone(), path.as_str()) {
         (Method::Options, _) => text(req, 204, ""),
         (Method::Get, "/healthz") => text(req, 200, "ok"),
-        (Method::Get, "/") => text(req, 200, "ZO-AI server"),
+        (Method::Get, "/") | (Method::Get, "/index.html") => {
+            let r = Response::from_string(include_str!("../web/index.html")).with_header(header("Content-Type", "text/html; charset=utf-8")).with_header(header("Cache-Control", "no-cache"));
+            let _ = req.respond(r);
+        }
         (Method::Post, "/api/op") | (Method::Post, "/api/send") | (Method::Post, "/api/reply") => {
             if let Err(e) = who(&app, &req) {
                 return reply(req, 401, json!({"ok": false, "error": e}));

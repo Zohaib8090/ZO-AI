@@ -16,6 +16,14 @@ The same brain as the desktop app, on a server that is always on, behind a Fireb
 * **Self-ping**: calls its own `/healthz` every 8 minutes (address from `RENDER_EXTERNAL_URL`) so the free instance is not put to sleep.
 * If Firestore cannot be read at start, the server stops instead of starting empty (it would otherwise overwrite what is saved).
 
+## The web app
+
+`crates/zo-server/web/index.html`, one file, served by the server at `/` (same address as the API, so no extra hosting and no CORS).
+Google sign-in through Firebase (project `zo-ai-144`; the web config in the page is public by design). Chat with streaming answers,
+step approvals and Stop, chat list, delete; Settings page with provider, model, API key, permission mode, personality and the
+memory (add, pin, forget). **Firebase must know the server's address**: Authentication > Settings > Authorized domains > add the
+Render address (for example `zo-ai-server.onrender.com`), or the Google pop-up refuses.
+
 ## The API
 
 | Call | What |
@@ -44,10 +52,10 @@ Use a separate `XDG_RUNTIME_DIR`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME` if the d
 
 Tested: unit tests (cutting and joining long texts, the document layout, key encryption), and a local run without login
 (`status`, `memory_add`, `set_key` into the keys file, a streamed `send`, CORS preflight).
-Not tested yet: the login check and Firestore against the real project (needs the owner's Firebase key), the Docker image,
+The web page was opened against the local test server (`/?noauth` skips only the sign-in screen; a real server still refuses calls without a token): it renders, a message reaches the service (answered "No model is chosen yet"), the settings page lists the providers.
+Not tested yet: the Google sign-in itself, the login check and Firestore against the real project (needs the owner's Firebase key), the Docker image,
 Render itself, Claude Code mode on the server.
 
 ## Not built yet
 
-The desktop app and the phone do not sync with Firestore yet (the server is the only writer), the web app, the `zo` terminal
-client, SSH machines.
+The desktop app and the phone do not sync with Firestore yet (the server is the only writer), editing a memory note's text in the web app, chat summaries from the web, the `zo` terminal client, SSH machines.
