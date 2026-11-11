@@ -846,11 +846,11 @@ textview.code-view { padding: 10px; }
 .tool-btn.mic.recording:hover { background-color: #F06065; }
 
 /* the panel on the right: pinned Context, terminals, browser */
-.dock { background-color: #0F1115; border-left: 1px solid #2A2F38; }
-.dock-head { padding: 6px 8px; background-color: #1A1D23; }
+.dock { background-color: #191919; border-left: 1px solid alpha(white, 0.07); }
+.dock-head { padding: 6px 8px; background-color: #242424; }
 .dock-tab { border-radius: 8px; padding: 2px 10px; min-height: 26px; }
-.term-tabs { padding: 4px 6px; background-color: #1A1D23; }
+.term-tabs { padding: 4px 6px; background-color: #242424; }
 .term-tab { border-radius: 8px; }
-.term, .term text { background-color: #0F1115; color: #D8DEE9; font-family: monospace; font-size: 13px; }
-.browser-bar { padding: 6px 8px; background-color: #1A1D23; }
-.dock-paned > separator { min-width: 5px; background-color: #2A2F38; }
+.term, .term text { background-color: #191919; color: #ECECEC; font-family: monospace; font-size: 13px; }
+.browser-bar { padding: 6px 8px; background-color: #242424; }
+.dock-paned > separator { min-width: 1px; background-color: alpha(white, 0.07); }

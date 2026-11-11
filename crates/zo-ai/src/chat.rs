@@ -1441,7 +1441,7 @@ fn fill_context(ui: &Rc<Ui>, body: &gtk::Box, pop: &Rc<dyn Fn()>, mcp: Option<(u
 /// The Context panel in the top bar: where the model's window goes, and how long until the chat is compacted.
 pub fn show_context_popover(ui: &Rc<Ui>, _btn: &gtk::Button) {
     // already pinned at the side: show that instead
-    if ui.dock.context_pinned() {
+    if ui.dock.context_pinned() && !ui.dock.narrow() {
         ui.dock.show("context");
         ui.dock.refresh_context_now();
         return;

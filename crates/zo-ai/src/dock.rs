@@ -29,6 +29,7 @@ pub struct Dock {
     pub refresh_context: RefCell<Option<Rc<dyn Fn()>>>,
     width: Cell<i32>,
     grown: Cell<bool>,
+    auto_hidden: Cell<bool>,
     // terminals
     term_tabs: gtk::Box,
     term_stack: gtk::Stack,
@@ -132,6 +133,7 @@ impl Dock {
             refresh_context: RefCell::new(None),
             width: Cell::new(crate::theme::zs(440)),
             grown: Cell::new(false),
+            auto_hidden: Cell::new(false),
             term_tabs,
             term_stack,
             term_views: RefCell::new(HashMap::new()),
@@ -232,20 +234,12 @@ impl Dock {
         if !self.root.is_visible() {
             self.root.set_visible(true);
             let w = self.width.get();
-            // the window grows by the width of the panel, so the chat keeps its room (unless it is maximized)
-            let grown = match self.paned.root().and_downcast::<gtk::Window>() {
-                Some(win) if !win.is_maximized() && !win.is_fullscreen() && win.width() > 0 => {
-                    win.set_default_size(win.width() + w, win.height());
-                    true
-                }
-                _ => false,
-            };
-            self.grown.set(grown);
+            self.grown.set(false);
             let paned = self.paned.clone();
             glib::timeout_add_local_once(Duration::from_millis(120), move || {
                 let total = paned.width();
                 if total > 0 {
-                    paned.set_position((total - w).max(total / 2));
+                    paned.set_position(total - w.min(total / 2).max(crate::theme::zs(280)).min(total - 200));
                 }
             });
         }
@@ -477,7 +471,23 @@ impl Dock {
         tv
     }
 
+    /// A window too narrow for a side panel: the pinned Context then lives in a popup instead.
+    pub fn narrow(&self) -> bool {
+        let w = self.paned.root().and_downcast::<gtk::Window>().map(|w| w.width()).unwrap_or(0);
+        w > 0 && w < crate::theme::zs(760)
+    }
+
     fn tick(self: &Rc<Self>) {
+        let only_context = self.tab_buttons.borrow().len() == 1 && self.tab_buttons.borrow().contains_key("context");
+        if self.context_pinned.get() && only_context {
+            if self.narrow() && self.root.is_visible() {
+                self.hide();
+                self.auto_hidden.set(true);
+            } else if !self.narrow() && self.auto_hidden.get() {
+                self.auto_hidden.set(false);
+                self.show("context");
+            }
+        }
         self.sync_terminals();
         if !self.root.is_visible() || self.stack.visible_child_name().as_deref() != Some("terminal") {
             return;
