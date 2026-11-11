@@ -280,6 +280,17 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             let (_, new) = crate::store::memory::remember(s(req, "text"), if s(req, "kind").is_empty() { "fact" } else { s(req, "kind") }, "").ok_or("That note is too short.")?;
             Ok(json!({"new": new}))
         }
+        "memory_update" => {
+            if crate::store::memory::update_text(s(req, "id"), s(req, "text")) { Ok(json!({})) } else { Err("That note is gone or the text is too short.".into()) }
+        }
+        "memory_edit" => Ok(json!({"message": crate::ai::memory_agent::edit_by_instruction(s(req, "text"))?})),
+        "search" => {
+            let all = chats::load();
+            Ok(json!({"hits": chats::search(s(req, "query"), &all).iter().take(50).map(|h| json!({"id": h.id, "title": h.title, "snippet": h.snippet, "updated": h.updated})).collect::<Vec<_>>()}))
+        }
+        "artifacts" => Ok(json!({"items": crate::store::artifacts::load().iter().take(100).map(|a| json!({
+            "id": a.id, "kind": a.kind, "title": a.title, "path": a.path, "text": a.text.as_ref().map(|t| t.chars().take(20000).collect::<String>()), "chat": a.chat, "created": a.created,
+        })).collect::<Vec<_>>()})),
         "memory_forget" => {
             crate::store::memory::forget(s(req, "id"));
             Ok(json!({}))
