@@ -1,0 +1,17 @@
+# Render blueprint for the ZO-AI server. The secrets are typed into Render by the owner; they are never in this repository.
+services:
+  - type: web
+    name: zo-ai-server
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: FIREBASE_SERVICE_ACCOUNT   # the whole service account key file (JSON), pasted as one value
+        sync: false
+      - key: ZO_ALLOWED_EMAILS          # the Google account(s) that may sign in, separated by commas
+        sync: false
+      - key: ZO_SERVER_SECRET           # API keys are encrypted with this before they go to Firestore
+        generateValue: true
+      - key: CLAUDE_CODE_OAUTH_TOKEN    # optional: from `claude setup-token`, for Claude Code mode on the server
+        sync: false

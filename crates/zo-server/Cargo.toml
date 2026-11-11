@@ -1,0 +1,17 @@
+[package]
+name = "zo-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ZO-AI in the cloud: the same brain behind a login, with its data kept in Firestore"
+
+[dependencies]
+zo-core = { path = "../zo-core" }
+serde.workspace = true
+serde_json.workspace = true
+ureq = { version = "2.12", features = ["json"] }
+tiny_http = "0.12"
+jsonwebtoken = "9"
+aes-gcm = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
