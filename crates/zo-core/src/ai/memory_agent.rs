@@ -60,18 +60,22 @@ fn transcript(entries: &[Entry], read: usize) -> String {
 }
 
 fn prompt_for(title: &str, chat: &str, text: &str, existing_episode: Option<&str>) -> String {
-    let related = memory::search(&memory::load(), text, 10);
-    let known = if related.is_empty() {
+    // every note (not only the closest ones), so that the model can merge into an old note instead of writing a new one
+    let all = memory::load();
+    let mut notes: Vec<&memory::Item> = all.items.iter().filter(|i| i.kind != "episode").collect();
+    notes.sort_by(|a, b| b.updated.cmp(&a.updated));
+    let known = if notes.is_empty() {
         "(nothing yet)".to_string()
     } else {
-        related.iter().map(|h| format!("[{}] ({}) {}", h.item.id, h.item.kind, h.item.text)).collect::<Vec<_>>().join("\n")
+        notes.iter().take(60).map(|i| format!("[{}] ({}) {}", i.id, i.kind, i.text)).collect::<Vec<_>>().join("\n")
     };
     format!(
-        "Chat title: {title}\nChat id: {chat}\n\nWHAT IS ALREADY REMEMBERED (closest to this chat; the id is in brackets):\n{known}\n\n{ep}\
+        "Chat title: {title}\nChat id: {chat}\n\nWHAT IS ALREADY REMEMBERED (the id is in brackets):\n{known}\n\n{ep}\
         THE CONVERSATION:\n{text}\n\n\
         Write the JSON object with these keys:\n\
         \"add\": a list of {{\"text\": \"...\", \"kind\": \"...\"}} for new things worth remembering. kind is one of: person (who they are: name, work, where they live, family, languages), preference (how they like things done or said, what they like), project (what they are building or working on, with names), fact (anything else lasting: their devices, accounts they use, decisions made). \
         One short sentence each, written in the third person (\"The person ...\"), at most 200 characters. Only things that will still matter in a month. Skip one-off requests, small talk, and anything already remembered.\n\
+        KEEP THE LIST SHORT AND TIDY: before you add anything, look at the list above. If a remembered note is about the same subject (the same preference, the same project, the same person), do NOT add a new one: put it in \"update\" with that note's id and a text that joins the old and the new facts in one or two sentences (up to 300 characters). Only use \"add\" for a subject that has no note yet. If a new fact replaces an old one, update that note.\n\
         \"update\": a list of {{\"id\": \"...\", \"text\": \"...\"}} for remembered notes that this conversation changed or made more exact.\n\
         \"delete\": a list of ids of remembered notes that are no longer true or that the person asked to forget.\n\
         \"summary\": two or three sentences about what this whole chat was about and what came of it (what was done, decided, or left open), so that a later chat can be told about it. Use the earlier summary if there is one and add to it. Empty string if the chat has nothing of substance.\n\
@@ -155,6 +159,51 @@ fn process(ask: &dyn Fn(&str) -> Result<String, String>, chat: &str, title: &str
     Ok(r)
 }
 
+/// How to ask the chosen model one question (no tools). None when no model is set up.
+fn asker() -> Option<Box<dyn Fn(&str) -> Result<String, String> + Send>> {
+    let sel = Selection::load();
+    if sel.provider == "claude-code" {
+        super::claude_code::binary()?;
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        Some(Box::new(move |prompt| super::claude_code::complete("haiku", SYSTEM, prompt, &cancel)))
+    } else {
+        if sel.provider.is_empty() {
+            return None;
+        }
+        let cfg = Config::from_selection(&sel, SYSTEM).ok()?;
+        let cancel = AtomicBool::new(false);
+        Some(Box::new(move |prompt| agent::complete(&cfg, SYSTEM, prompt, &cancel)))
+    }
+}
+
+fn edit_prompt(instruction: &str) -> String {
+    let all = memory::load();
+    let notes: Vec<String> = all.items.iter().filter(|i| i.kind != "episode").map(|i| format!("[{}] ({}) {}", i.id, i.kind, i.text)).collect();
+    format!(
+        "WHAT IS REMEMBERED (the id is in brackets):\n{}\n\nThe person now tells you how to change this list:\n{instruction}\n\n\
+        Do exactly what they ask and nothing else. Answer with one JSON object with these keys:\n\
+        \"add\": a list of {{\"text\": \"...\", \"kind\": \"person|preference|project|fact\"}} for new notes (third person, one or two short sentences).\n\
+        \"update\": a list of {{\"id\": \"...\", \"text\": \"...\"}} for notes to rewrite. To join several notes into one, update one of them and delete the others.\n\
+        \"delete\": a list of ids to remove.\n\
+        \"say\": one short sentence telling the person what you changed.",
+        if notes.is_empty() { "(nothing yet)".to_string() } else { notes.join("\n") }
+    )
+}
+
+/// The memory chat in Settings: the person says what to change ("join my preferences into one note", "forget the laptop model"),
+/// the model edits the notes. Returns a sentence about what was done.
+pub fn edit_by_instruction(instruction: &str) -> Result<String, String> {
+    if instruction.trim().chars().count() < 3 {
+        return Err("Say what to change.".into());
+    }
+    let ask = asker().ok_or("Choose a model first (Settings, Model and profiles).")?;
+    let answer = ask(&edit_prompt(instruction))?;
+    let v = parse(&answer).ok_or("The model's answer could not be read. Try again.")?;
+    let (a, u, d) = apply(&v, "", "");
+    let say = v.get("say").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    Ok(if say.is_empty() { format!("{a} added, {u} changed, {d} removed.") } else { format!("{say} ({a} added, {u} changed, {d} removed)") })
+}
+
 /// Call after each answer is saved. When the person has written `every` new messages in this chat (or other chats were left idle with unread
 /// messages), a background job brings the memory up to date. Does nothing when memory is off or no model is set up. With Claude Code
 /// as the model, the small and quick `haiku` does the reading.
@@ -173,21 +222,7 @@ pub fn after_turn(chat_id: &str, title: &str, entries: &[Entry]) {
     if !due_here && idle.is_empty() {
         return;
     }
-    let sel = Selection::load();
-    let ask: Box<dyn Fn(&str) -> Result<String, String> + Send> = if sel.provider == "claude-code" {
-        if super::claude_code::binary().is_none() {
-            return;
-        }
-        let cancel = std::sync::Arc::new(AtomicBool::new(false));
-        Box::new(move |prompt| super::claude_code::complete("haiku", SYSTEM, prompt, &cancel))
-    } else {
-        if sel.provider.is_empty() {
-            return;
-        }
-        let Ok(cfg) = Config::from_selection(&sel, SYSTEM) else { return };
-        let cancel = AtomicBool::new(false);
-        Box::new(move |prompt| agent::complete(&cfg, SYSTEM, prompt, &cancel))
-    };
+    let Some(ask) = asker() else { return };
     if RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
         return;
     }

@@ -21,7 +21,7 @@ pub const EMBEDDER: &str = "hash-512-v1";
 const MAX_ITEMS: usize = 2000;
 pub const MAX_TEXT: usize = 400;
 /// A new note this close to an old one of the same kind updates the old one instead of piling up.
-const SAME_AS: f32 = 0.80;
+const SAME_AS: f32 = 0.60;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Item {

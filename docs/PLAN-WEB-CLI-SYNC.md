@@ -1,0 +1,80 @@
+# Plan: ZO-AI everywhere (web, terminal, sync, remote machines)
+
+Written 2026-11-12 from the owner's request. Nothing here is built yet. It is the brief for the next work session.
+
+## What the owner asked for
+
+1. A **web version** of ZO-AI, a full clone of the desktop app, with a **login** (Firebase Authentication), usable from anywhere.
+2. **Everything in sync**: chats, memory, personalities, projects, settings, between laptop, phone and web.
+3. **API keys** entered once work on the web too.
+4. **Works with the laptop off**: normal chats must still work from the web.
+5. **Claude Code mode** (the experimental provider) reachable from the web, even when the laptop is locked.
+6. **SSH control**: give ZO-AI other machines (for example a cloud VM) to work on.
+7. A **terminal version** of ZO-AI.
+
+## The one decision that shapes everything
+
+"Works with the laptop off" means the brain cannot live only on the laptop. So there are two kinds of work:
+
+| Kind | Needs | Where it runs |
+|---|---|---|
+| Chat with an API model (OpenRouter, Gemini, ...), memory, web search, personalities | only keys and data | **a cloud server**, always on |
+| Tools that touch a computer (files, shell, screenshots, Claude Code with the owner's sign-in) | a real machine | **an agent on that machine** (the laptop, or a VM over SSH) |
+
+A locked laptop still runs its agent, so tools keep working while it is locked. A laptop that is off or asleep cannot run tools; chat still works, and the web says "laptop offline" for tool work, or uses a VM instead.
+
+## Proposed architecture
+
+```
+ web app ─┐
+ phone  ──┼──> ZO-AI cloud server (zo-core, always on) ──> model APIs
+ terminal ┘        │  Firebase Auth checks who you are
+                   │  Firestore keeps chats, memory, settings (sync)
+                   └──> machine agents: laptop (outbound link), VMs (SSH)
+```
+
+* **zo-core stays the single brain.** It is already a library with a socket service (`service.rs`). The cloud server is the same code
+  behind HTTPS + WebSocket instead of a Unix socket. No second implementation of the agent loop.
+* **Cloud server**: `zo-server` (new crate, Rust, axum). Host: Render (the owner already has the admin site there) or an Oracle VM
+  (free, always on, and can also be the SSH target). Recommendation: the Oracle VM, because Render's free tier sleeps.
+* **Login**: Firebase Authentication (Google sign-in). The server verifies the Firebase ID token on every request. One allowed
+  account at first (the owner's), so nobody else can use the keys.
+* **Sync**: Firestore, one document tree per user: `chats/`, `memory/`, `personalities/`, `projects/`, `settings`. The desktop app
+  keeps its local files and syncs both ways (local first, so it works offline). Conflicts: newest edit wins per chat and per note.
+* **API keys**: stored on the server encrypted (a key held in the server's environment, never in Firestore in plain text). The
+  desktop keeps using the system keyring and uploads a key only when the owner turns on "use on the web" for it.
+* **Laptop agent**: the laptop opens an outbound connection to the server (no port forwarding, works behind any router). The
+  existing `zohara-linkd` whitelist idea is reused: the server can only call the listed operations. Runs as a user service, so a
+  locked screen does not stop it.
+* **Claude Code mode from the web**: the server passes the message to the laptop agent, which runs `claude -p` there with the
+  owner's own sign-in, and streams the answer back. The sign-in never leaves the laptop. Needs the laptop on (locked is fine).
+* **SSH machines**: a "Machines" page: add host, user and key; tools get a `machine` choice (laptop, vm-1, ...). The shell and
+  file tools run over SSH on that machine. The key is stored like an API key.
+* **Web app**: a small single-page app (TypeScript, no heavy framework needed) that copies the desktop layout: sidebar, chat,
+  projects, settings, memory. Hosted on Firebase Hosting. Talks only to `zo-server`.
+* **Terminal version**: `zo` (new small crate using zo-core): `zo "question"`, `zo chat` for an interactive session, same
+  memory and chats. It talks to the local service when the app is running, or to the cloud server with `zo --remote`.
+
+## Order of work
+
+1. `zo` terminal client against the local socket (small, proves the client protocol).
+2. `zo-server`: the service over HTTPS/WebSocket + Firebase token check. Chat with API models only.
+3. Firestore sync for chats and memory (desktop both ways, server reads and writes).
+4. Web app: login, chat, chat list, memory and personality pages.
+5. Laptop agent link, then Claude Code mode and tools from the web.
+6. SSH machines.
+7. Phone app switches from the laptop-only link to the server (keeps the direct link as a fallback on the same Wi-Fi).
+
+## What the owner must decide or do
+
+* Where the server runs (Oracle VM recommended; Render possible).
+* Create the Firebase project and turn on Google sign-in (the owner's account; I cannot create accounts).
+* Agree that API keys are stored encrypted on the server (needed for chat with the laptop off).
+* Whether Claude Code mode may also run on the cloud VM with its own sign-in (then it works with the laptop off too).
+
+## Risks
+
+* A server that holds keys and can run commands on the laptop is a high-value target: one allowed account, token check on every
+  call, operation whitelist, an audit log, and a kill switch in the desktop app ("disconnect from the web").
+* Sync conflicts when two devices write the same chat at once: keep it simple (newest wins) and show both takes as branches.
+* Cost: Firestore and the model APIs are pay-per-use; the Oracle VM is free.

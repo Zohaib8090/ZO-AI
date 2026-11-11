@@ -662,7 +662,7 @@ pub(crate) fn refresh_recents(ui: &Rc<Ui>) {
         ui.recents_box.remove(&c);
     }
     let all = chats::load();
-    let recent: Vec<chats::Chat> = all.into_iter().filter(|c| !c.pinned).take(15).collect();
+    let recent: Vec<chats::Chat> = all.into_iter().filter(|c| !c.pinned).take(8).collect();
     ui.recents_label.set_visible(!recent.is_empty());
     for chat in recent {
         let (ui2, shown) = (ui.clone(), chat.clone());
@@ -1634,6 +1634,7 @@ fn build_ui(app: &adw::Application) {
 
     // ---------- sidebar ----------
     let nav_new = nav_button("list-add-symbolic", "New", true, None);
+    let nav_chats = nav_button("chat-message-new-symbolic", "Chats", false, None);
     let nav_search = nav_button("system-search-symbolic", "Search", false, None);
     let nav_projects = nav_button("view-grid-symbolic", "Projects", false, None);
     let nav_artifacts = nav_button("view-list-symbolic", "Artifacts", false, None);
@@ -1656,6 +1657,7 @@ fn build_ui(app: &adw::Application) {
     brand.append(&side_toggle);
     sidebar.append(&brand);
     sidebar.append(&nav_new);
+    sidebar.append(&nav_chats);
     sidebar.append(&nav_search);
     sidebar.append(&nav_projects);
     sidebar.append(&nav_artifacts);
@@ -2210,7 +2212,9 @@ fn build_ui(app: &adw::Application) {
         let p = prompt.clone();
         plus.connect_clicked(move |b| chat::show_plus_popover(&p, b));
         let ui2 = ui.clone();
-        ui.side_settings.connect_clicked(move |_| settings::show(&ui2));
+        ui.side_settings.connect_clicked(move |_| settings::home(&ui2));
+        let ui2 = ui.clone();
+        nav_chats.connect_clicked(move |_| settings::saved_chats_sheet(&ui2));
         let ui3 = ui.clone();
         ctx_btn.connect_clicked(move |b| chat::show_context_popover(&ui3, b));
         let d = ui.dock.clone();

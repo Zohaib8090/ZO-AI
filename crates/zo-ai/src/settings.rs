@@ -26,7 +26,9 @@ fn row(title: &str, sub: &str, control: Option<&impl IsA<gtk::Widget>>) -> gtk::
     let col = vbox(3);
     col.set_hexpand(true);
     col.set_valign(gtk::Align::Center);
-    col.append(&lbl(title, "pc-name"));
+    if !title.is_empty() {
+        col.append(&lbl(title, "pc-name"));
+    }
     if !sub.is_empty() {
         let s = lbl(sub, "pc-meta");
         s.set_wrap(true);
@@ -54,19 +56,70 @@ fn zo_mcp_path() -> String {
         .unwrap_or_else(|| "zo-mcp".into())
 }
 
+thread_local! {
+    /// Which Settings page is open: "" is the list of pages.
+    static PAGE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+pub fn home(ui: &Rc<Ui>) {
+    go(ui, "");
+}
+
+fn go(ui: &Rc<Ui>, page: &str) {
+    PAGE.with(|p| *p.borrow_mut() = page.to_string());
+    show(ui);
+}
+
 /// Builds the page again from what is true now, and shows it.
 pub fn show(ui: &Rc<Ui>) {
     let content = &ui.settings_box;
     while let Some(c) = content.first_child() {
         content.remove(&c);
     }
-    content.append(&lbl("Settings", "page-title"));
     content.set_spacing(0);
-    if let Some(t) = content.first_child() {
-        t.set_margin_bottom(24);
+    let page = PAGE.with(|p| p.borrow().clone());
+    let pages: [(&str, &str, &str); 7] = [
+        ("model", "Model and profiles", "Which AI answers, its key, and saved presets."),
+        ("personality", "Personality", "How ZO-AI talks to you."),
+        ("memory", "Memory", "What ZO-AI remembers about you between chats."),
+        ("general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."),
+        ("apps", "Connected apps", "Other programs that use ZO-AI, and tools ZO-AI can use."),
+        ("data", "Data", "Saved chats."),
+        ("about", "About", "Version."),
+    ];
+    if page.is_empty() || !pages.iter().any(|p| p.0 == page) {
+        content.append(&lbl("Settings", "page-title"));
+        if let Some(t) = content.first_child() {
+            t.set_margin_bottom(24);
+        }
+        let card = vbox(0);
+        card.add_css_class("settings-card");
+        for (id, name, sub) in pages {
+            let b = secondary("Open  ›");
+            let (ui2, id) = (ui.clone(), id.to_string());
+            b.connect_clicked(move |_| go(&ui2, &id));
+            card.append(&row(name, sub, Some(&b)));
+        }
+        content.append(&card);
+        ui.stack.set_visible_child_name("settings");
+        set_nav(ui, "settings");
+        ui.top_title.set_text("Settings");
+        return;
+    }
+    {
+        let bar = hbox(10);
+        let back = secondary("‹ Settings");
+        let ui2 = ui.clone();
+        back.connect_clicked(move |_| go(&ui2, ""));
+        bar.append(&back);
+        let name = pages.iter().find(|p| p.0 == page).map(|p| p.1).unwrap_or("");
+        bar.append(&lbl(name, "page-title"));
+        bar.set_margin_bottom(24);
+        content.append(&bar);
     }
 
     // ---- the model ----
+    if page == "model" {
     let sel = Selection::load();
     let (sec, card) = section("Model");
     let provider = providers::find(&sel.provider);
@@ -194,8 +247,10 @@ pub fn show(ui: &Rc<Ui>) {
         card.append(&row("Save the current settings as a profile", "Keeps the provider, model, address, effort and the API key that is in use now.", Some(&new)));
     }
     content.append(&sec);
+    }
 
     // ---- looks ----
+    if page == "general" {
     let (sec, card) = section("Appearance");
     let looks = ["system", "dark", "light"];
     let dd = gtk::DropDown::from_strings(&["Follow the system", "Dark", "Light"]);
@@ -222,8 +277,10 @@ pub fn show(ui: &Rc<Ui>) {
         Some(&dd),
     ));
     content.append(&sec);
+    }
 
     // ---- other apps ----
+    if page == "apps" {
     let (sec, card) = section("Connect other apps");
     let cmd = format!("claude mcp add zohara -- {}", zo_mcp_path());
     let copy = secondary("Copy");
@@ -298,9 +355,10 @@ pub fn show(ui: &Rc<Ui>) {
         card.append(&r);
     }
     content.append(&sec);
+    }
 
     // ---- personality: how ZO-AI talks ----
-    {
+    if page == "personality" {
         use zo_core::store::personality as pers;
         let (sec, card) = section("Personality");
         let st = pers::load();
@@ -357,7 +415,7 @@ pub fn show(ui: &Rc<Ui>) {
             let ui2 = ui.clone();
             make.connect_clicked(move |_| {
                 let ui3 = ui2.clone();
-                text_sheet(&ui2, "Make a personality", "What should it be like?", "A patient teacher who explains with small everyday examples and never rushes me", "Write it", true, |d| {
+                text_sheet(&ui2, "Make a personality", "", "What should it be like?", "A patient teacher who explains with small everyday examples and never rushes me", "Write it", true, |d| {
                     zo_core::ai::personality_gen::generate(&d).map(|p| p.name)
                 }, move || show(&ui3));
             });
@@ -367,7 +425,7 @@ pub fn show(ui: &Rc<Ui>) {
             let ui2 = ui.clone();
             own.connect_clicked(move |_| {
                 let ui3 = ui2.clone();
-                text_sheet(&ui2, "Write a personality", "How should it sound? (4 to 7 sentences)", "Sound like …", "Save", false, |t| {
+                text_sheet(&ui2, "Write a personality", "", "How should it sound? (4 to 7 sentences)", "Sound like …", "Save", false, |t| {
                     let name: String = t.split_whitespace().take(3).collect::<Vec<_>>().join(" ");
                     zo_core::store::personality::add(&name, &t, false).map(|p| p.name)
                 }, move || show(&ui3));
@@ -381,7 +439,7 @@ pub fn show(ui: &Rc<Ui>) {
     }
 
     // ---- memory: what ZO-AI remembers about you ----
-    {
+    if page == "memory" {
         use zo_core::store::memory as mem;
         let (sec, card) = section("Memory");
         let st = mem::load();
@@ -398,33 +456,61 @@ pub fn show(ui: &Rc<Ui>) {
             &format!("{notes} notes about you and {chats_n} chat summaries, shared with the phone. After every {} messages of yours, ZO-AI reads the chat in the background and keeps what is worth remembering. Never passwords or keys.", st.every),
             Some(&sw),
         ));
+        let talk = crate::primary("Chat about memory…");
+        {
+            let ui2 = ui.clone();
+            talk.connect_clicked(move |_| memory_chat_sheet(&ui2));
+        }
+        card.append(&row("Edit by talking", "Tell ZO-AI what to change, in your own words: \"join my preferences into one note\", \"forget the old laptop\", \"my name is spelled Zohaib\". This chat only edits the notes.", Some(&talk)));
         let mut items = st.items.clone();
         items.sort_by(|a, b| (b.pinned, b.updated).cmp(&(a.pinned, a.updated)));
-        for it in items.iter().take(80) {
-            let controls = hbox(6);
-            let pin = crate::icon_button(if it.pinned { "starred-symbolic" } else { "non-starred-symbolic" }, if it.pinned { "Always tell the AI (pinned)" } else { "Pin: always tell the AI" }, "icon-btn");
-            {
-                let (ui2, id, on) = (ui.clone(), it.id.clone(), !it.pinned);
-                pin.connect_clicked(move |_| {
-                    mem::set_pinned(&id, on);
-                    show(&ui2);
-                });
+        let groups = [("person", "About you"), ("preference", "Preferences"), ("project", "Projects"), ("fact", "Facts"), ("episode", "Chat summaries")];
+        for (kind, label) in groups {
+            let mine: Vec<_> = items.iter().filter(|i| i.kind == kind).collect();
+            if mine.is_empty() {
+                continue;
             }
-            controls.append(&pin);
-            let del = crate::icon_button("edit-delete-symbolic", "Forget this", "icon-btn");
-            {
-                let (ui2, id) = (ui.clone(), it.id.clone());
-                del.connect_clicked(move |_| {
-                    mem::forget(&id);
-                    show(&ui2);
-                });
+            let h = lbl(label, "pc-meta");
+            h.set_xalign(0.0);
+            h.set_margin_top(14);
+            h.set_margin_start(16);
+            h.set_margin_bottom(4);
+            card.append(&h);
+            for it in mine.into_iter().take(80) {
+                let controls = hbox(6);
+                if kind != "episode" {
+                    let edit = crate::icon_button("document-edit-symbolic", "Edit this note", "icon-btn");
+                    let (ui2, id, text) = (ui.clone(), it.id.clone(), it.text.clone());
+                    edit.connect_clicked(move |_| {
+                        let ui3 = ui2.clone();
+                        let id = id.clone();
+                        text_sheet(&ui2, "Edit note", &text, "What should ZO-AI remember?", "I prefer short answers", "Save", false, move |t| {
+                            if mem::update_text(&id, &t) { Ok("Saved".to_string()) } else { Err("That note is too short.".to_string()) }
+                        }, move || show(&ui3));
+                    });
+                    controls.append(&edit);
+                }
+                let pin = crate::icon_button(if it.pinned { "starred-symbolic" } else { "non-starred-symbolic" }, if it.pinned { "Always tell the AI (pinned)" } else { "Pin: always tell the AI" }, "icon-btn");
+                {
+                    let (ui2, id, on) = (ui.clone(), it.id.clone(), !it.pinned);
+                    pin.connect_clicked(move |_| {
+                        mem::set_pinned(&id, on);
+                        show(&ui2);
+                    });
+                }
+                controls.append(&pin);
+                let del = crate::icon_button("edit-delete-symbolic", "Forget this", "icon-btn");
+                {
+                    let (ui2, id) = (ui.clone(), it.id.clone());
+                    del.connect_clicked(move |_| {
+                        mem::forget(&id);
+                        show(&ui2);
+                    });
+                }
+                controls.append(&del);
+                let title = if kind == "episode" { it.title.clone() } else { String::new() };
+                card.append(&row(&title, &it.text, Some(&controls)));
             }
-            controls.append(&del);
-            let title = match it.kind.as_str() {
-                "episode" => format!("Chat: {}", it.title),
-                k => k.to_string(),
-            };
-            card.append(&row(&title, &it.text, Some(&controls)));
         }
         if items.len() > 80 {
             card.append(&row("…", &format!("{} more are kept; the AI can search all of them.", items.len() - 80), no_control()));
@@ -434,7 +520,7 @@ pub fn show(ui: &Rc<Ui>) {
             let ui2 = ui.clone();
             add.connect_clicked(move |_| {
                 let ui3 = ui2.clone();
-                text_sheet(&ui2, "Add a note", "What should ZO-AI remember?", "I prefer short answers", "Add", false, |t| {
+                text_sheet(&ui2, "Add a note", "", "What should ZO-AI remember?", "I prefer short answers", "Add", false, |t| {
                     mem::remember(&t, "fact", "").map(|_| "Remembered".to_string()).ok_or_else(|| "That note is too short.".to_string())
                 }, move || show(&ui3));
             });
@@ -459,6 +545,7 @@ pub fn show(ui: &Rc<Ui>) {
     }
 
     // ---- data ----
+    if page == "data" {
     let (sec, card) = section("Data");
     let n = chats::load().len();
     let open = secondary("View chats");
@@ -490,12 +577,15 @@ pub fn show(ui: &Rc<Ui>) {
     });
     card.append(&row("Delete all chats", "Removes the saved conversations from this computer.", Some(&clear)));
     content.append(&sec);
+    }
 
     // ---- about ----
+    if page == "about" {
     let (sec, card) = section("About");
     card.append(&row("ZO-AI", &format!("Version {} · the AI built into Zohara OS", env!("CARGO_PKG_VERSION")), no_control()));
     let _ = agent::SYSTEM_PROMPT;
     content.append(&sec);
+    }
 
     ui.stack.set_visible_child_name("settings");
     set_nav(ui, "settings");
@@ -504,9 +594,10 @@ pub fn show(ui: &Rc<Ui>) {
 
 /// A small panel with one text box. `work` gets the text and runs off the main thread (it may call the model); `done` runs on the
 /// main thread when it succeeded. While it works the panel says so; an error stays on the panel.
-fn text_sheet(ui: &Rc<Ui>, title: &str, label: &str, placeholder: &str, ok_text: &str, multi: bool, work: impl Fn(String) -> Result<String, String> + Send + Sync + 'static, done: impl Fn() + 'static) {
+fn text_sheet(ui: &Rc<Ui>, title: &str, initial: &str, label: &str, placeholder: &str, ok_text: &str, multi: bool, work: impl Fn(String) -> Result<String, String> + Send + Sync + 'static, done: impl Fn() + 'static) {
     let (win, body, foot) = crate::sheet(ui, title, 460);
     let view = gtk::TextView::new();
+    view.buffer().set_text(initial);
     view.set_wrap_mode(gtk::WrapMode::WordChar);
     view.set_top_margin(8);
     view.set_bottom_margin(8);
@@ -842,7 +933,7 @@ fn link_row() -> (gtk::Box, Rc<dyn Fn(&str)>) {
 }
 
 /// The saved chats, inside the app: a list, and a click shows that conversation in the same panel (with a button to continue it).
-fn saved_chats_sheet(ui: &Rc<Ui>) {
+pub fn saved_chats_sheet(ui: &Rc<Ui>) {
     let (win, body, foot) = crate::sheet(ui, "Saved chats", 720);
     let close = secondary("Close");
     foot.append(&close);
@@ -912,4 +1003,72 @@ fn saved_chats_sheet(ui: &Rc<Ui>) {
     }
     list(ui, &win, &body);
     win.present();
+}
+
+/// A small chat that only edits the memory: each message is an instruction, the answer says what changed.
+fn memory_chat_sheet(ui: &Rc<Ui>) {
+    let (win, body, foot) = crate::sheet(ui, "Chat about memory", 560);
+    let log = vbox(8);
+    body.append(&log);
+    let hint = lbl("Say what to change. ZO-AI edits the notes and tells you what it did.", "field-hint");
+    hint.set_wrap(true);
+    hint.set_xalign(0.0);
+    log.append(&hint);
+    let entry = gtk::Entry::new();
+    entry.set_placeholder_text(Some("For example: join all my preferences into one note"));
+    entry.add_css_class("field-input");
+    entry.set_hexpand(true);
+    let send = crate::primary("Send");
+    let done = secondary("Done");
+    foot.set_halign(gtk::Align::Fill);
+    foot.append(&entry);
+    foot.append(&send);
+    foot.append(&done);
+    {
+        let (w, ui2) = (win.clone(), ui.clone());
+        done.connect_clicked(move |_| {
+            w.close();
+            show(&ui2);
+        });
+    }
+    let run: Rc<dyn Fn()> = {
+        let (entry, log, send) = (entry.clone(), log.clone(), send.clone());
+        Rc::new(move || {
+            let text = entry.text().to_string();
+            if text.trim().is_empty() || !send.is_sensitive() {
+                return;
+            }
+            entry.set_text("");
+            let you = lbl(&text, "msg-user");
+            you.set_wrap(true);
+            you.set_xalign(0.0);
+            log.append(&you);
+            let reply = lbl("Working on it…", "pc-meta");
+            reply.set_wrap(true);
+            reply.set_xalign(0.0);
+            log.append(&reply);
+            send.set_sensitive(false);
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(zo_core::ai::memory_agent::edit_by_instruction(&text));
+            });
+            let send = send.clone();
+            gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || match rx.try_recv() {
+                Ok(r) => {
+                    reply.set_text(&r.unwrap_or_else(|e| e));
+                    send.set_sensitive(true);
+                    gtk::glib::ControlFlow::Break
+                }
+                Err(mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
+                Err(_) => gtk::glib::ControlFlow::Break,
+            });
+        })
+    };
+    {
+        let r = run.clone();
+        send.connect_clicked(move |_| r());
+    }
+    entry.connect_activate(move |_| run());
+    win.present();
+    entry.grab_focus();
 }
