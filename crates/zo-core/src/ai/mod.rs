@@ -49,6 +49,9 @@ impl Selection {
         let _ = std::fs::create_dir_all(crate::audit::config_dir());
         let tmp = Self::file().with_extension("json.tmp");
         if let Ok(s) = serde_json::to_string_pretty(self) {
+            if !crate::tenant::fits(&Self::file(), s.len()) {
+                return;
+            }
             if std::fs::write(&tmp, s).is_ok() {
                 let _ = std::fs::rename(&tmp, Self::file());
             }

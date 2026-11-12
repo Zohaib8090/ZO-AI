@@ -35,6 +35,9 @@ pub fn save(all: &[Profile]) {
     let _ = std::fs::create_dir_all(crate::audit::config_dir());
     let tmp = file().with_extension("json.tmp");
     if let Ok(s) = serde_json::to_string_pretty(all) {
+        if !crate::tenant::fits(&file(), s.len()) {
+            return;
+        }
         if std::fs::write(&tmp, s).is_ok() {
             let _ = std::fs::rename(&tmp, file());
         }

@@ -90,6 +90,7 @@ pub fn memory_save(a: &Value) -> Result<String, String> {
     if !memory::load().enabled {
         return Err("Memory is switched off, so nothing was saved.".into());
     }
+    crate::tenant::check_room()?;
     let note = text(a, "text")?;
     let kind = a.get("kind").and_then(Value::as_str).unwrap_or("fact");
     match memory::remember(note, kind, "") {

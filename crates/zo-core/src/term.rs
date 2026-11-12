@@ -41,6 +41,9 @@ pub fn enable_in_app() {
 }
 
 pub fn enabled() -> bool {
+    if crate::tenant::is_restricted() {
+        return false;
+    }
     ENABLED.load(Ordering::SeqCst)
 }
 

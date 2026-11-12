@@ -124,10 +124,7 @@ fn next_after(next_run: u64, repeat: &str, after: u64) -> Option<u64> {
 }
 
 fn path() -> PathBuf {
-    let base = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into())).join(".local/share")
-    });
-    base.join("zo-ai").join("schedules.json")
+    crate::audit::data_dir().join("schedules.json")
 }
 
 pub fn now_millis() -> u64 {

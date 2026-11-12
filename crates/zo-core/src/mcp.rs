@@ -10,6 +10,9 @@ use std::sync::{Mutex, OnceLock};
 /// The MCP servers added in Settings, offered through this server too, so a client that only knows this one (Claude Code, started by ZO-AI)
 /// also gets their tools, and every call of theirs asks first just as in the chat. Only when `ZO_MCP_EXTERNAL=1` (ZO-AI sets it).
 fn external() -> Option<&'static Mutex<crate::mcp_client::External>> {
+    if crate::tenant::is_restricted() {
+        return None;
+    }
     static EXTERNAL: OnceLock<Mutex<crate::mcp_client::External>> = OnceLock::new();
     (std::env::var("ZO_MCP_EXTERNAL").as_deref() == Ok("1")).then(|| EXTERNAL.get_or_init(|| Mutex::new(crate::mcp_client::External::start())))
 }
@@ -32,8 +35,10 @@ pub fn execute(name: &str, args: &Value, mode: Mode, approver: &dyn Approver) ->
     let Some(def) = tools::find(name) else {
         return Err(format!("unknown tool: {name}"));
     };
+    // the few tools of a restricted account only read the web and keep notes: they never ask
+    let restricted = crate::tenant::is_restricted();
     let shell_cmd = (def.risk == Risk::Shell).then(|| args.get("cmd").and_then(Value::as_str).unwrap_or(""));
-    if decide(mode, def.risk, shell_cmd) == Decision::Ask && !approver.approve(name, &summarize(name, args)) {
+    if !restricted && decide(mode, def.risk, shell_cmd) == Decision::Ask && !approver.approve(name, &summarize(name, args)) {
         audit::log(name, args, "denied");
         return Err("The person did not approve this (or ZO-AI is not running to ask). Nothing was done.".into());
     }

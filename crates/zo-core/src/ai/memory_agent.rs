@@ -8,9 +8,45 @@ use super::Selection;
 use crate::store::chats::{self, Entry};
 use crate::store::memory;
 use serde_json::Value;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::BTreeSet;
+use std::sync::atomic::AtomicBool;
 
-static RUNNING: AtomicBool = AtomicBool::new(false);
+/// The tenants whose memory agent is busy right now ("" is the one person of a desktop). A job of one tenant never keeps another
+/// tenant's from running.
+static RUNNING: std::sync::Mutex<BTreeSet<String>> = std::sync::Mutex::new(BTreeSet::new());
+
+fn tenant_key() -> String {
+    crate::tenant::current().map(|t| t.id).unwrap_or_default()
+}
+
+/// Takes this tenant's place; false when its own job is already running.
+fn begin() -> bool {
+    RUNNING.lock().unwrap_or_else(|e| e.into_inner()).insert(tenant_key())
+}
+
+fn end(key: &str) {
+    RUNNING.lock().unwrap_or_else(|e| e.into_inner()).remove(key);
+}
+
+#[cfg(test)]
+pub(crate) fn __begin_for_test(id: &str) -> bool {
+    RUNNING.lock().unwrap_or_else(|e| e.into_inner()).insert(id.to_string())
+}
+
+#[cfg(test)]
+pub(crate) fn __end_for_test(id: &str) {
+    end(id);
+}
+
+/// Is a memory job of the current tenant running?
+pub fn is_running() -> bool {
+    RUNNING.lock().unwrap_or_else(|e| e.into_inner()).contains(&tenant_key())
+}
+
+/// Is a memory job of any tenant running?
+pub fn any_running() -> bool {
+    !RUNNING.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+}
 
 /// A chat that was left alone this long is read even if it has fewer new messages than the memory agent waits for.
 const IDLE_MS: u64 = 10 * 60 * 1000;
@@ -163,6 +199,9 @@ fn process(ask: &dyn Fn(&str) -> Result<String, String>, chat: &str, title: &str
 fn asker() -> Option<Box<dyn Fn(&str) -> Result<String, String> + Send>> {
     let sel = Selection::load();
     if sel.provider == "claude-code" {
+        if crate::tenant::is_restricted() {
+            return None;
+        }
         super::claude_code::binary()?;
         let cancel = std::sync::Arc::new(AtomicBool::new(false));
         Some(Box::new(move |prompt| super::claude_code::complete("haiku", SYSTEM, prompt, &cancel)))
@@ -223,18 +262,19 @@ pub fn after_turn(chat_id: &str, title: &str, entries: &[Entry]) {
         return;
     }
     let Some(ask) = asker() else { return };
-    if RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+    if !begin() {
         return;
     }
+    let key = tenant_key();
     let (id, title, entries) = (chat_id.to_string(), title.to_string(), entries.to_vec());
-    std::thread::spawn(move || {
+    crate::tenant::spawn(move || {
         if due_here {
             let _ = process(&*ask, &id, &title, &entries);
         }
         for c in idle {
             let _ = process(&*ask, &c.id, &c.title, &c.entries);
         }
-        RUNNING.store(false, Ordering::SeqCst);
+        end(&key);
     });
 }
 
@@ -338,11 +378,11 @@ mod tests {
         let es = vec![e("msg-user", "test the phone app"), e("msg-ai", "ok"), e("msg-user", "profiles are empty"), e("msg-ai", "fixed"), e("msg-user", "I am building Zohara OS, keep answers short"), e("msg-ai", "noted")];
         // two messages: not yet
         after_turn("c1", "Phone app", &es[..4]);
-        assert!(!RUNNING.load(Ordering::SeqCst));
+        assert!(!is_running());
         // the third: the agent runs
         after_turn("c1", "Phone app", &es);
         for _ in 0..100 {
-            if !RUNNING.load(Ordering::SeqCst) {
+            if !is_running() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -382,7 +422,7 @@ mod tests {
         after_turn("real1", "Phone app testing", &es);
         for _ in 0..240 {
             std::thread::sleep(std::time::Duration::from_millis(500));
-            if !RUNNING.load(Ordering::SeqCst) {
+            if !is_running() {
                 break;
             }
         }

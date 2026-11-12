@@ -12,6 +12,10 @@ use std::sync::{Arc, Mutex};
 
 /// Where `claude` is: `ZOAI_CLAUDE_BIN`, the PATH, or `~/.local/bin`.
 pub fn binary() -> Option<PathBuf> {
+    // Claude Code is the owner's subscription and a program on the server: never for a restricted account
+    if crate::tenant::is_restricted() {
+        return None;
+    }
     if let Some(p) = std::env::var_os("ZOAI_CLAUDE_BIN") {
         return Some(PathBuf::from(p));
     }
@@ -92,6 +96,9 @@ pub fn run(model: &str, effort: Option<&str>, session: &mut Option<String>, prom
 /// `run`, with a permission mode for this question only (None: the saved mode, as the tools server reads it).
 #[allow(clippy::too_many_arguments)]
 pub fn run_in_mode(mode: Option<crate::policy::Mode>, model: &str, effort: Option<&str>, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+    if crate::tenant::is_restricted() {
+        return Err("Claude Code is not available to this account.".into());
+    }
     let had_session = session.is_some();
     let mut got_event = false;
     let r = run_once(mode, model, effort, session, prompt, system_extra, cancel, &mut |e| {
@@ -114,6 +121,10 @@ fn run_once(mode: Option<crate::policy::Mode>, model: &str, effort: Option<&str>
     let system = format!("{system}\n\n{}", super::agent::VISION_YES);
     let bin = binary().ok_or("Claude Code is not installed. Install it (npm install -g @anthropic-ai/claude-code), then sign in with: claude auth login (on a server, set CLAUDE_CODE_OAUTH_TOKEN instead: run `claude setup-token` on your own computer)")?;
     let mut env = json!({ "ZO_MCP_EXTERNAL": "1" });
+    // the tools program Claude Code starts works for the same tenant as this request
+    if let Some(t) = crate::tenant::current() {
+        env["ZO_TENANT_ID"] = json!(t.id);
+    }
     if let Some(m) = mode {
         env["ZO_MCP_MODE"] = json!(m.name());
     }
@@ -141,7 +152,7 @@ fn run_once(mode: Option<crate::policy::Mode>, model: &str, effort: Option<&str>
     let finished = Arc::new(AtomicBool::new(false));
     {
         let (child, cancel, finished) = (child.clone(), cancel.clone(), finished.clone());
-        std::thread::spawn(move || {
+        crate::tenant::spawn(move || {
             while !finished.load(Ordering::Relaxed) {
                 if cancel.load(Ordering::Relaxed) {
                     if let Ok(mut c) = child.lock() {
@@ -197,7 +208,7 @@ pub fn complete(model: &str, system: &str, prompt: &str, cancel: &Arc<AtomicBool
     let finished = Arc::new(AtomicBool::new(false));
     {
         let (child, cancel, finished) = (child.clone(), cancel.clone(), finished.clone());
-        std::thread::spawn(move || {
+        crate::tenant::spawn(move || {
             while !finished.load(Ordering::Relaxed) {
                 if cancel.load(Ordering::Relaxed) {
                     if let Ok(mut c) = child.lock() {

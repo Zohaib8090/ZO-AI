@@ -124,6 +124,9 @@ fn tomb_edit(f: impl FnOnce(&mut Times)) {
     let _ = std::fs::create_dir_all(p.parent().unwrap_or(&p));
     let tmp = p.with_extension("json.tmp");
     if let Ok(s) = serde_json::to_string(&t) {
+        if !crate::tenant::fits(&p, s.len()) {
+            return;
+        }
         if std::fs::write(&tmp, s).is_ok() {
             let _ = std::fs::rename(&tmp, &p);
         }
@@ -611,6 +614,10 @@ pub fn sync_now() -> Result<(usize, usize, usize), String> {
 
 /// Starts the background loop (once): every 30 seconds, when the sync is switched on.
 pub fn start() {
+    // the desktop's own sync client: a multi-tenant server has one Sync manager per tenant instead, and no default folders
+    if crate::tenant::multi_tenant() {
+        return;
+    }
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         std::thread::spawn(|| {

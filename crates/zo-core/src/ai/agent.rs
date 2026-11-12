@@ -4,7 +4,7 @@
 use super::providers::{self, Protocol, Provider};
 use std::io::BufRead;
 use super::wire::{self, Reply, ToolResult, Turn, Usage};
-use super::{keys, Selection};
+use super::Selection;
 use crate::approval::Approver;
 use crate::policy::Mode;
 use crate::{mcp, mcp_client};
@@ -13,6 +13,37 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 const MAX_STEPS: usize = 15;
+
+thread_local! {
+    /// When the answer that is being made on this thread must be finished (restricted tenants only).
+    static DEADLINE: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// What ZO-AI is told about itself: the full text, or for a restricted tenant the short one for the web.
+pub fn system_prompt() -> &'static str {
+    if crate::tenant::is_restricted() {
+        RESTRICTED_PROMPT
+    } else {
+        SYSTEM_PROMPT
+    }
+}
+
+pub const RESTRICTED_PROMPT: &str = "You are ZO-AI: the AI assistant of Zohara OS, here running on the web. \
+You are an AI model; whatever model is behind you (the person brings their own API key), here you are ZO-AI.\n\
+\n\
+WHAT YOU CAN DO\n\
+You run on a server and have no access to the person's computer: you cannot read or change their files, run commands, take screenshots or control their system. If they ask for that, say that the web version cannot do it and that the ZO-AI desktop app on their own computer can (it keeps their chats in sync). \
+You can search the web with zohara_web_search, read a public web page with zohara_web_fetch, and keep a long-term memory of the person: the notes you are given at the start are from earlier chats. \
+When they ask you to remember or forget something, use zohara_memory_save and zohara_memory_forget; to look for something from before, use zohara_memory_search.\n\
+\n\
+THE WEB\n\
+For anything that may have changed or that you are not sure of (news, versions, prices, documentation, \"what is ...\"), search first, then read the best result, and say where the answer came from.\n\
+\n\
+HOW TO WORK\n\
+Report what really happened: if a tool failed, say so and say why. Do not invent results or tool names, and do not claim to have done something you have no tool for. \
+Never save passwords, keys or other secrets to memory, and never print secrets you come across. \
+If a request is unclear, ask one short question instead of guessing. \
+Answer in the language the person writes in, in plain, short sentences.";
 
 pub const SYSTEM_PROMPT: &str = "You are ZO-AI: the AI assistant and agent built into Zohara OS (Arch Linux with KDE Plasma, on Wayland). \
 You are an AI model working as an agent on this computer, for the person who is signed in. You are not a person, and you are not a website: you live on this machine and can act on it. \
@@ -81,11 +112,19 @@ impl Config<'static> {
         if sel.model.is_empty() {
             return Err("No model is chosen yet.".into());
         }
+        let restricted = crate::tenant::is_restricted();
+        if restricted {
+            check_restricted_provider(provider, &sel.base_url_for(provider))?;
+        }
         let key = super::profiles::get_key(sel, provider.id);
         if key.is_none() && !provider.local {
             return Err(format!("There is no API key for {} yet. Add one in the model settings.", provider.name));
         }
         let vision = sel.vision.unwrap_or_else(|| providers::can_see(provider, &sel.model));
+        if restricted {
+            // no pictures from files on a server, and nothing about screenshots
+            return Ok(Config { provider, base_url: sel.base_url_for(provider), model: sel.model.clone(), key, system: system.to_string(), vision: false });
+        }
         let note = if vision {
             VISION_YES
         } else {
@@ -106,7 +145,40 @@ pub enum Event {
     Usage(Usage),
 }
 
+/// What a restricted tenant may reach: no Claude Code, and only a model server with a public https address.
+fn check_restricted_provider(p: &Provider, base_url: &str) -> Result<(), String> {
+    if p.protocol == Protocol::ClaudeCode {
+        return Err("Claude Code is not available to this account.".into());
+    }
+    #[cfg(test)]
+    if local_allowed() {
+        return Ok(());
+    }
+    crate::tools::web::public_https_url(base_url)
+}
+
+/// Tests only: lets some restricted tenants (by id) talk to a fake model server on this computer.
+#[cfg(test)]
+pub(crate) static ALLOW_LOCAL_TENANTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+pub(crate) fn test_allow_local(id: &str) {
+    ALLOW_LOCAL_TENANTS.lock().unwrap_or_else(|e| e.into_inner()).push(id.to_string());
+}
+
+#[cfg(test)]
+fn local_allowed() -> bool {
+    crate::tenant::current().is_some_and(|t| ALLOW_LOCAL_TENANTS.lock().unwrap_or_else(|e| e.into_inner()).contains(&t.id))
+}
+
 fn agent() -> ureq::Agent {
+    if crate::tenant::is_restricted() {
+        #[cfg(test)]
+        if local_allowed() {
+            return ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(crate::tenant::max_answer()).redirects(0).build();
+        }
+        return crate::tools::web::public_agent(Duration::from_secs(10), crate::tenant::max_answer());
+    }
     ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(Duration::from_secs(180)).build()
 }
 
@@ -150,12 +222,15 @@ fn stream_request(req: wire::Request, protocol: Protocol, tx: &std::sync::mpsc::
 }
 
 fn ask(cfg: &Config, turns: &[Turn], specs: &[wire::ToolSpec], cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<Reply, String> {
+    if crate::tenant::is_restricted() {
+        check_restricted_provider(cfg.provider, &cfg.base_url)?;
+    }
     let mut req = wire::build(cfg.provider, &cfg.base_url, cfg.key.as_deref(), &cfg.model, &cfg.system, turns, specs);
     let protocol = cfg.provider.protocol;
     wire::make_streaming(&mut req, protocol);
     // the request runs on its own thread so Stop works while the model is still thinking
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+    crate::tenant::spawn(move || {
         let out = stream_request(req, protocol, &tx);
         let _ = tx.send(Chunk::Done(out));
     });
@@ -167,10 +242,17 @@ fn ask(cfg: &Config, turns: &[Turn], specs: &[wire::ToolSpec], cancel: &AtomicBo
                 if cancel.load(Ordering::Relaxed) {
                     return Err(STOPPED.into());
                 }
+                if DEADLINE.with(|d| d.get()).is_some_and(|t| std::time::Instant::now() > t) {
+                    return Err(too_slow());
+                }
             }
             Err(_) => return Err("The request ended without an answer.".into()),
         }
     }
+}
+
+fn too_slow() -> String {
+    format!("The answer took longer than {} seconds, so it was stopped.", crate::tenant::max_answer().as_secs())
 }
 
 /// Run one user message to the end. `history` gets every step appended, so it can be saved and continued.
@@ -183,11 +265,30 @@ pub fn complete(cfg: &Config, system: &str, prompt: &str, cancel: &AtomicBool) -
 }
 
 pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approver: &dyn Approver, cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+    let restricted = crate::tenant::is_restricted();
+    if restricted {
+        if user.chars().count() > crate::tenant::MAX_MESSAGE_CHARS {
+            return Err(format!("That message is too long (at most {} characters).", crate::tenant::MAX_MESSAGE_CHARS));
+        }
+        check_restricted_provider(cfg.provider, &cfg.base_url)?;
+        crate::tenant::check_room()?;
+    }
+    let max_steps = if restricted { crate::tenant::MAX_STEPS } else { MAX_STEPS };
+    let _deadline = restricted.then(|| DeadlineGuard::set(std::time::Instant::now() + crate::tenant::max_answer()));
+    let restricted_cfg;
+    let cfg = if restricted && cfg.system.contains(SYSTEM_PROMPT) {
+        // whoever built the settings, a restricted account is never told it has a computer to control
+        restricted_cfg = Config { provider: cfg.provider, base_url: cfg.base_url.clone(), model: cfg.model.clone(), key: cfg.key.clone(), system: cfg.system.replacen(SYSTEM_PROMPT, RESTRICTED_PROMPT, 1), vision: false };
+        &restricted_cfg
+    } else {
+        cfg
+    };
     // pictures named in the message (a path the person added with "Add a file", say) go to a model that can see
-    let pics: Vec<wire::ImageRef> = if cfg.vision { user.split_whitespace().map(|w| w.trim_matches(|c| "\"'`()[]{}<>,;:!?".contains(c))).filter_map(wire::ImageRef::from_path).collect() } else { Vec::new() };
+    let pics: Vec<wire::ImageRef> = if cfg.vision && !restricted { user.split_whitespace().map(|w| w.trim_matches(|c| "\"'`()[]{}<>,;:!?".contains(c))).filter_map(wire::ImageRef::from_path).collect() } else { Vec::new() };
     history.push(if pics.is_empty() { Turn::User(user.to_string()) } else { Turn::UserImages(user.to_string(), pics) });
     // ZO-AI's tools, and those of the MCP servers added in Settings (started for this turn only)
-    let mut external = mcp_client::External::start();
+    // a restricted account has no MCP servers: they are programs on the server
+    let mut external = if restricted { mcp_client::External::start_with(&[]) } else { mcp_client::External::start() };
     let mut specs = wire::builtin_specs();
     // a sub-agent cannot start sub-agents
     if DEPTH.with(|d| d.get()) > 0 {
@@ -225,9 +326,12 @@ pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approv
             Err(_) => {} // too short to summarize, or the summary could not be made: carry on and let the provider decide
         }
     }
-    for _ in 0..MAX_STEPS {
+    for _ in 0..max_steps {
         if cancel.load(Ordering::Relaxed) {
             return Err(STOPPED.into());
+        }
+        if DEADLINE.with(|d| d.get()).is_some_and(|t| std::time::Instant::now() > t) {
+            return Err(too_slow());
         }
         let reply = match ask(cfg, history, &specs, cancel, &mut *on_event) {
             // a model that takes no pictures answers with an error: drop the pictures from the conversation and ask again once
@@ -254,7 +358,9 @@ pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approv
                 return Err(STOPPED.into());
             }
             on_event(Event::ToolStart { name: call.name.clone(), summary: mcp::summarize(&call.name, &call.args) });
-            let outcome = if call.name == "zohara_ai_subagent" && crate::term::enabled() {
+            let outcome = if restricted && !crate::tools::allowed_for_restricted(&call.name) {
+                Err(crate::tools::refusal(&call.name))
+            } else if call.name == "zohara_ai_subagent" && crate::term::enabled() {
                 subagent(cfg, &call.args, mode, approver, cancel)
             } else if external.owns(&call.name) { external.execute(&call.name, &call.args, mode, approver) } else { mcp::execute(&call.name, &call.args, mode, approver) };
             let (content, is_error) = match outcome {
@@ -279,7 +385,21 @@ pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approv
         }
         history.push(Turn::Results(results));
     }
-    Err(format!("Stopped after {MAX_STEPS} steps without a final answer."))
+    Err(format!("Stopped after {max_steps} steps without a final answer."))
+}
+
+struct DeadlineGuard(Option<std::time::Instant>);
+
+impl DeadlineGuard {
+    fn set(t: std::time::Instant) -> DeadlineGuard {
+        DeadlineGuard(DEADLINE.with(|d| d.replace(Some(t))))
+    }
+}
+
+impl Drop for DeadlineGuard {
+    fn drop(&mut self) {
+        DEADLINE.with(|d| d.set(self.0));
+    }
 }
 
 thread_local! {
@@ -392,6 +512,9 @@ fn looks_like_picture_error(e: &str) -> bool {
 
 /// The models a provider offers right now (its own list), or the built-in suggestions if it cannot be asked.
 pub fn list_models(p: &Provider, base_url: &str, key: Option<&str>) -> Result<Vec<String>, String> {
+    if crate::tenant::is_restricted() {
+        check_restricted_provider(p, base_url)?;
+    }
     if p.protocol == Protocol::ClaudeCode {
         // Claude Code has no list of its own: with an Anthropic key the real list is read (and kept), else its aliases are offered
         let sel = Selection::load();
@@ -421,6 +544,9 @@ pub fn list_models(p: &Provider, base_url: &str, key: Option<&str>) -> Result<Ve
 
 /// Which local model servers are answering on this computer right now.
 pub fn detect_local() -> Vec<&'static Provider> {
+    if crate::tenant::is_restricted() {
+        return Vec::new(); // a server must not look around its own network
+    }
     providers::all().iter().filter(|p| p.local && p.protocol != Protocol::ClaudeCode).filter(|p| {
         ureq::AgentBuilder::new().timeout(Duration::from_millis(400)).build().get(&format!("{}/models", p.base_url)).call().is_ok()
     }).collect()

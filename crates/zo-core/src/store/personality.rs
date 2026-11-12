@@ -57,6 +57,9 @@ fn change<R>(f: impl FnOnce(&mut Store) -> R) -> R {
     let _ = std::fs::create_dir_all(p.parent().unwrap_or(&p));
     let tmp = p.with_extension("json.tmp");
     if let Ok(t) = serde_json::to_string_pretty(&s) {
+        if !crate::tenant::fits(&p, t.len()) {
+            return r;
+        }
         if std::fs::write(&tmp, t).is_ok() {
             let _ = std::fs::rename(&tmp, &p);
         }

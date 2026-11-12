@@ -1,11 +1,85 @@
 //! API keys live in the system keyring (KDE Wallet / any Secret Service) through `secret-tool`, never in a plain file.
 //! `ZOAI_KEY_<PROVIDER>` in the environment wins, for scripts and tests.
+//!
+//! A tenant (see `tenant`) has no keyring and no environment keys: its keys are in `<config>/keys.enc`, encrypted with AES-256-GCM
+//! (key = sha256("zo-keys" || ZO_SERVER_SECRET || tenant id); the file is a 12 byte nonce followed by the ciphertext). There is no
+//! shared key for everyone: each person brings their own.
 
+use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
+use aes_gcm::{Aes256Gcm, Nonce};
+use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+/// The name of a tenant's key file inside its config folder.
+pub const ENC_FILE: &str = "keys.enc";
+
 fn env_name(id: &str) -> String {
     format!("ZOAI_KEY_{}", id.to_uppercase().replace('-', "_"))
+}
+
+type KeyMap = serde_json::Map<String, serde_json::Value>;
+
+fn cipher(secret: &str, tenant_id: &str) -> Aes256Gcm {
+    let mut h = Sha256::new();
+    h.update(b"zo-keys");
+    h.update(secret.as_bytes());
+    h.update(tenant_id.as_bytes());
+    Aes256Gcm::new_from_slice(&h.finalize()).expect("32 bytes")
+}
+
+/// The bytes of a key file: nonce, then the encrypted JSON of the keys.
+pub fn encrypt_map(secret: &str, tenant_id: &str, m: &KeyMap) -> Result<Vec<u8>, String> {
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let ct = cipher(secret, tenant_id).encrypt(&nonce, serde_json::Value::Object(m.clone()).to_string().as_bytes()).map_err(|_| "The keys could not be encrypted.".to_string())?;
+    let mut out = nonce.to_vec();
+    out.extend(ct);
+    Ok(out)
+}
+
+/// Opens a key file. Fails for another secret, another tenant or a damaged file.
+pub fn decrypt_map(secret: &str, tenant_id: &str, raw: &[u8]) -> Result<KeyMap, String> {
+    if raw.len() < 12 + 16 {
+        return Err("The key file is damaged.".into());
+    }
+    let plain = cipher(secret, tenant_id).decrypt(Nonce::from_slice(&raw[..12]), &raw[12..]).map_err(|_| "The saved keys cannot be opened (wrong server secret or another account).".to_string())?;
+    serde_json::from_slice(&plain).map_err(|_| "The key file is damaged.".to_string())
+}
+
+fn secret() -> Result<String, String> {
+    std::env::var("ZO_SERVER_SECRET").ok().filter(|s| !s.is_empty()).ok_or_else(|| "The server has no secret set, so keys cannot be stored safely.".to_string())
+}
+
+/// The file and owner of the current tenant's keys; `Some(None)` is a multi-tenant server without a tenant: nothing is readable.
+fn tenant_keys() -> Option<Option<(std::path::PathBuf, String)>> {
+    match crate::tenant::current() {
+        Some(t) => Some(Some((t.config.join(ENC_FILE), t.id))),
+        None if crate::tenant::multi_tenant() => Some(None),
+        None => None,
+    }
+}
+
+fn enc_load(p: &std::path::Path, id: &str) -> Result<KeyMap, String> {
+    match std::fs::read(p) {
+        Ok(raw) => decrypt_map(&secret()?, id, &raw),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(KeyMap::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn enc_save(p: &std::path::Path, id: &str, m: &KeyMap) -> Result<(), String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let bytes = encrypt_map(&secret()?, id, m)?;
+    if !crate::tenant::fits(p, bytes.len()) {
+        return Err(crate::tenant::FULL_MSG.into());
+    }
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let tmp = p.with_extension("enc.tmp");
+    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).map_err(|e| e.to_string())?;
+    f.write_all(&bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, p).map_err(|e| e.to_string())
 }
 
 /// On a server there is no keyring: with `ZO_AI_KEYS_FILE` set, keys are kept in that file instead (the server keeps it private
@@ -28,6 +102,9 @@ fn file_save(p: &std::path::Path, m: &serde_json::Map<String, serde_json::Value>
 }
 
 pub fn available() -> bool {
+    if let Some(t) = tenant_keys() {
+        return t.is_some() && secret().is_ok();
+    }
     if file().is_some() {
         return true;
     }
@@ -35,6 +112,11 @@ pub fn available() -> bool {
 }
 
 pub fn get(id: &str) -> Option<String> {
+    // a tenant's keys are only its own: no environment key, no shared file, no keyring
+    if let Some(t) = tenant_keys() {
+        let (p, tid) = t?;
+        return enc_load(&p, &tid).ok()?.get(id).and_then(|v| v.as_str()).filter(|k| !k.is_empty()).map(str::to_string);
+    }
     if let Ok(k) = std::env::var(env_name(id)) {
         if !k.trim().is_empty() {
             return Some(k.trim().to_string());
@@ -49,6 +131,12 @@ pub fn get(id: &str) -> Option<String> {
 }
 
 pub fn set(id: &str, key: &str) -> Result<(), String> {
+    if let Some(t) = tenant_keys() {
+        let (p, tid) = t.ok_or("No account is signed in.")?;
+        let mut m = enc_load(&p, &tid)?; // an unreadable file is never overwritten
+        m.insert(id.to_string(), serde_json::Value::String(key.trim().to_string()));
+        return enc_save(&p, &tid, &m);
+    }
     if let Some(p) = file() {
         let mut m = file_load(&p);
         m.insert(id.to_string(), serde_json::Value::String(key.trim().to_string()));
@@ -72,6 +160,15 @@ pub fn set(id: &str, key: &str) -> Result<(), String> {
 }
 
 pub fn clear(id: &str) {
+    if let Some(t) = tenant_keys() {
+        if let Some((p, tid)) = t {
+            if let Ok(mut m) = enc_load(&p, &tid) {
+                m.remove(id);
+                let _ = enc_save(&p, &tid, &m);
+            }
+        }
+        return;
+    }
     if let Some(p) = file() {
         let mut m = file_load(&p);
         m.remove(id);

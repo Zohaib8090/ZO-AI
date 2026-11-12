@@ -97,6 +97,9 @@ fn save(s: &Store) {
     let _ = std::fs::create_dir_all(p.parent().unwrap_or(&p));
     let tmp = p.with_extension("json.tmp");
     if let Ok(text) = serde_json::to_string(s) {
+        if !crate::tenant::fits(&p, text.len()) {
+            return;
+        }
         if std::fs::write(&tmp, text).is_ok() {
             let _ = std::fs::rename(&tmp, &p);
         }

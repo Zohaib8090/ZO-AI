@@ -48,7 +48,7 @@ fn drain(mut r: impl Read + Send + 'static) -> thread::JoinHandle<String> {
 }
 
 /// Variables that hold the server's own secrets. No program the AI starts gets them.
-const SERVER_ENV: &[&str] = &["FIREBASE_SERVICE_ACCOUNT", "ZO_SERVER_SECRET", "ZO_ACCESS_TOKEN"];
+const SERVER_ENV: &[&str] = &["FIREBASE_SERVICE_ACCOUNT", "ZO_SERVER_SECRET", "ZO_TENANT_ROOT"];
 
 /// Takes every secret out of what a child program inherits: the server's variables, the Claude Code login token
 /// and the provider keys (`ZOAI_KEY_*`).
@@ -113,10 +113,10 @@ mod tests {
     #[test]
     fn programs_do_not_get_the_servers_secrets() {
         let mut c = Command::new("sh");
-        c.args(["-c", "echo \"[$FIREBASE_SERVICE_ACCOUNT|$ZO_SERVER_SECRET|$ZO_ACCESS_TOKEN|$CLAUDE_CODE_OAUTH_TOKEN|$HOME_OK]\""])
+        c.args(["-c", "echo \"[$FIREBASE_SERVICE_ACCOUNT|$ZO_SERVER_SECRET|$ZO_TENANT_ROOT|$CLAUDE_CODE_OAUTH_TOKEN|$HOME_OK]\""])
             .env("FIREBASE_SERVICE_ACCOUNT", "a")
             .env("ZO_SERVER_SECRET", "b")
-            .env("ZO_ACCESS_TOKEN", "c")
+            .env("ZO_TENANT_ROOT", "c")
             .env("CLAUDE_CODE_OAUTH_TOKEN", "d")
             .env("HOME_OK", "e");
         assert_eq!(run(&mut c, Duration::from_secs(5)).unwrap().text(), "[||||e]");

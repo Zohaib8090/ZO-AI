@@ -56,10 +56,7 @@ const KEEP: usize = 100;
 static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn path() -> PathBuf {
-    let base = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into())).join(".local/share")
-    });
-    base.join("zo-ai").join("chats.json")
+    crate::audit::data_dir().join("chats.json")
 }
 
 pub fn now_millis() -> u64 {
@@ -80,6 +77,9 @@ fn write(all: &[Chat]) {
     }
     let tmp = p.with_extension("json.tmp");
     if let Ok(s) = serde_json::to_string(all) {
+        if !crate::tenant::fits(&p, s.len()) {
+            return; // a restricted tenant's storage is full
+        }
         if std::fs::write(&tmp, s).is_ok() {
             let _ = std::fs::rename(&tmp, &p);
         }

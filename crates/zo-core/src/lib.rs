@@ -12,6 +12,7 @@ pub mod policy;
 pub mod service;
 pub mod store;
 pub mod sync;
+pub mod tenant;
 pub mod term;
 pub mod uibridge;
 pub mod voice;

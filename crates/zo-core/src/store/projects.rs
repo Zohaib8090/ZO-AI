@@ -94,13 +94,7 @@ pub struct Store {
 
 impl Store {
     pub fn path() -> PathBuf {
-        let base = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
-                PathBuf::from(home).join(".local/share")
-            });
-        base.join("zo-ai").join("projects.json")
+        crate::audit::data_dir().join("projects.json")
     }
 
     pub fn load() -> Self {

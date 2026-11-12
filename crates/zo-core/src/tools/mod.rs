@@ -9,7 +9,7 @@ mod fs;
 pub mod ssh;
 mod system;
 mod terminals;
-mod web;
+pub(crate) mod web;
 
 pub struct ToolDef {
     pub name: &'static str,
@@ -69,8 +69,22 @@ pub fn app_definitions() -> &'static [ToolDef] {
     ]
 }
 
+/// The only tools a restricted account has: the web and its own memory.
+pub const RESTRICTED_TOOLS: [&str; 5] = ["zohara_web_search", "zohara_web_fetch", "zohara_memory_search", "zohara_memory_save", "zohara_memory_forget"];
+
+pub fn allowed_for_restricted(name: &str) -> bool {
+    RESTRICTED_TOOLS.contains(&name)
+}
+
+pub fn refusal(name: &str) -> String {
+    format!("{name} is not available to this account: the web version has no access to a computer. Only web search, reading web pages and the memory can be used.")
+}
+
 /// The tools of this process: the ones every client gets, plus the app's own when running inside the app.
 pub fn active() -> Vec<&'static ToolDef> {
+    if crate::tenant::is_restricted() {
+        return definitions().iter().filter(|d| allowed_for_restricted(d.name)).collect();
+    }
     let mut v: Vec<&'static ToolDef> = definitions().iter().collect();
     if crate::term::enabled() {
         // terminals work without a window; the browser needs the window that shows it
@@ -184,6 +198,10 @@ pub(crate) fn expand(p: &str) -> std::path::PathBuf {
 pub(crate) fn guard_read(p: &std::path::Path) -> Result<(), String> {
     let canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let mut blocked = vec![crate::audit::config_dir()];
+    // on a multi-tenant server nobody's files are open to the tools of somebody else
+    if let Some(root) = std::env::var_os("ZO_TENANT_ROOT").filter(|r| !r.is_empty()) {
+        blocked.push(root.into());
+    }
     if let Some(k) = std::env::var_os("ZO_AI_KEYS_FILE").filter(|k| !k.is_empty()) {
         blocked.push(k.into());
     }
@@ -206,6 +224,11 @@ pub(crate) fn guard_read(p: &std::path::Path) -> Result<(), String> {
 
 /// Run a tool. The caller has already decided it is allowed (see `policy`).
 pub fn call(name: &str, a: &Value) -> Result<String, String> {
+    // fail closed: for a restricted account (or code with no account on a multi-tenant server) every other name is refused,
+    // known or not
+    if crate::tenant::is_restricted() && !allowed_for_restricted(name) {
+        return Err(refusal(name));
+    }
     let result = call_inner(name, a);
     // what it made is kept under Artifacts
     if result.is_ok() {

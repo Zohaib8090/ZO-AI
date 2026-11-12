@@ -1858,9 +1858,11 @@ dependencies = [
 name = "zo-core"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "libc",
  "serde",
  "serde_json",
+ "sha2",
  "ureq",
  "vt100",
 ]

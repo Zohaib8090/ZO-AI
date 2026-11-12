@@ -53,6 +53,35 @@ fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(8)).timeout(Duration::from_secs(20)).user_agent(UA).resolver(PublicOnly).build()
 }
 
+/// An HTTP client that only connects to public addresses (the address that was checked is the one connected to) and follows no
+/// redirect: for a restricted tenant's calls to a model provider.
+pub(crate) fn public_agent(connect: Duration, total: Duration) -> ureq::Agent {
+    ureq::AgentBuilder::new().timeout_connect(connect).timeout(total).resolver(PublicOnly).redirects(0).build()
+}
+
+/// The address of a model server that a restricted tenant may use: https, a public host name or address, no user name or other
+/// tricks in front of the host, and no spelling of a number that the system would turn into a local address.
+pub(crate) fn public_https_url(url: &str) -> Result<(), String> {
+    const MSG: &str = "A restricted account can only use a model server with a public https address.";
+    let u = url.trim();
+    if u.len() < 9 || !u[..8].eq_ignore_ascii_case("https://") || u.chars().any(|c| c.is_control() || c == ' ' || c == '\\') {
+        return Err(MSG.into());
+    }
+    let authority = u[8..].split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() || authority.contains('@') {
+        return Err(MSG.into());
+    }
+    host_is_public(&format!("https://{authority}")).map_err(|_| MSG.to_string())?;
+    let host = authority.rsplit_once(':').filter(|(_, p)| p.chars().all(|c| c.is_ascii_digit())).map(|(h, _)| h).unwrap_or(authority).trim_matches(['[', ']']).to_lowercase();
+    if !host.contains(':') && host.parse::<std::net::IpAddr>().is_err() {
+        let last = host.trim_end_matches('.').rsplit('.').next().unwrap_or("");
+        if last.is_empty() || last.bytes().all(|b| b.is_ascii_digit()) || last.starts_with("0x") {
+            return Err(MSG.into());
+        }
+    }
+    Ok(())
+}
+
 pub fn entities(s: &str) -> String {
     s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&#x27;", "'").replace("&apos;", "'")
 }

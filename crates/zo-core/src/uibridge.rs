@@ -14,6 +14,9 @@ pub fn register(h: impl Fn(&str, &Value) -> Result<String, String> + Send + Sync
 }
 
 pub fn call(name: &str, args: &Value) -> Result<String, String> {
+    if crate::tenant::is_restricted() {
+        return Err("This needs the ZO-AI window.".into());
+    }
     match HANDLER.get() {
         Some(h) => h(name, args),
         None => Err("This needs the ZO-AI window.".into()),
@@ -22,5 +25,8 @@ pub fn call(name: &str, args: &Value) -> Result<String, String> {
 
 /// Is a window there to do the work (the browser tools are only offered then)?
 pub fn available() -> bool {
+    if crate::tenant::is_restricted() {
+        return false;
+    }
     HANDLER.get().is_some()
 }

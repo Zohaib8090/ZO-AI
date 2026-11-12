@@ -41,6 +41,9 @@ fn write(all: &[Artifact]) {
     }
     let tmp = p.with_extension("json.tmp");
     if let Ok(s) = serde_json::to_string(all) {
+        if !crate::tenant::fits(&p, s.len()) {
+            return;
+        }
         if std::fs::write(&tmp, s).is_ok() {
             let _ = std::fs::rename(&tmp, &p);
         }

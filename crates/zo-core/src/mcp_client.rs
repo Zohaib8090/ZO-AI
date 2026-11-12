@@ -252,6 +252,9 @@ fn answer_in(body: &str, is_stream: bool, id: u64) -> Option<Value> {
 impl Connection {
     /// Starts (or connects to) the server, shakes hands and returns it ready for use.
     pub fn start(cfg: &ServerConfig) -> Result<Connection, String> {
+        if crate::tenant::is_restricted() {
+            return Err("MCP servers are not available to this account.".into());
+        }
         if is_url(&cfg.command) {
             return Self::connect_http(cfg);
         }
@@ -270,7 +273,7 @@ impl Connection {
         let stdin = child.stdin.take().ok_or("no stdin")?;
         let stdout = child.stdout.take().ok_or("no stdout")?;
         let (tx, rx) = channel();
-        std::thread::spawn(move || {
+        crate::tenant::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 if let Ok(v) = serde_json::from_str::<Value>(&line) {
                     if tx.send(v).is_err() {
@@ -520,6 +523,9 @@ pub struct External {
 
 impl External {
     pub fn start() -> External {
+        if crate::tenant::is_restricted() {
+            return External::default();
+        }
         Self::start_with(&load_servers())
     }
 
