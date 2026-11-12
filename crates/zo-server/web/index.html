@@ -240,6 +240,22 @@ select optgroup{background:var(--card);color:var(--accent);font-size:11px;font-w
 .ctx-c0{background:#5FD4D4}.ctx-c1{background:#4C9AFF}.ctx-c2{background:#F2B84B}.ctx-c3{background:#8E44AD}.ctx-free{background:var(--card2)}
 .ctx-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line4)}.ctx-row:last-child{border-bottom:none}
 .ctx-dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px;flex:none}
+/* persistent dock: side menu matching desktop dock.rs */
+.dock{width:440px;flex:none;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--bg);height:100%;z-index:15;position:relative}
+.dock.hide{display:none !important}
+.dock-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--card2);border-bottom:1px solid var(--line);min-height:46px;gap:8px}
+.dock-tabs{display:flex;align-items:center;gap:4px}
+.dock-tab{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:8px;font-size:13px;color:var(--dim);background:transparent;border:none;cursor:pointer;transition:background .15s,color .15s}
+.dock-tab:hover{color:var(--text);background:var(--card)}
+.dock-tab.active{color:var(--text);background:var(--card);font-weight:500;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.dock-tab svg{width:15px;height:15px;vertical-align:middle}
+.dock-body{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;position:relative}
+.dock-page{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.dock-page.hide{display:none !important}
+.dock-subhead{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--card);border-bottom:1px solid var(--line);font-size:12px;color:var(--dim)}
+.dock-subhead .t-target{display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text)}
+.dock-term-log{flex:1;min-height:0;background:var(--input);padding:14px;overflow-y:auto;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;line-height:1.55;color:var(--text);white-space:pre-wrap;word-break:break-all}
+.dock-ctx-scroll{flex:1;min-height:0;overflow-y:auto;padding:16px 16px}
 .term-box{background:var(--input);border:1px solid var(--line2);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;height:360px}
 .term-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--card2);border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim)}
 .term-head .t-target{display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text)}
@@ -276,6 +292,7 @@ select optgroup{background:var(--card);color:var(--accent);font-size:11px;font-w
 @media(hover:none),(max-width:860px){#app.peek:not(.pinned) .side-scrim{display:block;position:fixed;inset:0;z-index:9;background:var(--scrim);animation:scrimin .18s ease-out}}
 @keyframes scrimin{from{opacity:0}to{opacity:1}}
 @media(max-width:860px){
+  .dock{position:fixed;right:0;top:0;bottom:0;width:min(440px,94vw);z-index:35;box-shadow:-8px 0 28px rgba(0,0,0,.5)}
   .sidebar{max-width:86vw}
   .msg-user-wrap{margin-left:40px}
   .pagebox,.pagebox.narrow{padding-left:16px;padding-right:16px}.page-head{margin-top:16px;flex-wrap:wrap}.page-title{font-size:26px}
@@ -387,9 +404,41 @@ select optgroup{background:var(--card);color:var(--accent);font-size:11px;font-w
   <button class="icon-btn" id="showSide" title="Show the sidebar" data-i="sidebar"></button>
   <div class="space" id="space"></div>
   <section class="main">
-    <div class="topbar"><div class="top-title" id="title"></div></div>
+    <div class="topbar">
+      <div class="top-title" id="title"></div>
+      <button class="icon-btn" id="topTerm" title="Terminal" data-i="terminal"></button>
+      <button class="icon-btn" id="topCtx" title="Context" data-i="context"></button>
+    </div>
     <div id="view" class="page"></div>
   </section>
+  <aside class="dock hide" id="dock">
+    <div class="dock-head">
+      <div class="dock-tabs">
+        <button class="dock-tab active" id="dockTabTerm"><i data-i="terminal"></i><span>Terminal</span></button>
+        <button class="dock-tab" id="dockTabCtx"><i data-i="context"></i><span>Context</span></button>
+      </div>
+      <button class="icon-btn" id="dockClose" title="Hide this panel" aria-label="Hide this panel">
+        <svg viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="dock-body">
+      <div class="dock-page" id="dockPageTerm">
+        <div class="dock-subhead">
+          <div class="t-target"><span class="pdot" id="dockTermDot"></span><span id="dockTermTarget">Cloud session</span></div>
+          <button class="btn" id="dockTermClr" style="padding:2px 10px;font-size:11.5px">Clear</button>
+        </div>
+        <div class="dock-term-log" id="dockTermLog">ZO-AI Terminal&#10;Connected. Type a shell command below (e.g. ls, pwd, df -h, uname -a).&#10;&#10;</div>
+        <div class="term-prompt-wrap">
+          <span class="prompt-sym">$</span>
+          <input type="text" class="term-input" id="dockTermIn" placeholder="Type a shell command..." autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button class="btn primary" id="dockTermRun" style="padding:6px 14px;font-size:12px">Run</button>
+        </div>
+      </div>
+      <div class="dock-page hide" id="dockPageCtx">
+        <div class="dock-ctx-scroll" id="dockCtxScroll"></div>
+      </div>
+    </div>
+  </aside>
 </div>
 
 <script type="module">
@@ -529,8 +578,8 @@ function wireComposer() {
   $("pRun").onclick = e => runPopover(e.currentTarget);
   runPaint(); linkRefresh();
   $("pMode").onclick = e => modePopover(e.currentTarget);
-  if ($("pContext")) $("pContext").onclick = () => contextSheet();
-  if ($("pTerminal")) $("pTerminal").onclick = () => terminalSheet();
+  if ($("pContext")) $("pContext").onclick = () => dockToggle("context");
+  if ($("pTerminal")) $("pTerminal").onclick = () => dockToggle("terminal");
   refreshModel(); t.focus();
 }
 function setBusy(b) { busy = b; if ($("send")) { $("send").classList.toggle("hide", b); $("stop").classList.toggle("hide", !b); $("text").disabled = b; voiceMicPaint(); } }
@@ -577,7 +626,7 @@ async function linkRefresh() {
   links.busy = false; runPaint(); return links.ok;
 }
 /* the control by the model pill, the note under the composer and the line about where this runs */
-function runPaint() {
+function runPaint() { dockUpdateTermTarget();
   const t = $("pRunT"); if (!t) return;
   const on = onDesktop(), d = curDev(), online = devOnline(d), nm = d ? devName(d) : runName;
   t.textContent = on ? "My computer" + (nm ? " (" + nm + ")" : "") : "Cloud";
@@ -1482,8 +1531,26 @@ async function showScheduled() {
   } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
 }
 
-/* ---------- context window sheet ---------- */
-async function contextSheet() {
+/* ---------- persistent dock: Terminal & Context (matching desktop dock.rs) ---------- */
+let dockCurTab = "terminal";
+let termHistory = [], termHistIdx = -1;
+
+function dockIsOpen() {
+  const d = $("dock");
+  return d && !d.classList.contains("hide");
+}
+
+function dockUpdateTermTarget() {
+  const dsk = onDesktop();
+  const dev = curDev();
+  const targetLabel = dsk ? (dev ? devName(dev) : "Connected computer") : "Cloud session";
+  if ($("dockTermTarget")) $("dockTermTarget").textContent = targetLabel;
+  if ($("dockTermDot")) $("dockTermDot").style.background = dsk ? "#5FD4D4" : "#4C9AFF";
+}
+
+async function renderDockContext() {
+  const sc = $("dockCtxScroll");
+  if (!sc) return;
   const dsk = onDesktop();
   let mName = (dsk && dstat && dstat.model) ? dstat.model : (status && status.model ? status.model : "model");
   let chatText = "";
@@ -1504,100 +1571,162 @@ async function contextSheet() {
   const toolPct = Math.max(1, (toolTokens / windowTokens) * 100).toFixed(1);
   const freeTokens = Math.max(0, windowTokens - usedTokens);
 
-  const wrap = document.createElement("div");
-  wrap.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span style="font-size:22px;font-weight:600;color:var(--text)">${pct}% used</span><span class="pc-meta" style="font-size:13px">≈ ${usedTokens.toLocaleString()} / ${windowTokens.toLocaleString()} tokens</span></div>`
-    + `<div class="ctx-bar"><div class="ctx-seg ctx-c0" style="width:${sysPct}%" title="System prompt"></div><div class="ctx-seg ctx-c1" style="width:${histPct}%" title="Conversation history"></div><div class="ctx-seg ctx-c2" style="width:${toolPct}%" title="Tool specifications"></div><div class="ctx-seg ctx-free" style="flex:1" title="Free space"></div></div>`
-    + `<div class="card" style="padding:10px 14px;margin-bottom:14px"><div class="ctx-row"><span><span class="ctx-dot ctx-c0"></span>System instructions</span><span class="pc-meta">≈ ${sysTokens.toLocaleString()} tokens</span></div><div class="ctx-row"><span><span class="ctx-dot ctx-c1"></span>Chat history</span><span class="pc-meta">≈ ${historyTokens.toLocaleString()} tokens</span></div><div class="ctx-row"><span><span class="ctx-dot ctx-c2"></span>Tools & MCP</span><span class="pc-meta">≈ ${toolTokens.toLocaleString()} tokens</span></div><div class="ctx-row"><span><span class="ctx-dot ctx-free"></span>Free capacity</span><span class="pc-meta">≈ ${freeTokens.toLocaleString()} tokens</span></div></div>`
-    + `<div class="field-hint" style="margin-bottom:14px">Sizes are estimated from character count; provider usage may differ slightly based on tokenization.</div>`;
-
-  const compactBtn = btn("Compact session", "primary", async () => {
-    compactBtn.disabled = true; compactBtn.textContent = "Summarizing…";
-    try {
-      if (!chatId) throw new Error("No active chat to compact.");
-      await op("compact", { id: chatId });
-      toast("Session compacted."); sh.close(); if (chatId) openChat(chatId);
-    } catch (e) { toast(e.message || "Failed to compact."); compactBtn.disabled = false; compactBtn.textContent = "Compact session"; }
-  });
-  const sh = sheet("Context Window", wrap, [btn("Close", "", () => sh.close()), compactBtn]);
-}
-
-/* ---------- interactive terminal sheet ---------- */
-function terminalSheet() {
-  const dsk = onDesktop();
-  const dev = curDev();
-  const targetLabel = dsk ? (dev ? devName(dev) : "Connected computer") : "Cloud environment";
-
-  const wrap = document.createElement("div");
-  wrap.innerHTML = `
-    <div class="term-box">
-      <div class="term-head">
-        <div class="t-target">
-          <span class="pdot" style="background:${dsk ? '#5FD4D4' : '#4C9AFF'};flex:none"></span>
-          <span>${esc(targetLabel)}</span>
-        </div>
-        <button class="btn" id="termClr" style="padding:2px 10px;font-size:12px">Clear</button>
-      </div>
-      <div class="term-log" id="termLog">ZO-AI Terminal\nConnected to ${esc(targetLabel)}.\nType a shell command below (e.g. ls, pwd, df -h, uname -a).\n\n</div>
-      <div class="term-prompt-wrap">
-        <span class="prompt-sym">$</span>
-        <input type="text" class="term-input" id="termIn" placeholder="Type a shell command..." autocomplete="off" spellcheck="false">
-        <button class="btn primary" id="termRun" style="padding:6px 14px;font-size:12px">Run</button>
-      </div>
+  sc.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+      <span style="font-size:20px;font-weight:600;color:var(--text)">${pct}% used</span>
+      <span class="pc-meta" style="font-size:12.5px">≈ ${usedTokens.toLocaleString()} / ${windowTokens.toLocaleString()} tokens</span>
     </div>
-    <div class="field-hint" style="margin-top:8px">${dsk ? "Commands execute live on your connected computer." : "Commands execute live in your cloud session."}</div>
+    <div class="ctx-bar" style="margin:10px 0 14px">
+      <div class="ctx-seg ctx-c0" style="width:${sysPct}%" title="System prompt"></div>
+      <div class="ctx-seg ctx-c1" style="width:${histPct}%" title="Conversation history"></div>
+      <div class="ctx-seg ctx-c2" style="width:${toolPct}%" title="Tool specifications"></div>
+      <div class="ctx-seg ctx-free" style="flex:1" title="Free space"></div>
+    </div>
+    <div class="card" style="padding:10px 14px;margin-bottom:14px">
+      <div class="ctx-row"><span><span class="ctx-dot ctx-c0"></span>System instructions</span><span class="pc-meta">≈ ${sysTokens.toLocaleString()} tokens</span></div>
+      <div class="ctx-row"><span><span class="ctx-dot ctx-c1"></span>Chat history</span><span class="pc-meta">≈ ${historyTokens.toLocaleString()} tokens</span></div>
+      <div class="ctx-row"><span><span class="ctx-dot ctx-c2"></span>Tools & MCP</span><span class="pc-meta">≈ ${toolTokens.toLocaleString()} tokens</span></div>
+      <div class="ctx-row"><span><span class="ctx-dot ctx-free"></span>Free capacity</span><span class="pc-meta">≈ ${freeTokens.toLocaleString()} tokens</span></div>
+    </div>
+    <div class="field-hint" style="margin-bottom:16px">Sizes are estimated from character count; provider usage may differ slightly based on tokenization.</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" id="dockCtxRefresh" style="padding:6px 12px;font-size:12.5px">Refresh</button>
+      <button class="btn primary" id="dockCtxCompact" style="padding:6px 14px;font-size:12.5px">Compact session</button>
+    </div>
   `;
 
-  const sh = sheet("Terminal", wrap, [btn("Close", "", () => sh.close())], true);
-  const tLog = wrap.querySelector("#termLog");
-  const tIn = wrap.querySelector("#termIn");
-  const tRun = wrap.querySelector("#termRun");
-  wrap.querySelector("#termClr").onclick = () => { tLog.textContent = ""; };
+  const rfBtn = $("dockCtxRefresh");
+  if (rfBtn) rfBtn.onclick = () => renderDockContext();
 
-  let history = [], histIdx = -1;
-
-  const runCmd = async () => {
-    const cmd = tIn.value.trim(); if (!cmd) return;
-    history.push(cmd);
-    histIdx = history.length;
-    tIn.value = "";
-    tLog.textContent += `$ ${cmd}\n`;
-    tLog.scrollTop = tLog.scrollHeight;
-    try {
-      let r;
-      if (onDesktop()) {
-        r = await dop("terminal_run", { cmd });
-      } else {
-        r = await op("terminal_run", { cmd });
+  const cpBtn = $("dockCtxCompact");
+  if (cpBtn) {
+    cpBtn.onclick = async () => {
+      cpBtn.disabled = true; cpBtn.textContent = "Summarizing…";
+      try {
+        if (!chatId) throw new Error("No active chat to compact.");
+        await op("compact", { id: chatId });
+        toast("Session compacted.");
+        if (chatId) openChat(chatId);
+        setTimeout(renderDockContext, 300);
+      } catch (e) {
+        toast(e.message || "Failed to compact.");
+        cpBtn.disabled = false;
+        cpBtn.textContent = "Compact session";
       }
-      const out = (r && typeof r.output === "string") ? r.output : (r && r.error ? r.error : (r && r.ok === false ? r.error : JSON.stringify(r)));
-      tLog.textContent += (out ? out.trimEnd() : "") + "\n\n";
-    } catch (err) {
-      tLog.textContent += "Error: " + err.message + "\n\n";
+    };
+  }
+}
+
+function dockSelect(tab) {
+  dockCurTab = tab;
+  if ($("dockTabTerm")) $("dockTabTerm").classList.toggle("active", tab === "terminal");
+  if ($("dockTabCtx")) $("dockTabCtx").classList.toggle("active", tab === "context");
+  if ($("dockPageTerm")) $("dockPageTerm").classList.toggle("hide", tab !== "terminal");
+  if ($("dockPageCtx")) $("dockPageCtx").classList.toggle("hide", tab !== "context");
+  if (tab === "terminal") {
+    dockUpdateTermTarget();
+    setTimeout(() => $("dockTermIn")?.focus(), 50);
+  } else if (tab === "context") {
+    renderDockContext();
+  }
+}
+
+function dockOpen(tab = "terminal") {
+  const d = $("dock");
+  if (!d) return;
+  d.classList.remove("hide");
+  dockSelect(tab);
+}
+
+function dockHide() {
+  const d = $("dock");
+  if (d) d.classList.add("hide");
+}
+
+function dockToggle(tab = "terminal") {
+  if (dockIsOpen() && dockCurTab === tab) {
+    dockHide();
+  } else {
+    dockOpen(tab);
+  }
+}
+
+function contextSheet() { dockOpen("context"); }
+function terminalSheet() { dockOpen("terminal"); }
+
+async function runDockTerminalCmd() {
+  const tIn = $("dockTermIn");
+  const tLog = $("dockTermLog");
+  const tRun = $("dockTermRun");
+  if (!tIn || !tLog) return;
+  const cmd = tIn.value.trim();
+  if (!cmd) return;
+  termHistory.push(cmd);
+  termHistIdx = termHistory.length;
+  tIn.value = "";
+  tLog.textContent += `$ ${cmd}\n`;
+  tLog.scrollTop = tLog.scrollHeight;
+  if (tRun) tRun.disabled = true;
+
+  try {
+    let r;
+    if (onDesktop()) {
+      r = await dop("terminal_run", { cmd });
+    } else {
+      r = await op("terminal_run", { cmd });
     }
-    tLog.scrollTop = tLog.scrollHeight;
-  };
+    const out = (r && typeof r.output === "string") ? r.output : (r && r.error ? r.error : (r && r.ok === false ? r.error : JSON.stringify(r)));
+    tLog.textContent += (out ? out.trimEnd() : "") + "\n\n";
+  } catch (err) {
+    tLog.textContent += "Error: " + (err.message || String(err)) + "\n\n";
+  } finally {
+    if (tRun) tRun.disabled = false;
+  }
+  tLog.scrollTop = tLog.scrollHeight;
+  tIn.focus();
+}
 
-  tRun.onclick = runCmd;
-  tIn.onkeydown = (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      runCmd();
-    } else if (e.key === "ArrowUp") {
-      if (histIdx > 0) {
-        histIdx--;
-        tIn.value = history[histIdx] || "";
+function wireDock() {
+  const dClose = $("dockClose");
+  if (dClose) dClose.onclick = dockHide;
+  const tTab = $("dockTabTerm");
+  if (tTab) tTab.onclick = () => dockSelect("terminal");
+  const cTab = $("dockTabCtx");
+  if (cTab) cTab.onclick = () => dockSelect("context");
+
+  const tClr = $("dockTermClr");
+  if (tClr) tClr.onclick = () => { if ($("dockTermLog")) $("dockTermLog").textContent = ""; };
+
+  const tRun = $("dockTermRun");
+  if (tRun) tRun.onclick = runDockTerminalCmd;
+
+  const tIn = $("dockTermIn");
+  if (tIn) {
+    tIn.onkeydown = e => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        runDockTerminalCmd();
+      } else if (e.key === "ArrowUp") {
+        if (termHistIdx > 0) {
+          termHistIdx--;
+          tIn.value = termHistory[termHistIdx] || "";
+        }
+      } else if (e.key === "ArrowDown") {
+        if (termHistIdx < termHistory.length - 1) {
+          termHistIdx++;
+          tIn.value = termHistory[termHistIdx] || "";
+        } else {
+          termHistIdx = termHistory.length;
+          tIn.value = "";
+        }
       }
-    } else if (e.key === "ArrowDown") {
-      if (histIdx < history.length - 1) {
-        histIdx++;
-        tIn.value = history[histIdx] || "";
-      } else {
-        histIdx = history.length;
-        tIn.value = "";
-      }
-    }
-  };
-  setTimeout(() => tIn.focus(), 60);
+    };
+  }
+
+  const topTerm = $("topTerm");
+  if (topTerm) topTerm.onclick = () => dockToggle("terminal");
+  const topCtx = $("topCtx");
+  if (topCtx) topCtx.onclick = () => dockToggle("context");
 }
 
 /* ---------- activity & interactive terminal page ---------- */
@@ -1648,31 +1777,16 @@ async function showActivity() {
       tLog.textContent += `\n$ ${cmd}\n`;
       tLog.scrollTop = tLog.scrollHeight;
       try {
-        const dsk = onDesktop();
-        const res = await fetch("/api/send", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() },
-          body: JSON.stringify({ text: "Run this command in the shell and return its output directly:\n" + cmd, chat: chatId, ...(dsk ? { target: "desktop", device: runOn } : {}) })
-        });
-        if (!res.ok) throw new Error("Terminal error " + res.status);
-        const rd = res.body.getReader(), dec = new TextDecoder();
-        let buf = "", acc = "";
-        for (;;) {
-          const { value, done } = await rd.read(); if (done) break;
-          buf += dec.decode(value, { stream: true });
-          let i; while ((i = buf.indexOf("\n")) >= 0) {
-            const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue;
-            try {
-              const ev = JSON.parse(line);
-              if (ev.event === "delta") { acc += ev.text; }
-              else if (ev.event === "tool_done" && ev.output) { acc += "\n" + ev.output; }
-              else if (ev.event === "error") { acc += "\nError: " + (ev.message || ev.error); }
-            } catch {}
-          }
+        let r;
+        if (onDesktop()) {
+          r = await dop("terminal_run", { cmd });
+        } else {
+          r = await op("terminal_run", { cmd });
         }
-        tLog.textContent += (acc.trim() || "[Command finished]") + "\n";
+        const out = (r && typeof r.output === "string") ? r.output : (r && r.error ? r.error : (r && r.ok === false ? r.error : JSON.stringify(r)));
+        tLog.textContent += (out ? out.trimEnd() : "") + "\n";
       } catch (err) {
-        tLog.textContent += "Error: " + err.message + "\n";
+        tLog.textContent += "Error: " + (err.message || String(err)) + "\n";
       }
       tLog.scrollTop = tLog.scrollHeight;
     };
@@ -2174,6 +2288,7 @@ if (canHover) {
 addEventListener("keydown", e => { if (e.key === "Escape") sideClose(); });
 $("netin").onclick = () => NOAUTH ? location.reload() : signOut(auth);
 $("out").onclick = () => NOAUTH ? toast("No sign-in in test mode") : signOut(auth);
+wireDock();
 /* ---------- sign-in: Google, or e-mail and password (Firebase) ---------- */
 const FBERR = {
   "auth/invalid-email": "That does not look like an e-mail address.",
