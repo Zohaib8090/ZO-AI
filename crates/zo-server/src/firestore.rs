@@ -27,7 +27,8 @@ fn now() -> u64 {
 /// Document ids may not contain a slash and must not be empty.
 pub fn doc_id(s: &str) -> String {
     let id: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || "-_.".contains(c) { c } else { '_' }).take(200).collect();
-    if id.is_empty() || id.starts_with("__") { format!("x{id}") } else { id }
+    // "." and ".." are not document ids in Firestore (and would change the path)
+    if id.is_empty() || id.starts_with("__") || id.starts_with('.') { format!("x{id}") } else { id }
 }
 
 /// Cuts a text into parts of at most `max` bytes, never inside a character.
@@ -325,5 +326,14 @@ mod tests {
         assert_eq!(doc_id("a/b c"), "a_b_c");
         assert_eq!(doc_id(""), "x");
         assert_eq!(doc_id("__1"), "x__1");
+    }
+
+    #[test]
+    fn document_ids_are_never_dot_names() {
+        for bad in [".", "..", "", "__x", ".hidden"] {
+            let id = doc_id(bad);
+            assert!(id != "." && id != ".." && !id.is_empty() && !id.starts_with("__") && !id.starts_with('.'), "{bad:?} -> {id:?}");
+        }
+        assert_eq!(doc_id("c-123_abc"), "c-123_abc");
     }
 }

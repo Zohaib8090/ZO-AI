@@ -234,6 +234,8 @@ impl Sync {
         }
         let want = desired(&config, &data);
         let mut n = 0;
+        // one document that cannot be saved must not keep the others from being saved: go on, and report the first failure at the end
+        let mut first_err: Option<String> = None;
         for (key, text) in &want {
             let h = hash(text);
             let old = self.known.get(key).copied();
@@ -251,16 +253,25 @@ impl Sync {
                     // some parts may have been written: the next save (maybe a shorter one) has to remove what is left over
                     let may_take = old_parts.max(encode_parts(text).len());
                     self.known.insert(key.clone(), (old.map_or(0, |o| o.0), may_take));
-                    return Err(e);
+                    first_err.get_or_insert(e);
                 }
             }
         }
         let gone: Vec<Name> = self.known.keys().filter(|k| !want.contains_key(*k)).cloned().collect();
         for key in gone {
             let parts = self.known.get(&key).map(|o| o.1).unwrap_or(1);
-            delete_text(&*self.db, &self.col(&key.0), &key.1, parts)?;
-            self.known.remove(&key);
-            n += 1;
+            match delete_text(&*self.db, &self.col(&key.0), &key.1, parts) {
+                Ok(()) => {
+                    self.known.remove(&key);
+                    n += 1;
+                }
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                }
+            }
+        }
+        if let Some(e) = first_err {
+            return Err(e);
         }
         self.seen = print;
         Ok(n)

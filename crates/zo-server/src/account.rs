@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use zo_core::tenant::{self, Tenant};
 
 /// The names under /api/account/.
-pub const CALLS: [&str; 6] = ["whoami", "devices_list", "device_create", "device_revoke", "export", "delete"];
+pub const CALLS: [&str; 7] = ["whoami", "devices_list", "device_create", "device_revoke", "export", "delete", "accept_terms"];
 
 fn text<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(Value::as_str).unwrap_or("")
@@ -67,7 +67,21 @@ pub fn handle(app: &App, name: &str, v: &Value, who: &Who, lease: &Lease) -> (u1
                 Cred::Account { email, .. } => email.clone(),
                 _ => String::new(),
             };
-            (200, json!({"ok": true, "admin": who.admin, "restricted": !who.admin, "email": email, "tenant": id, "limits": limits(who.admin, app.tenants.per_min()), "data_bytes": used}))
+            (200, json!({"ok": true, "admin": who.admin, "restricted": !who.admin, "email": email, "tenant": id, "limits": limits(who.admin, app.tenants.per_min()), "data_bytes": used, "terms": {"version": crate::pages::TERMS_VERSION, "accepted": app.has_accepted(id).unwrap_or(false)}}))
+        }
+        "accept_terms" => {
+            if text(v, "version") != crate::pages::TERMS_VERSION {
+                return err(400, "That is not the current version of the notice and the terms. Reload the page.");
+            }
+            if let Some(db) = app.tenants.db() {
+                let rec = json!({"version": crate::pages::TERMS_VERSION, "at": now_secs()});
+                if let Err(e) = db.put_doc(&crate::devices::list_collection(id), "terms", &rec.to_string()) {
+                    eprintln!("zo-server: {e}");
+                    return err(503, "The storage is not reachable right now. Try again in a moment.");
+                }
+            }
+            app.accepted.lock().unwrap().insert(id.clone());
+            (200, json!({"ok": true, "version": crate::pages::TERMS_VERSION}))
         }
         "devices_list" => match &app.devices {
             None => (200, json!({"ok": true, "devices": []})),
@@ -111,7 +125,11 @@ pub fn handle(app: &App, name: &str, v: &Value, who: &Who, lease: &Lease) -> (u1
                 lease,
                 || app.close_streams(id),
                 || {
+                    app.accepted.lock().unwrap().remove(id);
                     if let Some(db) = app.tenants.db() {
+                        // first the marker that keeps a sign-in token that is still valid from bringing the account back
+                        let marker = |removed: bool| json!({"at": now_secs(), "login_removed": removed}).to_string();
+                        db.put_doc(crate::tenants::TOMBSTONES, id, &marker(false))?;
                         if let Some(d) = &app.devices {
                             d.purge(id)?;
                         }
@@ -122,9 +140,23 @@ pub fn handle(app: &App, name: &str, v: &Value, who: &Who, lease: &Lease) -> (u1
                         }
                         // everything of theirs is gone: now their Firebase login (best effort; the data is gone either way)
                         if !uid.is_empty() {
-                            match db.delete_login(&uid) {
+                            // twice before giving up: the person is told plainly if their sign-in record is still there
+                            let mut last = Ok(false);
+                            for n in 0..2 {
+                                last = db.delete_login(&uid);
+                                if last.is_ok() {
+                                    break;
+                                }
+                                if n == 0 {
+                                    std::thread::sleep(std::time::Duration::from_millis(500));
+                                }
+                            }
+                            match last {
                                 Ok(done) => login_removed = done,
-                                Err(e) => eprintln!("zo-server: {e}"),
+                                Err(e) => eprintln!("zo-server: ACCOUNT DELETE: the sign-in record of {id} could not be removed (the data is gone): {e}"),
+                            }
+                            if login_removed {
+                                let _ = db.put_doc(crate::tenants::TOMBSTONES, id, &marker(true));
                             }
                         }
                     }

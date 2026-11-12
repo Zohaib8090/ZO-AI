@@ -76,6 +76,39 @@ pub fn allowed_for_restricted(name: &str) -> bool {
     RESTRICTED_TOOLS.contains(&name)
 }
 
+thread_local! {
+    // what this answer has already touched (restricted accounts only): (read the notes, read the web)
+    static TOUCHED: std::cell::Cell<(bool, bool)> = const { std::cell::Cell::new((false, false)) };
+}
+
+/// A new answer starts: nothing has been read yet.
+pub fn begin_answer() {
+    TOUCHED.with(|t| t.set((false, false)));
+}
+
+/// A page the model reads can carry hidden instructions. So in one answer a restricted account's notes and the open web are kept
+/// apart: once the notes were read, nothing more goes out to the web (no address can carry them away), and once the web was read,
+/// notes cannot be erased. Each can be done in a new message.
+fn check_flow(name: &str, a: &Value) -> Result<(), String> {
+    let (notes, web) = TOUCHED.with(|t| t.get());
+    match name {
+        "zohara_web_fetch" | "zohara_web_search" => {
+            if notes {
+                return Err("In this answer your notes were already read, so the web is closed until your next message (this keeps a web page from carrying your notes away).".into());
+            }
+            let long = a.get("url").or_else(|| a.get("query")).and_then(Value::as_str).map(|u| u.chars().count()).unwrap_or(0);
+            if long > 500 {
+                return Err("That address or search is too long (at most 500 characters).".into());
+            }
+            TOUCHED.with(|t| t.set((notes, true)));
+        }
+        "zohara_memory_search" => TOUCHED.with(|t| t.set((true, web))),
+        "zohara_memory_forget" if web => return Err("In this answer a web page was read, so notes cannot be erased until your next message.".into()),
+        _ => {}
+    }
+    Ok(())
+}
+
 pub fn refusal(name: &str) -> String {
     format!("{name} is not available to this account: the web version has no access to a computer. Only web search, reading web pages and the memory can be used.")
 }
@@ -229,6 +262,9 @@ pub fn call(name: &str, a: &Value) -> Result<String, String> {
     if crate::tenant::is_restricted() && !allowed_for_restricted(name) {
         return Err(refusal(name));
     }
+    if crate::tenant::is_restricted() {
+        check_flow(name, a)?;
+    }
     let result = call_inner(name, a);
     // what it made is kept under Artifacts
     if result.is_ok() {
@@ -311,5 +347,24 @@ fn call_inner(name: &str, a: &Value) -> Result<String, String> {
             android::waydroid(&args, true)
         }
         other => Err(format!("unknown tool: {other}")),
+    }
+}
+
+#[cfg(test)]
+mod flow_tests {
+    use super::*;
+
+    #[test]
+    fn notes_and_the_web_are_kept_apart_in_one_answer() {
+        begin_answer();
+        assert!(check_flow("zohara_web_fetch", &json!({"url": "https://a.example/"})).is_ok());
+        assert!(check_flow("zohara_memory_forget", &json!({})).is_err(), "no erasing after reading the web");
+        assert!(check_flow("zohara_memory_search", &json!({})).is_ok());
+        assert!(check_flow("zohara_web_fetch", &json!({"url": "https://evil.example/?d=x"})).is_err(), "no web after reading the notes");
+        begin_answer();
+        assert!(check_flow("zohara_memory_search", &json!({})).is_ok());
+        assert!(check_flow("zohara_web_search", &json!({"query": "x"})).is_err());
+        begin_answer();
+        assert!(check_flow("zohara_web_fetch", &json!({"url": format!("https://a.example/{}", "x".repeat(600))})).is_err());
     }
 }

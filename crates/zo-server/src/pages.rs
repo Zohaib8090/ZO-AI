@@ -4,6 +4,22 @@
 pub const PRIVACY_MD: &str = include_str!("../../../docs/PRIVACY.md");
 pub const TERMS_MD: &str = include_str!("../../../docs/TERMS.md");
 
+/// The version of the privacy notice and the terms (their "Last updated" date). A person accepts a version; the server records it.
+pub const TERMS_VERSION: &str = "2026-11-12";
+
+/// What the owner fills in for the public pages (environment settings; the server does not start without them).
+#[derive(Clone, Debug, Default)]
+pub struct Legal {
+    pub contact: String,
+    pub region: String,
+    pub country: String,
+}
+
+/// The pages' text with the owner's details in place of `{{contact}}`, `{{region}}`, `{{country}}` and `{{version}}`.
+pub fn fill(md: &str, l: &Legal) -> String {
+    md.replace("{{contact}}", &l.contact).replace("{{region}}", &l.region).replace("{{country}}", &l.country).replace("{{version}}", TERMS_VERSION)
+}
+
 /// The Content-Security-Policy of the web app: its own inline script and style, Google's fonts, and what Firebase sign-in needs.
 pub const APP_CSP: &str = "default-src 'self'; \
 script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com; \
@@ -182,10 +198,15 @@ mod tests {
 
     #[test]
     fn the_real_pages_render() {
+        let legal = Legal { contact: "me@example.org".into(), region: "Frankfurt, Germany".into(), country: "Germany".into() };
         for (t, md) in [("Privacy", PRIVACY_MD), ("Terms", TERMS_MD)] {
-            let p = page(t, md);
+            let p = page(t, &fill(md, &legal));
             assert!(p.contains("<h1>") && p.len() > 2000 && !p.contains("<script"), "{t}");
+            // nothing is left to fill in: no placeholder, no template banner
+            assert!(!p.contains("{{") && !p.contains("[date]") && !p.contains("[contact") && !p.to_lowercase().contains("template"), "{t}");
+            assert!(p.contains("me@example.org") && p.contains(TERMS_VERSION));
         }
+        assert!(fill(PRIVACY_MD, &legal).contains("Frankfurt, Germany") && fill(TERMS_MD, &legal).contains("Germany"));
     }
 
     #[test]

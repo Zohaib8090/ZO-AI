@@ -28,6 +28,9 @@ fn rig(people: &[(&str, &str, &str)], admins: &str, max_users: usize, per_min: u
         streams: Mutex::new(HashMap::new()),
         next: AtomicU64::new(1),
         conns: AtomicUsize::new(0),
+        legal: Default::default(),
+        require_terms: std::sync::atomic::AtomicBool::new(false),
+        accepted: Mutex::new(Default::default()),
     });
     let server = Server::http("127.0.0.1:0").unwrap();
     let base = format!("http://{}", server.server_addr().to_ip().unwrap());
@@ -412,7 +415,7 @@ fn the_web_page_the_policy_pages_and_the_headers() {
 fn the_no_login_test_mode_uses_one_fixed_restricted_person_and_only_answers_its_own_page() {
     let root = testenv::service();
     let tenants = Arc::new(TenantMap::new(root, None, testenv::SECRET.into(), 200, 8));
-    let app = Arc::new(App { no_auth: true, noauth_admin: false, verifier: None, policy: Policy::default(), tenants, devices: None, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1), conns: AtomicUsize::new(0) });
+    let app = Arc::new(App { no_auth: true, noauth_admin: false, verifier: None, policy: Policy::default(), tenants, devices: None, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1), conns: AtomicUsize::new(0), legal: Default::default(), require_terms: std::sync::atomic::AtomicBool::new(false), accepted: Mutex::new(Default::default()) });
     let server = Server::http("127.0.0.1:0").unwrap();
     let base = format!("http://{}", server.server_addr().to_ip().unwrap());
     let a = app.clone();
@@ -450,4 +453,91 @@ fn the_no_login_test_mode_uses_one_fixed_restricted_person_and_only_answers_its_
     // no devices without a database
     let d = post("/api/account/device_create", json!({"name": "x", "scope": "sync"}), true, None);
     assert_eq!(d.status(), 400);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// the second review round
+
+#[test]
+fn the_server_remembers_who_accepted_which_version_and_refuses_everything_else_until_then() {
+    let u = uniq("terms");
+    let r = rig(&[("tok-t", &u, "t@x.test")], "", 200, 600);
+    r.app.require_terms.store(true, Ordering::SeqCst);
+    let no = call(&r, "tok-t", "/api/op", json!({"op": "chats"}));
+    assert_eq!((no.status, no.body["terms_required"].clone()), (403, json!(true)), "{:?}", no.body);
+    assert_eq!(call(&r, "tok-t", "/api/sync/manifest", json!({})).status, 403);
+    assert_eq!(call(&r, "tok-t", "/api/account/device_create", json!({"name": "x", "scope": "sync"})).status, 403, "no device token before accepting");
+    let who = call(&r, "tok-t", "/api/account/whoami", json!({}));
+    assert_eq!((who.status, who.body["terms"]["accepted"].clone()), (200, json!(false)));
+    assert_eq!(call(&r, "tok-t", "/api/account/accept_terms", json!({"version": "1999-01-01"})).status, 400);
+    assert_eq!(call(&r, "tok-t", "/api/account/accept_terms", json!({"version": pages::TERMS_VERSION})).status, 200);
+    assert_eq!(call(&r, "tok-t", "/api/op", json!({"op": "chats"})).status, 200);
+    // it is a record in the database (version and time), so another browser or a restart does not ask again, and delete removes it
+    let rec = r.db.get_doc(&format!("users/{}/meta", tenant_of(&u)), "terms").unwrap().unwrap();
+    assert!(rec.contains(pages::TERMS_VERSION) && rec.contains("\"at\""), "{rec}");
+    r.app.accepted.lock().unwrap().clear();
+    assert_eq!(call(&r, "tok-t", "/api/op", json!({"op": "chats"})).status, 200);
+}
+
+#[test]
+fn a_blocked_person_can_still_export_and_delete_but_nothing_else() {
+    let u = uniq("blk2");
+    let r = rig(&[("tok-b", &u, "blocked@x.test")], "owner@x.test", 200, 600);
+    assert_eq!(call(&r, "tok-b", "/api/op", json!({"op": "chats"})).status, 403);
+    assert_eq!(call(&r, "tok-b", "/api/account/whoami", json!({})).status, 403);
+    assert_eq!(call(&r, "tok-b", "/api/account/export", json!({})).status, 200);
+    let d = call(&r, "tok-b", "/api/account/delete", json!({"confirm": "DELETE"}));
+    assert_eq!((d.status, d.body["ok"].clone()), (200, json!(true)), "{:?}", d.body);
+}
+
+#[test]
+fn a_deleted_account_stays_deleted_after_a_restart_and_the_answer_says_whether_the_login_went() {
+    let u = uniq("tomb");
+    let r = rig(&[("tok-d", &u, "d@x.test")], "", 200, 600);
+    let t = tenant_of(&u);
+    assert_eq!(call(&r, "tok-d", "/api/op", json!({"op": "chats"})).status, 200);
+    let d = call(&r, "tok-d", "/api/account/delete", json!({"confirm": "DELETE"}));
+    assert_eq!(d.status, 200);
+    assert_eq!(d.body["login_removed"], json!(false), "the stand-in database has no logins, and the answer says so");
+    // a fresh process knows nothing in memory: the marker in the database still refuses the old token
+    let fresh = tenants::Registry::new(r.db.clone(), 200);
+    assert_eq!(fresh.ensure(&t), Err(tenants::Refusal::Gone));
+    // when the login really went, the marker only lasts as long as a token can
+    r.db.put_doc(tenants::TOMBSTONES, &t, &json!({"at": 1, "login_removed": true}).to_string()).unwrap();
+    assert_eq!(fresh.ensure(&t), Ok(()));
+    assert!(r.db.get_doc(tenants::TOMBSTONES, &t).unwrap().is_none());
+}
+
+#[test]
+fn sync_refuses_ids_the_database_cannot_hold_and_never_lets_a_chat_name_a_file_of_the_server() {
+    let u = uniq("ids");
+    let r = rig(&[("tok-i", &u, "i@x.test")], "", 200, 600);
+    for bad in ["..", ".", "a/b", "X__1", "a b", &"x".repeat(101)] {
+        let a = call(&r, "tok-i", "/api/sync/put", json!({"kind": "chats", "id": bad, "doc": chat(bad, "t")}));
+        assert_eq!(a.status, 400, "{bad:?}: {:?}", a.body);
+    }
+    // a picture path planted in a saved chat is dropped on the way in
+    let mut c = chat("c-img", "t");
+    c["history"] = json!([{"UserImages": ["look", [{"path": "/proc/self/environ", "mime": "text/plain"}]]}]);
+    assert_eq!(call(&r, "tok-i", "/api/sync/put", json!({"kind": "chats", "id": "c-img", "doc": c})).status, 200);
+    let got = call(&r, "tok-i", "/api/sync/get", json!({"kind": "chats", "id": "c-img"}));
+    assert!(!got.body.to_string().contains("environ"), "{:?}", got.body);
+}
+
+#[test]
+fn a_client_that_sends_a_body_too_slowly_is_let_go_and_model_ops_take_a_place_like_an_answer() {
+    assert!(["compact", "memory_edit", "personality_generate", "models"].iter().all(|o| op_uses_model(o)) && !op_uses_model("chats"));
+    let u = uniq("slow");
+    let r = rig(&[("tok-s", &u, "s@x.test")], "", 200, 600);
+    use std::io::{Read, Write};
+    let mut s = std::net::TcpStream::connect(r.base.trim_start_matches("http://")).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(40))).unwrap();
+    s.write_all(b"POST /api/op HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer tok-s\r\nContent-Length: 100\r\n\r\n{\"op\":").unwrap();
+    let t0 = Instant::now();
+    let mut buf = String::new();
+    let _ = s.read_to_string(&mut buf);
+    assert!(t0.elapsed() < Duration::from_secs(35), "the connection was held for {:?}", t0.elapsed());
+    assert!(buf.is_empty() || buf.contains("408") || buf.contains("400"), "{buf}");
+    // the thread and the lease came back: the person can still be served
+    assert_eq!(call(&r, "tok-s", "/api/op", json!({"op": "chats"})).status, 200);
 }

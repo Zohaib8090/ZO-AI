@@ -488,6 +488,7 @@ mod tests {
             assert!(r.contains("Remembered"), "{r}");
             assert!(crate::mcp::execute("zohara_memory_search", &json!({"query": "Lahore"}), Mode::Manual, &Deny).unwrap().contains("Lahore"));
             assert!(crate::mcp::execute("zohara_memory_forget", &json!({"what": "Lahore"}), Mode::Manual, &Deny).unwrap().contains("Forgot"));
+            crate::tools::begin_answer(); // a new answer: the notes read above no longer close the web
             assert!(crate::tools::call("zohara_web_search", &json!({"query": "  "})).unwrap_err().contains("empty"), "reaches the real tool, which refuses an empty search");
             assert!(crate::tools::call("zohara_web_fetch", &json!({"url": "http://127.0.0.1:1/"})).is_err());
             assert!(!crate::term::enabled() && !crate::uibridge::available());

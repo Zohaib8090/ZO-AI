@@ -266,6 +266,7 @@ pub fn complete(cfg: &Config, system: &str, prompt: &str, cancel: &AtomicBool) -
 
 pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approver: &dyn Approver, cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     let restricted = crate::tenant::is_restricted();
+    crate::tools::begin_answer();
     if restricted {
         if user.chars().count() > crate::tenant::MAX_MESSAGE_CHARS {
             return Err(format!("That message is too long (at most {} characters).", crate::tenant::MAX_MESSAGE_CHARS));
@@ -487,7 +488,7 @@ fn has_images(history: &[Turn]) -> bool {
 }
 
 /// Pictures become a short note in the text, so the conversation still makes sense without them.
-fn strip_images(history: &mut [Turn]) {
+pub(crate) fn strip_images(history: &mut [Turn]) {
     for t in history.iter_mut() {
         match t {
             Turn::UserImages(text, imgs) => {

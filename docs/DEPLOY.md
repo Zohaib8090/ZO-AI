@@ -23,9 +23,11 @@ Render's `PORT` is read by the server. `zo-mcp` must sit next to `zo-server` (Cl
    |---|---|---|
    | `FIREBASE_SERVICE_ACCOUNT` | the whole content of the JSON key file, as one value | yes |
    | `ZO_ADMIN_EMAILS` | your Google address (several: separated by commas). Admins get every tool; everyone else is restricted | no |
+   | `ZO_CONTACT_EMAIL` | the address people write to for access and deletion requests; shown in the privacy notice and the terms (the server does not start without it) | no |
+   | `ZO_OPERATOR_COUNTRY` | whose law the terms name (for example Germany) | no |
    | `CLAUDE_CODE_OAUTH_TOKEN` | optional, see "Claude Code" below. Leave empty if you do not use Claude Code mode | yes |
 
-   `ZO_SERVER_SECRET` is created by Render (`generateValue: true`). `ZO_MAX_USERS` (200), `ZO_MAX_RUNS` (8) and `ZO_TENANT_ROOT` are set in `render.yaml`;
+   `ZO_SERVER_SECRET` is created by Render (`generateValue: true`). `ZO_MAX_USERS` (200), `ZO_MAX_RUNS` (8), `ZO_HOSTING_REGION` and `ZO_TENANT_ROOT` are set in `render.yaml`;
    optional `ZO_BLOCKED_EMAILS` (comma list refused at sign-in) you add yourself. There is no `ZO_ACCESS_TOKEN` any more: devices use per-user device tokens (Account page).
 3. Press Apply. The first build compiles Rust inside Docker: expect roughly 5 to 15 minutes (Render's build command limit is 120 minutes,
    so that is no problem; I could not find a documented memory or image size limit for builds).
@@ -34,7 +36,7 @@ Render's `PORT` is read by the server. `zo-mcp` must sit next to `zo-server` (Cl
    `https://`). Without this the Google pop-up refuses to open.
 6. Reading the generated value: Render > the service > Environment > `ZO_SERVER_SECRET` (click the eye icon). Do not paste it into chat, a file in the repository or an issue.
    **Keep a private copy**: every user's API key in Firestore is encrypted with a key derived from it; a new secret means everybody enters their API keys again.
-   Then work through the operator checklist in `PUBLIC.md` (Firebase billing alert, Firestore rules, privacy and terms placeholders, a test with a second non-admin account).
+   Then work through the operator checklist in `PUBLIC.md` (Firebase billing alert, Firestore rules, privacy and terms details (the three settings above), a test with a second non-admin account).
 7. Verify:
    * Open `https://<address>/healthz`: it says `ok`. (The first call after sleep takes about a minute.)
    * Open `https://<address>/`, sign in with Google (your address is admin). Sign in with a second Google account: it must work and be restricted (web search, page fetch and memory only; no machines, MCP, Claude Code or Bypass). `/privacy` and `/terms` must open.

@@ -76,6 +76,8 @@ pub struct MemDb {
     pub docs: std::sync::Mutex<BTreeMap<(String, String), String>>,
     pub fail: std::sync::atomic::AtomicBool,
     pub writes: std::sync::atomic::AtomicUsize,
+    /// How many times a whole collection was listed.
+    pub reads: std::sync::atomic::AtomicUsize,
 }
 
 #[cfg(test)]
@@ -113,6 +115,7 @@ impl Db for MemDb {
     }
     fn list_docs(&self, collection: &str) -> Result<BTreeMap<String, String>, String> {
         self.check()?;
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(self.docs.lock().unwrap().iter().filter(|((c, _), _)| c == collection).map(|((_, i), t)| (i.clone(), t.clone())).collect())
     }
     fn sub_collections(&self, parent: &str) -> Result<Vec<String>, String> {

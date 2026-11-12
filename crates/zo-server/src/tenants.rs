@@ -17,10 +17,22 @@ use zo_core::tenant::Tenant;
 
 pub const RATE_PER_MIN: u32 = 60;
 pub const SENDS_PER_TENANT: usize = 2;
+/// Requests of one person being served at the same time (a request that is slow to send its body counts too).
+pub const ACTIVE_PER_TENANT: usize = 8;
+/// Desktop-sync requests (bodies up to 20 MB, parsed in memory) at the same time: per person and on the whole server.
+pub const SYNCS_PER_TENANT: usize = 2;
+pub const SYNCS_GLOBAL: usize = 6;
+/// A person who is not registered may knock this often a minute (each knock costs a Firestore read).
+pub const UNREGISTERED_PER_MIN: u32 = 10;
+/// When the registry said "full", people who are not registered are refused for this long without asking Firestore again.
+pub const FULL_MEMORY: Duration = Duration::from_secs(30);
 /// A person nobody has asked for in this long, with everything already in Firestore, is taken off the disk.
 pub const IDLE_EVICT: Duration = Duration::from_secs(30 * 60);
 /// After an account is deleted, requests for it are refused for this long (so nothing running can bring it back).
-pub const DELETE_COOLDOWN: Duration = Duration::from_secs(15 * 60);
+pub const DELETE_COOLDOWN: Duration = Duration::from_secs(2 * 3600);
+/// The record of a deleted account (collection `deleted`): kept in Firestore, so it survives a restart. A sign-in token lives about an
+/// hour, so a deleted person's old tabs are refused for `DELETE_COOLDOWN`; if their login could not be removed, for good.
+pub const TOMBSTONES: &str = "deleted";
 pub const REGISTRY: &str = "registry";
 
 /// Why a person is not served right now.
@@ -83,11 +95,17 @@ pub struct Registry {
     /// Registrations go one at a time inside this process, so the count cannot be raced past the cap here (another server process
     /// could add a few at the same moment).
     gate: Mutex<()>,
+    /// When the registry was last found full.
+    full_at: Mutex<Option<Instant>>,
 }
 
 impl Registry {
     pub fn new(db: Arc<dyn Db>, max: usize) -> Registry {
-        Registry { db, max, known: Mutex::new(HashSet::new()), gate: Mutex::new(()) }
+        Registry { db, max, known: Mutex::new(HashSet::new()), gate: Mutex::new(()), full_at: Mutex::new(None) }
+    }
+
+    pub fn is_known(&self, tenant: &str) -> bool {
+        self.known.lock().unwrap().contains(tenant)
     }
 
     /// Makes sure the person has a place, or refuses with `Full`. Someone who is registered stays served even when the server is full.
@@ -95,14 +113,30 @@ impl Registry {
         if self.known.lock().unwrap().contains(tenant) {
             return Ok(());
         }
-        let _g = self.gate.lock().unwrap_or_else(|e| e.into_inner());
         let st = |e: String| Refusal::Storage(e);
+        // one read, outside the gate: somebody who has a place is the common case, and must not wait behind the others
         if self.db.get_doc(REGISTRY, tenant).map_err(st)?.is_some() {
             self.known.lock().unwrap().insert(tenant.to_string());
             return Ok(());
         }
+        // a deleted account is not brought back by a token that was still valid (written by `delete_account`, see account.rs)
+        if let Some(t) = self.db.get_doc(TOMBSTONES, tenant).map_err(Refusal::Storage)? {
+            let v: serde_json::Value = serde_json::from_str(&t).unwrap_or_default();
+            let at = v.get("at").and_then(|a| a.as_u64()).unwrap_or(0);
+            let login_removed = v.get("login_removed").and_then(|a| a.as_bool()).unwrap_or(false);
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            if !login_removed || now.saturating_sub(at) < DELETE_COOLDOWN.as_secs() {
+                return Err(Refusal::Gone);
+            }
+            let _ = self.db.delete_doc(TOMBSTONES, tenant); // old enough: the marker goes too
+        }
+        if self.full_at.lock().unwrap().is_some_and(|t| t.elapsed() < FULL_MEMORY) {
+            return Err(Refusal::Full); // found full a moment ago: no second look at the whole registry
+        }
+        let _g = self.gate.lock().unwrap_or_else(|e| e.into_inner());
         let count = self.db.list_docs(REGISTRY).map_err(Refusal::Storage)?.len();
         if !allow_new(count, self.max) {
+            *self.full_at.lock().unwrap() = Some(Instant::now());
             return Err(Refusal::Full);
         }
         let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
@@ -116,6 +150,7 @@ impl Registry {
         let _g = self.gate.lock().unwrap_or_else(|e| e.into_inner());
         self.db.delete_doc(REGISTRY, tenant)?;
         self.known.lock().unwrap().remove(tenant);
+        *self.full_at.lock().unwrap() = None; // there is a place again
         Ok(())
     }
 
@@ -134,6 +169,8 @@ struct State {
     active: usize,
     /// Answers running now.
     sends: usize,
+    /// Sync requests being handled now.
+    syncs: usize,
     /// Taken off the map (evicted or deleted): whoever holds it must ask the map again.
     gone: bool,
 }
@@ -159,8 +196,11 @@ pub struct TenantMap {
     entries: Mutex<HashMap<String, Arc<Entry>>>,
     deleted: Mutex<HashMap<String, Instant>>,
     runs: AtomicUsize,
+    syncs: AtomicUsize,
     max_runs: usize,
     per_min: u32,
+    /// People who are not registered yet: their own small buckets, checked before anything costs a Firestore read.
+    knocks: Mutex<HashMap<String, Bucket>>,
 }
 
 /// One request being served for one person. Dropping it frees their place.
@@ -178,7 +218,7 @@ pub struct SendPermit {
 impl TenantMap {
     pub fn new(root: PathBuf, db: Option<Arc<dyn Db>>, secret: String, max_users: usize, max_runs: usize) -> TenantMap {
         let reg = db.clone().map(|d| Registry::new(d, max_users));
-        TenantMap { root, db, secret, reg, entries: Mutex::new(HashMap::new()), deleted: Mutex::new(HashMap::new()), runs: AtomicUsize::new(0), max_runs, per_min: RATE_PER_MIN }
+        TenantMap { root, db, secret, reg, entries: Mutex::new(HashMap::new()), deleted: Mutex::new(HashMap::new()), runs: AtomicUsize::new(0), syncs: AtomicUsize::new(0), max_runs, per_min: RATE_PER_MIN, knocks: Mutex::new(HashMap::new()) }
     }
 
     #[cfg(test)]
@@ -234,7 +274,7 @@ impl TenantMap {
         let e = Arc::new(Entry {
             id: id.to_string(),
             base: self.root.join(id),
-            state: Mutex::new(State { bucket: Bucket::new(self.per_min, now), last_used: now, active: 0, sends: 0, gone: false }),
+            state: Mutex::new(State { bucket: Bucket::new(self.per_min, now), last_used: now, active: 0, sends: 0, syncs: 0, gone: false }),
             sync: Mutex::new(sync),
         });
         map.insert(id.to_string(), e.clone());
@@ -249,6 +289,9 @@ impl TenantMap {
         }
         let registered = match (&self.reg, admin) {
             (Some(r), false) => {
+                if !r.is_known(id) {
+                    self.knock(id, now)?;
+                }
                 r.ensure(id)?;
                 true
             }
@@ -273,6 +316,9 @@ impl TenantMap {
                 if st.gone {
                     continue;
                 }
+                if st.active >= ACTIVE_PER_TENANT {
+                    return Err(Refusal::Busy("You have too many requests running at once. Wait for some to finish.", 3));
+                }
                 st.bucket.take(now).map_err(Refusal::Rate)?;
                 st.active += 1;
                 st.last_used = now;
@@ -282,6 +328,16 @@ impl TenantMap {
             return Ok(lease);
         }
         Err(Refusal::Gone)
+    }
+
+    /// A person who is not known to this process yet asks to be let in (a first request, or one after a restart, or someone who is
+    /// refused): limited per person, so that none can make the server read Firestore without end.
+    fn knock(&self, id: &str, now: Instant) -> Result<(), Refusal> {
+        let mut k = self.knocks.lock().unwrap();
+        if k.len() > 20_000 {
+            k.clear(); // bounded memory; a full reset only gives everybody a fresh small allowance
+        }
+        k.entry(id.to_string()).or_insert_with(|| Bucket::new(UNREGISTERED_PER_MIN, now)).take(now).map_err(Refusal::Rate)
     }
 
     /// One pass of the push loop: every fetched person's changes go to Firestore. The number of people that failed.
@@ -422,6 +478,40 @@ impl Lease {
             return Err(Refusal::Busy("The server is answering as many people as it can right now. Try again in a moment.", 10));
         }
         Ok(SendPermit { entry: self.entry.clone(), map: self.map.clone() })
+    }
+}
+
+/// One sync request being handled.
+pub struct SyncPermit {
+    entry: Arc<Entry>,
+    map: Arc<TenantMap>,
+}
+
+impl Lease {
+    /// Reserves one sync request: at most `SYNCS_PER_TENANT` per person and `SYNCS_GLOBAL` on the whole server (their bodies are big).
+    pub fn permit_sync(&self) -> Result<SyncPermit, Refusal> {
+        let m = &self.map;
+        #[allow(deprecated)]
+        let reserved = m.syncs.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| (n < SYNCS_GLOBAL).then_some(n + 1));
+        if reserved.is_err() {
+            return Err(Refusal::Busy("The server is syncing for many people right now. Try again in a moment.", 5));
+        }
+        let mut st = self.entry.state.lock().unwrap();
+        if st.syncs >= SYNCS_PER_TENANT {
+            drop(st);
+            m.syncs.fetch_sub(1, Ordering::SeqCst);
+            return Err(Refusal::Busy("Two syncs are already running. Wait for one to finish.", 3));
+        }
+        st.syncs += 1;
+        Ok(SyncPermit { entry: self.entry.clone(), map: self.map.clone() })
+    }
+}
+
+impl Drop for SyncPermit {
+    fn drop(&mut self) {
+        self.map.syncs.fetch_sub(1, Ordering::SeqCst);
+        let mut st = self.entry.state.lock().unwrap_or_else(|e| e.into_inner());
+        st.syncs = st.syncs.saturating_sub(1);
     }
 }
 
@@ -688,5 +778,44 @@ mod tests {
         let ac = a.clone();
         assert!(m.delete_account(&l, || {}, move || crate::db::wipe_tree(&*dbc, &format!("users/{ac}"), &["chats"]).map(|_| ())).is_ok());
         assert_eq!(db.count_under(&format!("users/{a}")), 0);
+    }
+
+    #[test]
+    fn a_person_who_is_refused_cannot_make_the_server_read_the_registry_over_and_over() {
+        let db = Arc::new(MemDb::default());
+        let m = map("knock", db.clone(), 2, 8);
+        let now = Instant::now();
+        for n in 0..2 {
+            m.acquire(&id(n), false, now).unwrap();
+        }
+        // the registry is full: the third person is refused, and after a few knocks is told to wait (no database read at all)
+        let mut rate = false;
+        for _ in 0..30 {
+            match m.acquire(&id(9), false, now) {
+                Err(Refusal::Rate(_)) => rate = true,
+                Err(Refusal::Full) => {}
+                other => panic!("{:?}", other.err()),
+            }
+        }
+        assert!(rate, "refused knocks are limited per person");
+        // found full a moment ago: another stranger is refused without a second look at the whole registry
+        let reads = db.reads.load(Ordering::SeqCst);
+        assert_eq!(m.acquire(&id(10), false, now).err(), Some(Refusal::Full));
+        assert_eq!(db.reads.load(Ordering::SeqCst), reads, "no listing of the whole registry");
+    }
+
+    #[test]
+    fn one_person_cannot_hold_more_than_a_few_requests_or_syncs_at_once() {
+        let db = Arc::new(MemDb::default());
+        let m = map("active", db, 200, 8);
+        let now = Instant::now();
+        let held: Vec<Lease> = (0..ACTIVE_PER_TENANT).map(|_| m.acquire(&id(1), false, now).unwrap()).collect();
+        assert!(matches!(m.acquire(&id(1), false, now), Err(Refusal::Busy(..))), "stuck requests cannot pile up without end");
+        assert!(m.acquire(&id(2), false, now).is_ok(), "another person is not affected");
+        let (a, b) = (held[0].permit_sync().unwrap(), held[1].permit_sync().unwrap());
+        assert!(held[2].permit_sync().is_err(), "two syncs per person");
+        drop(a);
+        assert!(held[2].permit_sync().is_ok());
+        drop(b);
     }
 }

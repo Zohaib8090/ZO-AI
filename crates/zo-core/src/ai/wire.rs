@@ -77,8 +77,14 @@ pub fn encode_path(path: &str) -> Option<(String, String)> {
 
 /// (mime, base64) of a picture, read now; `None` if the file is gone or too large.
 fn encoded(img: &ImageRef) -> Option<(String, String)> {
-    let data = std::fs::read(&img.path).ok()?;
-    (data.len() as u64 <= MAX_IMAGE_BYTES).then(|| (img.mime.clone(), base64_std(&data)))
+    // A saved chat comes from the client (sync), so its picture paths are not trusted: a restricted tenant never has a file read
+    // from the server's disk, and for everyone else the kind comes from the file name, never from the saved mime.
+    if crate::tenant::is_restricted() {
+        return None;
+    }
+    let checked = ImageRef::from_path(&img.path)?;
+    let data = std::fs::read(&checked.path).ok()?;
+    (data.len() as u64 <= MAX_IMAGE_BYTES).then(|| (checked.mime, base64_std(&data)))
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -461,6 +467,28 @@ mod tests {
             Turn::Assistant { text: "Let me look.".into(), calls: vec![ToolCall { id: "t1".into(), name: "zohara_process_list".into(), args: json!({}) }] },
             Turn::Results(vec![ToolResult { id: "t1".into(), name: "zohara_process_list".into(), content: "firefox".into(), is_error: false, images: Vec::new() }]),
         ]
+    }
+
+    #[test]
+    fn a_restricted_tenant_never_has_a_server_file_read_as_a_picture() {
+        let dir = std::env::temp_dir().join(format!("zo-wire-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let secret = dir.join("secret.txt");
+        std::fs::write(&secret, "TOPSECRET").unwrap();
+        let png = dir.join("a.png");
+        std::fs::write(&png, [1u8, 2, 3]).unwrap();
+        let evil = ImageRef { path: secret.to_string_lossy().into(), mime: "text/plain".into() };
+        let good = ImageRef { path: png.to_string_lossy().into(), mime: "text/plain".into() };
+        // not a picture by name: refused for everyone, and the saved mime is not trusted
+        assert!(encoded(&evil).is_none());
+        assert_eq!(encoded(&good).unwrap().0, "image/png");
+        crate::tenant::test_multi(true);
+        assert!(encoded(&good).is_none(), "restricted tenants get no file reads");
+        let turns = [Turn::UserImages("look".into(), vec![good.clone()])];
+        let r = build(find("gemini").unwrap(), "https://x/v1", Some("k"), "m", "", &turns, &[]);
+        crate::tenant::test_multi(false);
+        assert!(!r.body.to_string().contains("AQID"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

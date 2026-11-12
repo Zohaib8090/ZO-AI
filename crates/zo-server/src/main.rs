@@ -9,6 +9,9 @@
 //!   ZO_BLOCKED_EMAILS          addresses that are refused (optional)
 //!   ZO_MAX_USERS               how many people may register (default 200)
 //!   ZO_MAX_RUNS                answers being written at once on the whole server (default 8)
+//!   ZO_CONTACT_EMAIL           the operator's address, shown in the privacy notice and the terms (required)
+//!   ZO_HOSTING_REGION          where the server runs, for the privacy notice, for example "Frankfurt, Germany" (required)
+//!   ZO_OPERATOR_COUNTRY        whose law the terms name (required)
 //!   ZO_SERVER_SECRET           a long random text: each person's API keys are encrypted with a key derived from it
 //!   ZO_TENANT_ROOT             where the people's folders live on the disk (default /tmp/zo-tenants; emptied at start, Firestore is the record)
 //!   RENDER_EXTERNAL_URL        the server's own address (Render sets it): it calls itself every few minutes so it is not put to sleep
@@ -31,7 +34,7 @@ use auth::{Policy, Verifier};
 use devices::{Devices, Miss, Scope};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -103,9 +106,31 @@ pub struct App {
     pub streams: Mutex<HashMap<u64, (String, UnixStream)>>,
     pub next: AtomicU64,
     pub conns: AtomicUsize,
+    /// The owner's details for the privacy notice and the terms.
+    pub legal: pages::Legal,
+    /// Whether a signed-in person must have accepted the current terms before anything else (on when there is a database).
+    pub require_terms: std::sync::atomic::AtomicBool,
+    /// People known to have accepted `pages::TERMS_VERSION` (so the database is read once per person).
+    pub accepted: Mutex<std::collections::HashSet<String>>,
 }
 
 impl App {
+    /// Has this person accepted the current terms? Read from their record in the database (and remembered).
+    pub fn has_accepted(&self, tenant: &str) -> Result<bool, String> {
+        if !self.require_terms.load(Ordering::SeqCst) {
+            return Ok(true);
+        }
+        if self.accepted.lock().unwrap().contains(tenant) {
+            return Ok(true);
+        }
+        let Some(db) = self.tenants.db() else { return Ok(true) };
+        let yes = db.get_doc(&devices::list_collection(tenant), "terms")?.and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.get("version").and_then(Value::as_str).map(|s| s == pages::TERMS_VERSION)).unwrap_or(false);
+        if yes {
+            self.accepted.lock().unwrap().insert(tenant.to_string());
+        }
+        Ok(yes)
+    }
+
     pub fn close_streams(&self, tenant: &str) {
         for (_, (t, s)) in self.streams.lock().unwrap().iter() {
             if t == tenant {
@@ -241,8 +266,14 @@ pub fn local_tenant() -> String {
     auth::tenant_id("zo-no-auth-local-person")
 }
 
+/// Where a request comes from: the address the host's proxy saw (the last entry of X-Forwarded-For, which a client cannot forge),
+/// else the connection's own.
+fn source(req: &Request) -> String {
+    get_header(req, "X-Forwarded-For").and_then(|v| v.rsplit(',').next().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).or_else(|| req.remote_addr().map(|a| a.ip().to_string())).unwrap_or_else(|| "-".into())
+}
+
 /// Who is asking, or why they are refused. A Firebase token makes (or finds) a person; a device token finds the person who made it.
-fn who(app: &App, req: &Request) -> Result<Who, Fail> {
+fn who(app: &App, req: &Request, path: &str) -> Result<Who, Fail> {
     if app.no_auth {
         local_only(req).map_err(|e| Fail::new(401, e))?;
         return Ok(Who { cred: Cred::Account { uid: "local".into(), email: String::new() }, tenant: local_tenant(), admin: app.noauth_admin });
@@ -250,7 +281,7 @@ fn who(app: &App, req: &Request) -> Result<Who, Fail> {
     let token = get_header(req, "Authorization").and_then(|v| v.strip_prefix("Bearer ").map(|t| t.trim().to_string())).ok_or_else(|| Fail::new(401, "Sign in first."))?;
     if token.starts_with("zd_") {
         let Some(devs) = &app.devices else { return Err(Fail::new(401, "The device token is not right.")) };
-        let r = devs.resolve(&token).map_err(|m| match m {
+        let r = devs.resolve_from(&token, &source(req)).map_err(|m| match m {
             Miss::Unknown => Fail::new(401, "The device token is not right (or it was revoked)."),
             Miss::Rate(s) => Fail { status: 429, error: "Too many wrong tokens. Wait a moment.".into(), retry: Some(s) },
             Miss::Storage(e) => {
@@ -265,22 +296,41 @@ fn who(app: &App, req: &Request) -> Result<Who, Fail> {
     }
     let verifier = app.verifier.as_ref().ok_or_else(|| Fail::new(401, "Sign in first."))?;
     let id = verifier.verify(&token).map_err(|e| Fail::new(401, e))?;
-    if app.policy.is_blocked(&id.email) {
+    // a blocked address is refused everywhere except taking its own data away or deleting it: that is everybody's right
+    if app.policy.is_blocked(&id.email) && !matches!(path, "/api/account/export" | "/api/account/delete") {
         return Err(Fail::new(403, "This account is blocked."));
     }
-    let admin = app.policy.is_admin(&id.email);
+    let admin = app.policy.is_admin(&id.email) && !app.policy.is_blocked(&id.email);
     Ok(Who { cred: Cred::Account { uid: id.uid.clone(), email: id.email }, tenant: auth::tenant_id(&id.uid), admin })
 }
 
-fn body(req: &mut Request, limit: usize) -> Result<Value, Fail> {
+/// How long a request may take to send its body (the sockets also drop a client that is silent for 20 s, see vendor/tiny_http).
+const BODY_SECS: u64 = 30;
+const SYNC_BODY_SECS: u64 = 120;
+
+fn body(req: &mut Request, limit: usize, secs: u64) -> Result<Value, Fail> {
     if req.body_length().is_some_and(|n| n > limit) {
         return Err(Fail::new(413, "The request is too big."));
     }
-    let mut s = String::new();
-    req.as_reader().take(limit as u64 + 1).read_to_string(&mut s).map_err(|_| Fail::new(400, "The request could not be read."))?;
-    if s.len() > limit {
-        return Err(Fail::new(413, "The request is too big."));
+    // read in pieces against a deadline: a client that trickles one byte at a time cannot hold the thread for ever
+    let (t0, mut raw, mut buf) = (Instant::now(), Vec::new(), [0u8; 16384]);
+    let reader = req.as_reader();
+    loop {
+        if t0.elapsed() > Duration::from_secs(secs) {
+            return Err(Fail::new(408, "The request took too long to arrive."));
+        }
+        let want = buf.len().min(limit + 1 - raw.len());
+        match reader.read(&mut buf[..want]) {
+            Ok(0) => break,
+            Ok(n) => raw.extend_from_slice(&buf[..n]),
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => return Err(Fail::new(408, "The request took too long to arrive.")),
+            Err(_) => return Err(Fail::new(400, "The request could not be read.")),
+        }
+        if raw.len() > limit {
+            return Err(Fail::new(413, "The request is too big."));
+        }
     }
+    let s = String::from_utf8(raw).map_err(|_| Fail::new(400, "The request is not text."))?;
     if s.trim().is_empty() {
         return Ok(json!({}));
     }
@@ -296,6 +346,11 @@ fn connect() -> Result<UnixStream, String> {
 fn for_service(mut v: Value, t: &zo_core::tenant::Tenant) -> Value {
     v["tenant"] = json!({"id": t.id, "restricted": t.restricted});
     v
+}
+
+/// The ops that call a model (or its provider) and so take as long as an answer.
+pub fn op_uses_model(name: &str) -> bool {
+    matches!(name, "compact" | "memory_edit" | "personality_generate" | "models")
 }
 
 /// One question, one answer (everything except sending a message).
@@ -361,12 +416,12 @@ fn route(app: Arc<App>, mut req: Request) {
         (Method::Options, _) => return text(&app, req, 204, ""),
         (Method::Get, "/healthz") => return text(&app, req, 200, "ok"),
         (Method::Get, "/") | (Method::Get, "/index.html") => return html(&app, req, include_str!("../web/index.html").to_string(), pages::APP_CSP),
-        (Method::Get, "/privacy") => return html(&app, req, pages::page("ZO-AI privacy notice", pages::PRIVACY_MD), pages::PLAIN_CSP),
-        (Method::Get, "/terms") => return html(&app, req, pages::page("ZO-AI terms of use", pages::TERMS_MD), pages::PLAIN_CSP),
+        (Method::Get, "/privacy") => return html(&app, req, pages::page("ZO-AI privacy notice", &pages::fill(pages::PRIVACY_MD, &app.legal)), pages::PLAIN_CSP),
+        (Method::Get, "/terms") => return html(&app, req, pages::page("ZO-AI terms of use", &pages::fill(pages::TERMS_MD, &app.legal)), pages::PLAIN_CSP),
         _ => {}
     }
     let Some(r) = route_of(&method, &path) else { return text(&app, req, 404, "not found") };
-    let who = match who(&app, &req) {
+    let who = match who(&app, &req, &path) {
         Ok(w) => w,
         Err(f) => return fail(&app, req, f),
     };
@@ -378,7 +433,33 @@ fn route(app: Arc<App>, mut req: Request) {
         Err(e) => return fail(&app, req, e.into()),
     };
     let tenant = lease.tenant(!who.admin);
-    let v = match body(&mut req, if r == Route::Sync { SYNC_BODY_LIMIT } else { BODY_LIMIT }) {
+    // somebody who signs in (not a device they made, which only exists after they accepted) must have accepted the current terms
+    if matches!(who.cred, Cred::Account { .. }) {
+        let free = r == Route::Account && matches!(path.as_str(), "/api/account/whoami" | "/api/account/accept_terms" | "/api/account/export" | "/api/account/delete");
+        if !free {
+            match app.has_accepted(&who.tenant) {
+                Ok(true) => {}
+                Ok(false) => {
+                    let body = json!({"ok": false, "error": "Accept the privacy notice and the terms first.", "terms_required": true, "version": pages::TERMS_VERSION});
+                    return reply(&app, req, 403, body);
+                }
+                Err(e) => {
+                    eprintln!("zo-server: {e}");
+                    return fail(&app, req, Fail::new(503, "The storage is not reachable right now. Try again in a moment."));
+                }
+            }
+        }
+    }
+    // a sync body is big and is held in memory: only a few at a time. A model-calling op takes the same place as an answer.
+    let _sync = if r == Route::Sync {
+        match lease.permit_sync() {
+            Ok(p) => Some(p),
+            Err(e) => return fail(&app, req, e.into()),
+        }
+    } else {
+        None
+    };
+    let v = match body(&mut req, if r == Route::Sync { SYNC_BODY_LIMIT } else { BODY_LIMIT }, if r == Route::Sync { SYNC_BODY_SECS } else { BODY_SECS }) {
         Ok(v) => v,
         Err(f) => return fail(&app, req, f),
     };
@@ -410,6 +491,15 @@ fn route(app: Arc<App>, mut req: Request) {
             if v.get("op").and_then(Value::as_str) == Some("send") {
                 return reply(&app, req, 400, json!({"ok": false, "error": "Use /api/send to send a message."}));
             }
+            // these ask a model (up to minutes): they count as a running answer, like /api/send
+            let _run = if v.get("op").and_then(Value::as_str).is_some_and(op_uses_model) {
+                match lease.permit_send() {
+                    Ok(p) => Some(p),
+                    Err(e) => return fail(&app, req, e.into()),
+                }
+            } else {
+                None
+            };
             match op(&for_service(v, &tenant)) {
                 Ok(r) => reply(&app, req, 200, r),
                 Err(e) => reply(&app, req, 502, json!({"ok": false, "error": e})),
@@ -461,6 +551,13 @@ fn main() {
     if !no_auth && policy.admin_count() == 0 {
         eprintln!("zo-server: ZO_ADMIN_EMAILS is empty: nobody is an admin; everybody is restricted.");
     }
+    // the privacy notice and the terms name the operator: a public service does not start without them
+    let legal = pages::Legal { contact: env("ZO_CONTACT_EMAIL").unwrap_or_default(), region: env("ZO_HOSTING_REGION").unwrap_or_default(), country: env("ZO_OPERATOR_COUNTRY").unwrap_or_default() };
+    if !no_auth && (legal.contact.is_empty() || legal.region.is_empty() || legal.country.is_empty()) {
+        eprintln!("zo-server: set ZO_CONTACT_EMAIL, ZO_HOSTING_REGION and ZO_OPERATOR_COUNTRY: the privacy notice and the terms show them (people must be able to reach the operator).");
+        std::process::exit(2);
+    }
+    let legal = if no_auth && legal.contact.is_empty() { pages::Legal { contact: "(test mode)".into(), region: "(test mode)".into(), country: "(test mode)".into() } } else { legal };
     let max_runs = env("ZO_MAX_RUNS").and_then(|m| m.parse::<usize>().ok()).filter(|n| *n > 0).unwrap_or(8);
 
     // from here on zo-core serves many people: every request must name its tenant, and the default folders are never used
@@ -560,6 +657,9 @@ fn main() {
         streams: Mutex::new(HashMap::new()),
         next: AtomicU64::new(1),
         conns: AtomicUsize::new(0),
+        legal,
+        require_terms: std::sync::atomic::AtomicBool::new(!no_auth),
+        accepted: Mutex::new(Default::default()),
     });
     serve(app, server);
 }

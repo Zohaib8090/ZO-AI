@@ -210,6 +210,11 @@ fn checked<'a>(kind: &'a str, id: &str) -> Result<&'a str, String> {
     if !KINDS.contains(&kind) || id.is_empty() || id.len() > 200 {
         return Err("Unknown kind of item.".into());
     }
+    // on the server the id comes from a client and becomes a document name in the database: a plain, short, unambiguous name
+    // ("." and ".." are refused by the database, "/" would be lossy, and "__" is how a long document is cut into parts)
+    if crate::tenant::multi_tenant() && (id.len() > 100 || id.contains("__") || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')) {
+        return Err("That id is not allowed (letters, digits, - and _ only, at most 100 characters, no double underscore).".into());
+    }
     Ok(kind)
 }
 
@@ -244,7 +249,11 @@ pub fn put_doc(kind: &str, id: &str, doc: &Value) -> Result<bool, String> {
     }
     let (up, parsed) = match kind {
         "chats" => {
-            let c: chats::Chat = serde_json::from_value(doc.clone()).map_err(bad)?;
+            let mut c: chats::Chat = serde_json::from_value(doc.clone()).map_err(bad)?;
+            if crate::tenant::is_restricted() {
+                // pictures are files on this computer's disk: a chat that came from a client names none of them
+                crate::ai::agent::strip_images(&mut c.history);
+            }
             (c.updated, Parsed::Chat(c))
         }
         "memory" if id == STATE_ID => {

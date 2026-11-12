@@ -19,6 +19,12 @@ services:
         sync: false
       - key: ZO_ADMIN_EMAILS            # YOUR Google address(es), comma separated: admins get every tool, everybody else is restricted
         sync: false
+      - key: ZO_CONTACT_EMAIL           # shown in the privacy notice and the terms: people reach you here for access and deletion requests
+        sync: false
+      - key: ZO_OPERATOR_COUNTRY        # whose law the terms name, for example Germany
+        sync: false
+      - key: ZO_HOSTING_REGION          # where this server runs, shown in the privacy notice (matches region above)
+        value: Frankfurt, Germany
       - key: ZO_SERVER_SECRET           # per-user API keys are encrypted with a key derived from this; keep a private copy
         generateValue: true
       - key: ZO_MAX_USERS               # registrations allowed (Spark-sized; raise it only after moving Firebase to Blaze)

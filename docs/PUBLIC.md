@@ -46,6 +46,8 @@ Quotas: message text up to 20,000 characters, tenant data folder up to 25 MB (wr
 | running a shell or reading server files | no such tool for restricted users, enforced twice | the tool list is the one line of defence; keep it a short allow-list, never a deny-list |
 | stealing keys (their own are theirs; others' or the operator's) | keys encrypted at rest with a per-tenant derived key; the secret exists only in Render's environment; processes the AI starts (admin only) do not inherit secrets | the operator holds `ZO_SERVER_SECRET` and can decrypt: said plainly in the privacy notice |
 | using up CPU, memory, disk, model or Firestore quota | 60 requests/minute per user, 2 concurrent `/api/send` per user, `ZO_MAX_RUNS` global, body limits (1 MB, 20 MB for sync), 25 MB per tenant, `ZO_MAX_USERS`, 100 new Firebase accounts/hour/IP | many real accounts still add up; watch the Firestore quota (see capacity) |
+| a page the model reads makes it leak the user's notes through a web address, or erase them | inside one answer a restricted account's notes and the web are kept apart: once the notes were read the web tools are closed until the next message, once the web was read notes cannot be erased; addresses and searches are at most 500 characters | a page can still make the model save a false note (it is the user's own data and can be forgotten); one answer cannot do "read notes, then search the web" (ask in two messages) |
+| a saved chat names a file of the server as a "picture" | for restricted accounts picture paths are dropped when a chat is synced in and never read when a request is built; for everyone else the kind comes from the file name, not the saved mime | an admin's own chats can still name their own files (they own the computer) |
 | prompt injection: a fetched page tells the model to save false or hostile "memories", or to leak earlier chat text | restricted tools cannot reach anything but the user's own memory, so the harm stays inside that user's own data | a poisoned memory misleads later answers for that user; memory is visible and can be forgotten; a fetch result is data, not instructions (keep that wording in the prompt) |
 | abusing memory, export or delete | the export contains only the caller's chats, memory and personalities, never keys; delete needs `{"confirm":"DELETE"}` and a Firebase token (not a device token) | a stolen browser session can delete; there is no undo, which is stated in the UI |
 | stealing a device token | only the hash is stored; shown once; revocable; scope `sync` reaches only `/api/sync/*`; never logged | a leaked token works until revoked |
@@ -53,13 +55,23 @@ Quotas: message text up to 20,000 characters, tenant data folder up to 25 MB (wr
 
 ## Limits (defaults)
 
-60 requests/minute per user, 2 concurrent answers per user, `ZO_MAX_RUNS` (8) answers at once overall, bodies 1 MB (`/api/op`, `/api/send`)
-and 20 MB (`/api/sync/*`), `429` with `Retry-After` when over. Restricted: see the quotas above.
+60 requests/minute per user, 8 requests at once per user, 2 concurrent answers per user (ops that call a model, `compact`,
+`memory_edit`, `personality_generate`, `models`, count as an answer), `ZO_MAX_RUNS` (8) answers at once overall, 2 sync requests at once per
+user and 6 overall, bodies 1 MB (`/api/op`, `/api/send`) and 20 MB (`/api/sync/*`) that must arrive within 30 s (120 s for sync), idle
+client connections are dropped after 20 s (a patched `tiny_http` in `vendor/`), `429` with `Retry-After` when over. People who are not
+registered yet may knock 10 times a minute; when the registry is full they are refused for 30 s at a time without a database read.
+Device-token lookups: 60 a minute per source address (the last `X-Forwarded-For` entry), 1200 overall; a real token that was seen in the last
+hour still works when a guesser has used up the allowance. Restricted: see the quotas above. Not done: nothing reclaims the places of
+accounts that are never used again (watch the count; `ZO_MAX_USERS` and `ZO_BLOCKED_EMAILS` are the tools).
 
 ## Account API
 
 POST, Firebase-authenticated, under `/api/account/`: `whoami`, `devices_list`, `device_create {name, scope:"sync"|"full"}` (the token
-`zd_...` is shown once; only its sha256 is stored), `device_revoke {id}`, `export`, `delete {confirm:"DELETE"}`. Scope `sync` may call only
+`zd_...` is shown once; only its sha256 is stored), `device_revoke {id}`, `accept_terms {version}`, `export`, `delete {confirm:"DELETE"}`. Until a person has accepted the current version of the
+notice and terms (recorded in `users/<tenant>/meta/terms`), everything but `whoami`, `accept_terms`, `export` and `delete` answers 403 with
+`terms_required`. A blocked address can still `export` and `delete`. Delete writes a marker (`deleted/<tenant>`, time and whether the
+login was removed) first, so a sign-in token that is still valid cannot bring the account back for two hours (for good when the login could
+not be removed), even after a restart; the answer says `login_removed` and the page tells the person plainly when it is false. Scope `sync` may call only
 `/api/sync/*`; `full` also `/api/op`, `/api/send`, `/api/reply` (for `zo`). Account deletion must also remove the user from Firebase
 Authentication (Firebase then purges it from backups within 180 days); confirm this in the code before launch.
 
@@ -97,9 +109,9 @@ Firebase (project `zo-ai-144`):
 
 Render env vars: `FIREBASE_SERVICE_ACCOUNT` (secret), `ZO_ADMIN_EMAILS` (secret not needed, but set), `ZO_SERVER_SECRET` (generated; keep a
 private copy: changing it makes every stored API key unreadable and users must enter them again), `ZO_MAX_USERS`, `ZO_MAX_RUNS`,
-`ZO_TENANT_ROOT`, optional `ZO_BLOCKED_EMAILS`, optional admin-only `CLAUDE_CODE_OAUTH_TOKEN`. `ZO_ACCESS_TOKEN` is gone.
+`ZO_TENANT_ROOT`, `ZO_CONTACT_EMAIL`, `ZO_OPERATOR_COUNTRY`, `ZO_HOSTING_REGION`, optional `ZO_BLOCKED_EMAILS`, optional admin-only `CLAUDE_CODE_OAUTH_TOKEN`. `ZO_ACCESS_TOKEN` is gone.
 
-Before launch: fill the placeholders in `PRIVACY.md` and `TERMS.md` (contact e-mail, date, country), have them reviewed, check the pages are
+Before launch: set `ZO_CONTACT_EMAIL`, `ZO_OPERATOR_COUNTRY` and `ZO_HOSTING_REGION` (the pages are filled from them and the server does not start without them; `TERMS_VERSION` in `pages.rs` is the pages' date, change it when the texts change), have them reviewed, check the pages are
 served at `/privacy` and `/terms`; sign in with a second, non-admin Google account and confirm it is restricted (no shell, no files, no MCP,
 no machines); try to read the first account's chats from it; check limits return 429; try an export and a delete.
 

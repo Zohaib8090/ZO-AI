@@ -20,8 +20,12 @@ const PREFIX: &str = "zd_";
 /// How long a token that was found (or not found) is remembered before Firestore is asked again. A revoke clears it at once.
 const KNOWN_FOR: Duration = Duration::from_secs(300);
 const UNKNOWN_FOR: Duration = Duration::from_secs(60);
-/// Lookups of unknown tokens that may reach Firestore per minute, for the whole server (guessing tokens cannot cost unlimited reads).
-const LOOKUPS_PER_MIN: u32 = 120;
+/// Lookups that may reach Firestore per minute from one source address (guessing tokens cannot cost unlimited reads), and for the
+/// whole server (a ceiling for many sources). A token that was found is still served from memory for an hour when a limit is hit,
+/// so somebody guessing cannot lock the real holders out.
+const LOOKUPS_PER_MIN: u32 = 60;
+const LOOKUPS_ALL_PER_MIN: u32 = 1200;
+const STALE_OK: Duration = Duration::from_secs(3600);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -117,14 +121,15 @@ struct Cached {
 pub struct Devices {
     db: Arc<dyn Db>,
     cache: Mutex<HashMap<String, Cached>>,
-    lookups: Mutex<Bucket>,
+    lookups: Mutex<HashMap<String, Bucket>>,
+    lookups_all: Mutex<Bucket>,
     /// Makes, lists and revokes one at a time inside this process.
     edit: Mutex<()>,
 }
 
 impl Devices {
     pub fn new(db: Arc<dyn Db>) -> Devices {
-        Devices { db, cache: Mutex::new(HashMap::new()), lookups: Mutex::new(Bucket::new(LOOKUPS_PER_MIN, Instant::now())), edit: Mutex::new(()) }
+        Devices { db, cache: Mutex::new(HashMap::new()), lookups: Mutex::new(HashMap::new()), lookups_all: Mutex::new(Bucket::new(LOOKUPS_ALL_PER_MIN, Instant::now())), edit: Mutex::new(()) }
     }
 
     fn read(&self, tenant: &str) -> Result<Vec<Device>, String> {
@@ -199,6 +204,11 @@ impl Devices {
 
     /// Whose token is this?
     pub fn resolve(&self, token: &str) -> Result<Resolved, Miss> {
+        self.resolve_from(token, "-")
+    }
+
+    /// Whose token is this? `source` is where the request came from (the limit on lookups is per source).
+    pub fn resolve_from(&self, token: &str, source: &str) -> Result<Resolved, Miss> {
         if !well_formed(token) {
             return Err(Miss::Unknown);
         }
@@ -225,8 +235,21 @@ impl Devices {
                 }
             }
         }
-        if let Err(wait) = self.lookups.lock().unwrap().take(now) {
-            return Err(Miss::Rate(wait));
+        let limited = {
+            let mut per = self.lookups.lock().unwrap();
+            if per.len() > 10_000 {
+                per.clear();
+            }
+            let mine = per.entry(source.to_string()).or_insert_with(|| Bucket::new(LOOKUPS_PER_MIN, now)).take(now);
+            match mine {
+                Err(w) => Err(w),
+                Ok(()) => self.lookups_all.lock().unwrap().take(now),
+            }
+        };
+        if let Err(wait) = limited {
+            // a real token whose memory has run out a little ago is still good: the holder is not made to pay for a guesser
+            let stale = self.cache.lock().unwrap().get(&hash).filter(|e| now.duration_since(e.at) < STALE_OK).and_then(|e| e.found.clone());
+            return stale.ok_or(Miss::Rate(wait));
         }
         let text = self.db.get_doc(INDEX, &hash).map_err(Miss::Storage)?;
         let found = text.and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| {
@@ -331,12 +354,17 @@ mod tests {
         let mut limited = false;
         for n in 0..(LOOKUPS_PER_MIN as usize + 20) {
             let guess = format!("zd_{n:043}");
-            if let Err(Miss::Rate(s)) = d.resolve(&guess) {
+            if let Err(Miss::Rate(s)) = d.resolve_from(&guess, "1.2.3.4") {
                 assert!(s >= 1);
                 limited = true;
             }
         }
         assert!(limited, "unknown tokens cannot reach the database without limit");
+        // another source is not affected by the guesser, and a real token still works for its holder
+        let (token, _) = d.create(&id(3), "eh", false, "x", Scope::Sync).unwrap();
+        assert!(d.resolve_from(&token, "5.6.7.8").is_ok());
+        d.cache.lock().unwrap().get_mut(&hash_token(&token)).unwrap().at = Instant::now() - KNOWN_FOR - Duration::from_secs(1);
+        assert!(d.resolve_from(&token, "1.2.3.4").is_ok(), "stale but real token served although the guesser used up the allowance");
     }
 
     #[test]

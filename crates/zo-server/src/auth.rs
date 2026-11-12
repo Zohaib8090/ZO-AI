@@ -13,8 +13,6 @@ use std::time::{Duration, Instant};
 
 const KEYS_URL: &str = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 
-static KEYS: Mutex<Option<(Instant, Value)>> = Mutex::new(None);
-
 /// A signed-in person, as far as the token tells.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
@@ -32,22 +30,86 @@ pub struct Firebase {
     pub project: String,
 }
 
-fn google_keys() -> Result<Value, String> {
-    let mut g = KEYS.lock().unwrap();
-    if let Some((at, v)) = g.as_ref() {
-        if at.elapsed() < Duration::from_secs(3600) {
-            return Ok(v.clone());
+/// Google's signing keys, remembered as long as Google says (Cache-Control), with these rules: one fetch at a time and nobody else
+/// waits on the network (they wait for that one fetch, then read the cache); a failed fetch is not tried again for `RETRY_AFTER`;
+/// keys that are too old are still used when Google cannot be reached (a short outage does not sign everybody out); a token with a key
+/// id that is not in the cache makes one new fetch (a rotation), but not more than one a minute.
+struct Cache {
+    keys: Option<Value>,
+    expires: Option<Instant>,
+    fetched: Option<Instant>,
+    failed: Option<Instant>,
+}
+
+static KEYS: Mutex<Cache> = Mutex::new(Cache { keys: None, expires: None, fetched: None, failed: None });
+static FETCHING: Mutex<()> = Mutex::new(());
+const RETRY_AFTER: Duration = Duration::from_secs(10);
+const ROTATION_GAP: Duration = Duration::from_secs(60);
+const STALE_OK: Duration = Duration::from_secs(12 * 3600);
+
+fn has_kid(keys: &Value, kid: &str) -> bool {
+    keys.get("keys").and_then(Value::as_array).is_some_and(|a| a.iter().any(|k| k.get("kid").and_then(Value::as_str) == Some(kid)))
+}
+
+fn fetch_google() -> Result<(Value, Duration), String> {
+    let r = ureq::get(KEYS_URL).timeout(Duration::from_secs(15)).call().map_err(|e| format!("cannot fetch Google's keys: {e}"))?;
+    let age = r.header("cache-control").and_then(|c| c.split(',').find_map(|p| p.trim().strip_prefix("max-age=").and_then(|n| n.parse::<u64>().ok()))).unwrap_or(3600).clamp(300, 86_400);
+    let v: Value = r.into_json().map_err(|e| e.to_string())?;
+    Ok((v, Duration::from_secs(age)))
+}
+
+fn google_keys(kid: &str) -> Result<Value, String> {
+    keys_from(&KEYS, &FETCHING, Instant::now(), kid, &fetch_google)
+}
+
+fn keys_from(cache: &Mutex<Cache>, gate: &Mutex<()>, now: Instant, kid: &str, fetch: &dyn Fn() -> Result<(Value, Duration), String>) -> Result<Value, String> {
+    // the cached keys, when they are good for this token
+    let usable = |c: &Cache| -> Option<Value> {
+        let v = c.keys.as_ref()?;
+        let fresh = c.expires.is_some_and(|e| now < e);
+        let rotated = !has_kid(v, kid) && c.fetched.is_none_or(|f| now.saturating_duration_since(f) >= ROTATION_GAP);
+        (fresh && !rotated).then(|| v.clone())
+    };
+    if let Some(v) = usable(&cache.lock().unwrap_or_else(|e| e.into_inner())) {
+        return Ok(v);
+    }
+    let _one = gate.lock().unwrap_or_else(|e| e.into_inner());
+    // somebody else may have fetched while we waited
+    {
+        let c = cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(v) = usable(&c) {
+            return Ok(v);
+        }
+        if c.failed.is_some_and(|f| now.saturating_duration_since(f) < RETRY_AFTER) {
+            return stale(&c, now);
         }
     }
-    let v: Value = ureq::get(KEYS_URL).timeout(Duration::from_secs(15)).call().map_err(|e| format!("cannot fetch Google's keys: {e}"))?.into_json().map_err(|e| e.to_string())?;
-    *g = Some((Instant::now(), v.clone()));
-    Ok(v)
+    match fetch() {
+        Ok((v, ttl)) => {
+            let mut c = cache.lock().unwrap_or_else(|e| e.into_inner());
+            *c = Cache { keys: Some(v.clone()), expires: Some(now + ttl), fetched: Some(now), failed: None };
+            Ok(v)
+        }
+        Err(e) => {
+            let mut c = cache.lock().unwrap_or_else(|e| e.into_inner());
+            c.failed = Some(now);
+            stale(&c, now).map_err(|_| e)
+        }
+    }
+}
+
+/// Keys that have run out, used because Google cannot be reached.
+fn stale(c: &Cache, now: Instant) -> Result<Value, String> {
+    match (&c.keys, c.fetched) {
+        (Some(v), Some(f)) if now.saturating_duration_since(f) < STALE_OK => Ok(v.clone()),
+        _ => Err("Google's sign-in keys cannot be fetched right now.".into()),
+    }
 }
 
 impl Verifier for Firebase {
     fn verify(&self, token: &str) -> Result<Identity, String> {
         let kid = decode_header(token).map_err(|_| "The sign-in token is not valid.")?.kid.ok_or("The sign-in token has no key id.")?;
-        let keys = google_keys()?;
+        let keys = google_keys(&kid)?;
         let jwk = keys.get("keys").and_then(Value::as_array).and_then(|a| a.iter().find(|k| k.get("kid").and_then(Value::as_str) == Some(&kid))).ok_or("The sign-in token was signed with an unknown key.")?;
         let (n, e) = (jwk.get("n").and_then(Value::as_str).unwrap_or(""), jwk.get("e").and_then(Value::as_str).unwrap_or(""));
         let key = DecodingKey::from_rsa_components(n, e).map_err(|e| e.to_string())?;
@@ -122,6 +184,52 @@ impl Policy {
 
     pub fn admin_count(&self) -> usize {
         self.admins.len()
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn cache() -> Mutex<Cache> {
+        Mutex::new(Cache { keys: None, expires: None, fetched: None, failed: None })
+    }
+
+    fn keys(kids: &[&str]) -> Value {
+        serde_json::json!({"keys": kids.iter().map(|k| serde_json::json!({"kid": k})).collect::<Vec<_>>()})
+    }
+
+    #[test]
+    fn google_keys_are_cached_survive_an_outage_follow_a_rotation_and_never_make_everybody_wait() {
+        let (c, gate, n) = (cache(), Mutex::new(()), AtomicUsize::new(0));
+        let t0 = Instant::now();
+        let ok = |kids: &'static [&'static str]| move || -> Result<(Value, Duration), String> { Ok((keys(kids), Duration::from_secs(3600))) };
+        let count = |f: &dyn Fn() -> Result<(Value, Duration), String>| { n.fetch_add(1, Ordering::SeqCst); f() };
+        let a = ok(&["k1"]);
+        assert!(has_kid(&keys_from(&c, &gate, t0, "k1", &|| count(&a)).unwrap(), "k1"));
+        keys_from(&c, &gate, t0 + Duration::from_secs(100), "k1", &|| count(&a)).unwrap();
+        assert_eq!(n.load(Ordering::SeqCst), 1, "cached");
+        // an unknown key id makes one new fetch (a rotation), then at most one a minute
+        let b = ok(&["k1", "k2"]);
+        let t1 = t0 + Duration::from_secs(200);
+        assert!(has_kid(&keys_from(&c, &gate, t1, "k2", &|| count(&b)).unwrap(), "k2"));
+        assert_eq!(n.load(Ordering::SeqCst), 2);
+        keys_from(&c, &gate, t1 + Duration::from_secs(5), "bogus", &|| count(&b)).unwrap();
+        keys_from(&c, &gate, t1 + Duration::from_secs(6), "bogus2", &|| count(&b)).unwrap();
+        assert_eq!(n.load(Ordering::SeqCst), 2, "a made-up key id cannot make the server fetch again and again");
+        // Google is down after the keys expired: the old keys still serve, and the failure is not retried by every request
+        let down = || -> Result<(Value, Duration), String> { Err("down".into()) };
+        let late = t0 + Duration::from_secs(4000);
+        assert!(has_kid(&keys_from(&c, &gate, late, "k1", &|| count(&down)).unwrap(), "k1"));
+        assert_eq!(n.load(Ordering::SeqCst), 3);
+        keys_from(&c, &gate, late + Duration::from_secs(2), "k1", &|| count(&down)).unwrap();
+        assert_eq!(n.load(Ordering::SeqCst), 3, "no retry within the pause");
+        // with nothing cached at all, an outage is an error (and also not hammered)
+        let empty = cache();
+        assert!(keys_from(&empty, &gate, t0, "k1", &down).is_err());
+        // the cache lock is not held during a fetch: a slow fetch does not block a reader of fresh keys
+        assert!(c.try_lock().is_ok());
     }
 }
 

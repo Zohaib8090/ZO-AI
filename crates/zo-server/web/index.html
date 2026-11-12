@@ -280,6 +280,7 @@ async function api(path, body) {
   try { r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify(body) }); }
   catch { netBanner("offline"); throw new Error("Cannot reach the server."); }
   let j = {}; try { j = await r.json(); } catch {}
+  if (r.status === 403 && j.terms_required) { showConsent(curUser, j.version); const e = new Error(j.error || "Accept the terms first."); e.status = 403; throw e; }
   if (r.status === 401) { netBanner("unauthorized"); const e = new Error(j.error || "Sign in again."); e.status = 401; throw e; }
   netBanner(null);
   if (r.status === 429) { const m = limitMsg(r); toast(m); const e = new Error(m); e.status = 429; throw e; }
@@ -766,7 +767,7 @@ function deleteSheet() {
   const w = document.createElement("div");
   w.innerHTML = '<div class="warn">This removes <b>all</b> your chats, memory, files, devices and saved API keys from the server, and your place in this service. It cannot be undone. Export first if you want a copy.</div><div class="field-label">Type DELETE to confirm</div><input class="field-input" id="dc" autocomplete="off" spellcheck="false"><div class="field-hint" id="de" style="color:var(--danger)"></div>';
   const go = btn("Delete everything", "primary", async () => { go.disabled = true;
-    try { await acctOp("delete", { confirm: "DELETE" }); try { localStorage.removeItem("zo-consent:" + uid); } catch {} sh.close(); toast("Your account and data were deleted."); acct = null; if (NOAUTH) setTimeout(() => location.reload(), 900); else await signOut(auth); }
+    try { const d = await acctOp("delete", { confirm: "DELETE" }); sh.close(); toast(d.login_removed === false && !NOAUTH ? "Your data was deleted, but your sign-in record could not be removed yet. Ask the operator (see Privacy) to finish it." : "Your account and data were deleted."); acct = null; if (NOAUTH) setTimeout(() => location.reload(), 900); else await signOut(auth); }
     catch (e) { w.querySelector("#de").textContent = e.message; go.disabled = false; } });
   go.style.cssText = "background:#E5484D;border-color:#E5484D;color:#fff"; go.disabled = true;
   const sh = sheet("Delete my account", w, [btn("Cancel", "", () => sh.close()), go]);
@@ -797,19 +798,25 @@ $("signin").onclick = async () => {
   try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { $("err").textContent = e.code === "auth/unauthorized-domain" ? "This web address is not allowed in Firebase yet (Authentication > Settings > Authorized domains)." : e.message; }
 };
 $("consentMark").innerHTML = MARK;
-const consentKey = () => "zo-consent:" + uid;
-const consented = () => { try { return localStorage.getItem(consentKey()) === "1"; } catch { return false; } };
-function showConsent(u) {
+/* the record of what a person accepted lives on the server (which version, when); the browser keeps nothing about it */
+let termsVersion = "", curUser = null;
+function showConsent(u, version) {
+  termsVersion = version || termsVersion; curUser = u;
   $("login").classList.add("hide"); $("app").classList.add("hide"); $("consent").classList.remove("hide");
   const cb = $("agree"), go = $("consentGo"); cb.checked = false; go.disabled = true;
   cb.onchange = () => { go.disabled = !cb.checked; };
-  go.onclick = () => { if (!cb.checked) return; try { localStorage.setItem(consentKey(), "1"); } catch {} $("consent").classList.add("hide"); start(u, true); };
+  go.onclick = async () => { if (!cb.checked) return; go.disabled = true;
+    try { await acctOp("accept_terms", { version: termsVersion }); } catch (e) { go.disabled = false; toast(e.message); return; }
+    $("consent").classList.add("hide"); start(u, true); };
   $("consentOut").onclick = () => NOAUTH ? location.reload() : signOut(auth);
 }
 let started = false;
 async function start(u, agreed) {
-  uid = u ? u.uid : "test";
-  if (!agreed && !consented()) return showConsent(u);
+  uid = u ? u.uid : "test"; curUser = u;
+  if (!agreed) {
+    let w = null; try { w = await acctOp("whoami"); } catch (e) { w = null; }
+    if (w && w.terms && !w.terms.accepted) return showConsent(u, w.terms.version);
+  }
   $("consent").classList.add("hide"); $("login").classList.add("hide"); $("app").classList.remove("hide");
   const name = u ? (u.displayName || u.email || "") : "test"; $("uname").textContent = name; $("avatar").textContent = (name[0] || "Z").toUpperCase();
   if (innerWidth <= 860) $("side").classList.remove("open");

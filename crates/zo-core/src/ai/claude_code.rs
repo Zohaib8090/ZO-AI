@@ -114,20 +114,30 @@ pub fn run_in_mode(mode: Option<crate::policy::Mode>, model: &str, effort: Optio
     }
 }
 
+/// The environment of the tools program Claude Code starts. It works for the same tenant as this request. The claude program itself
+/// is scrubbed of the server's variables (see `exec::scrub_server`), so the tools program is told here what it needs to find the tenant.
+fn tools_env(tenant: Option<&crate::tenant::Tenant>, mode: Option<crate::policy::Mode>, root: Option<String>) -> Value {
+    let mut env = json!({ "ZO_MCP_EXTERNAL": "1" });
+    if let Some(t) = tenant {
+        env["ZO_TENANT_ID"] = json!(t.id);
+        env["ZO_MULTI_TENANT"] = json!("1");
+        if let Some(root) = root {
+            env["ZO_TENANT_ROOT"] = json!(root);
+        }
+    }
+    if let Some(m) = mode {
+        env["ZO_MCP_MODE"] = json!(m.name());
+    }
+    env
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_once(mode: Option<crate::policy::Mode>, model: &str, effort: Option<&str>, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     let system = if system_extra.trim().is_empty() { SYSTEM_PROMPT.to_string() } else { format!("{SYSTEM_PROMPT}\n\n{system_extra}") };
     // Claude can look at what the tools return as pictures (a screenshot comes back as an image)
     let system = format!("{system}\n\n{}", super::agent::VISION_YES);
     let bin = binary().ok_or("Claude Code is not installed. Install it (npm install -g @anthropic-ai/claude-code), then sign in with: claude auth login (on a server, set CLAUDE_CODE_OAUTH_TOKEN instead: run `claude setup-token` on your own computer)")?;
-    let mut env = json!({ "ZO_MCP_EXTERNAL": "1" });
-    // the tools program Claude Code starts works for the same tenant as this request
-    if let Some(t) = crate::tenant::current() {
-        env["ZO_TENANT_ID"] = json!(t.id);
-    }
-    if let Some(m) = mode {
-        env["ZO_MCP_MODE"] = json!(m.name());
-    }
+    let env = tools_env(crate::tenant::current().as_ref(), mode, std::env::var("ZO_TENANT_ROOT").ok());
     let config = json!({ "mcpServers": { "zohara": { "command": mcp_binary(), "env": env } } }).to_string();
     let mut cmd = Command::new(bin);
     crate::exec::scrub_server(&mut cmd);
@@ -304,5 +314,19 @@ mod tests {
         assert!(calls[0].contains("--tools") && calls[0].contains("--allowedTools mcp__zohara__*") && calls[0].contains("--model sonnet"));
         std::env::remove_var("ZOAI_CLAUDE_BIN");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod env_tests {
+    use super::*;
+
+    #[test]
+    fn the_tools_program_of_an_admin_is_told_which_tenant_and_where_the_folders_are() {
+        let t = crate::tenant::Tenant { id: "a".repeat(32), config: "/c".into(), data: "/d".into(), restricted: false };
+        let e = tools_env(Some(&t), Some(crate::policy::Mode::Bypass), Some("/roots".into()));
+        assert_eq!((e["ZO_TENANT_ID"].as_str(), e["ZO_MULTI_TENANT"].as_str(), e["ZO_TENANT_ROOT"].as_str(), e["ZO_MCP_MODE"].as_str().is_some()), (Some("a".repeat(32).as_str()), Some("1"), Some("/roots"), true));
+        let desktop = tools_env(None, None, Some("/roots".into()));
+        assert!(desktop.get("ZO_TENANT_ID").is_none() && desktop.get("ZO_TENANT_ROOT").is_none(), "no tenant, nothing about tenants");
     }
 }

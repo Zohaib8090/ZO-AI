@@ -43,7 +43,7 @@ impl Drop for Shut {
 
 pub fn local_hint(path: &std::path::Path) -> String {
     format!(
-        "ZO-AI is not running: nothing listens on {}.\nStart the ZO-AI app (it serves this socket), or talk to a server instead:\n  zo --remote https://your-server --token-file ~/.config/zo-ai/token \"question\"\n  (or set ZO_REMOTE_URL, and ZO_ACCESS_TOKEN for the device token, scope: full)",
+        "ZO-AI is not running: nothing listens on {}.\nStart the ZO-AI app (it serves this socket), or talk to a server instead:\n  zo --remote https://your-server --token-file ~/.config/zo-ai/token \"question\"\n  (or set ZO_REMOTE_URL, and ZO_DEVICE_TOKEN for the device token, scope: full)",
         path.display()
     )
 }

@@ -1,7 +1,6 @@
-# ZO-AI web service: Terms of use (template)
+# ZO-AI web service: Terms of use
 
-> **Template.** A plain-English starting point for the operator, not legal advice. Have it reviewed before relying on it.
-> Last updated: [date]. Operator: Zohaib Baig, contact: [contact e-mail].
+> Last updated: {{version}}. Operator: Zohaib Baig, contact: {{contact}}.
 
 By ticking the box on first use you agree to these terms and to the Privacy notice.
 
@@ -16,6 +15,6 @@ By ticking the box on first use you agree to these terms and to the Privacy noti
 9. **Age.** At least the age Google requires for a Google Account in your country, with parental permission where the law requires.
 10. **Liability.** To the extent the law allows, the operator is not liable for losses from using or being unable to use the service, including lost data, wrong answers or charges at your provider. Nothing here limits liability the law does not allow to be limited.
 11. **Ending.** You can stop and delete your account any time (Account page). The operator may end the service or your access.
-12. **Changes and law.** These terms may change; the new date is shown. Continued use means you accept them. The law of [the operator's country] applies, except for mandatory consumer rights where you live.
+12. **Changes and law.** These terms may change; the new date is shown. Continued use means you accept them. The law of {{country}} applies, except for mandatory consumer rights where you live.
 
-Contact: [contact e-mail].
+Contact: {{contact}}.
