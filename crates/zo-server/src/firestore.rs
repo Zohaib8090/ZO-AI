@@ -1,6 +1,8 @@
 //! A very small Firestore client (REST), signed in as the project's service account. Every document holds one text (`data`);
-//! a text too long for one document is cut into parts: `name`, `name__1`, `name__2`, ...
+//! a text too long for one document is cut into parts: `name`, `name__1`, `name__2`, ... (the cutting lives in `db.rs`, on top of
+//! the `Db` trait this client implements, so the same code runs against an in-memory fake in the tests).
 
+use crate::db::Db;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -16,8 +18,6 @@ pub struct Firestore {
     key: EncodingKey,
     token_uri: String,
     token: Mutex<Option<(u64, String)>>,
-    /// Everything lives under this document, for example `zoai/owner`.
-    root: String,
 }
 
 fn now() -> u64 {
@@ -111,7 +111,7 @@ pub fn join(docs: BTreeMap<String, String>) -> BTreeMap<String, Joined> {
 
 impl Firestore {
     /// `account` is the service account key (the JSON file from the Firebase console).
-    pub fn new(account: &str, root: &str) -> Result<Firestore, String> {
+    pub fn new(account: &str) -> Result<Firestore, String> {
         let v: Value = serde_json::from_str(account).map_err(|_| "FIREBASE_SERVICE_ACCOUNT is not the JSON key file.")?;
         let get = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string).ok_or(format!("The service account key has no {k}."));
         Ok(Firestore {
@@ -120,7 +120,6 @@ impl Firestore {
             key: EncodingKey::from_rsa_pem(get("private_key")?.as_bytes()).map_err(|e| format!("The service account's private key cannot be read: {e}"))?,
             token_uri: get("token_uri").unwrap_or_else(|_| "https://oauth2.googleapis.com/token".into()),
             token: Mutex::new(None),
-            root: root.trim_matches('/').to_string(),
         })
     }
 
@@ -136,7 +135,7 @@ impl Firestore {
             }
         }
         let iat = now();
-        let claims = json!({"iss": self.email, "scope": "https://www.googleapis.com/auth/datastore", "aud": self.token_uri, "iat": iat, "exp": iat + 3600});
+        let claims = json!({"iss": self.email, "scope": "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/identitytoolkit", "aud": self.token_uri, "iat": iat, "exp": iat + 3600});
         let jwt = encode(&Header::new(Algorithm::RS256), &claims, &self.key).map_err(|e| e.to_string())?;
         let r: Value = ureq::post(&self.token_uri)
             .timeout(Duration::from_secs(20))
@@ -150,10 +149,12 @@ impl Firestore {
     }
 
     fn base(&self) -> String {
-        format!("https://firestore.googleapis.com/v1/projects/{}/databases/(default)/documents/{}", self.project, self.root)
+        format!("https://firestore.googleapis.com/v1/projects/{}/databases/(default)/documents", self.project)
     }
+}
 
-    fn put_one(&self, collection: &str, id: &str, text: &str) -> Result<(), String> {
+impl Db for Firestore {
+    fn put_doc(&self, collection: &str, id: &str, text: &str) -> Result<(), String> {
         let body = json!({"fields": {"data": {"stringValue": text}, "updated": {"integerValue": now().to_string()}}});
         ureq::request("PATCH", &format!("{}/{collection}/{id}", self.base()))
             .timeout(Duration::from_secs(30))
@@ -163,38 +164,25 @@ impl Firestore {
         Ok(())
     }
 
-    fn delete_one(&self, collection: &str, id: &str) -> Result<(), String> {
+    fn get_doc(&self, collection: &str, id: &str) -> Result<Option<String>, String> {
+        match ureq::get(&format!("{}/{collection}/{id}", self.base())).timeout(Duration::from_secs(30)).set("Authorization", &format!("Bearer {}", self.token()?)).call() {
+            Ok(r) => {
+                let v: Value = r.into_json().map_err(|e| e.to_string())?;
+                Ok(Some(v.pointer("/fields/data/stringValue").and_then(Value::as_str).unwrap_or("").to_string()))
+            }
+            Err(ureq::Error::Status(404, _)) => Ok(None),
+            Err(e) => Err(format!("Firestore could not read {collection}/{id}: {e}")),
+        }
+    }
+
+    fn delete_doc(&self, collection: &str, id: &str) -> Result<(), String> {
         match ureq::delete(&format!("{}/{collection}/{id}", self.base())).timeout(Duration::from_secs(30)).set("Authorization", &format!("Bearer {}", self.token()?)).call() {
             Ok(_) | Err(ureq::Error::Status(404, _)) => Ok(()),
             Err(e) => Err(format!("Firestore refused to delete {collection}/{id}: {e}")),
         }
     }
 
-    /// Saves one text under a name. `old_parts` is how many documents it may take up now (extra ones are removed). The later
-    /// parts are written first and the first part, which carries the mark, last: a reader that finds the new first part finds
-    /// all the parts it belongs to.
-    pub fn put(&self, collection: &str, name: &str, text: &str, old_parts: usize) -> Result<usize, String> {
-        let parts = encode_parts(text);
-        for n in (0..parts.len()).rev() {
-            let id = if n == 0 { name.to_string() } else { format!("{name}__{n}") };
-            self.put_one(collection, &id, &parts[n])?;
-        }
-        for n in parts.len()..old_parts {
-            self.delete_one(collection, &format!("{name}__{n}"))?;
-        }
-        Ok(parts.len())
-    }
-
-    pub fn delete(&self, collection: &str, name: &str, parts: usize) -> Result<(), String> {
-        self.delete_one(collection, name)?;
-        for n in 1..parts {
-            self.delete_one(collection, &format!("{name}__{n}"))?;
-        }
-        Ok(())
-    }
-
-    /// Everything in one collection: name -> the text, how many documents it takes, and whether it can be trusted.
-    pub fn all(&self, collection: &str) -> Result<BTreeMap<String, Joined>, String> {
+    fn list_docs(&self, collection: &str) -> Result<BTreeMap<String, String>, String> {
         let mut docs = BTreeMap::new();
         let mut page = String::new();
         loop {
@@ -217,7 +205,52 @@ impl Firestore {
                 break;
             }
         }
-        Ok(join(docs))
+        Ok(docs)
+    }
+
+    fn delete_login(&self, uid: &str) -> Result<bool, String> {
+        match ureq::post(&format!("https://identitytoolkit.googleapis.com/v1/projects/{}/accounts:delete", self.project))
+            .timeout(Duration::from_secs(30))
+            .set("Authorization", &format!("Bearer {}", self.token()?))
+            .send_json(json!({"localId": uid}))
+        {
+            Ok(_) => Ok(true),
+            Err(ureq::Error::Status(400, r)) => {
+                // already gone: the same result
+                if r.into_string().unwrap_or_default().contains("USER_NOT_FOUND") {
+                    Ok(true)
+                } else {
+                    Err("Firebase Authentication refused to remove the login.".to_string())
+                }
+            }
+            Err(e) => Err(format!("Firebase Authentication refused to remove the login: {e}")),
+        }
+    }
+
+    fn sub_collections(&self, parent: &str) -> Result<Vec<String>, String> {
+        let mut out = Vec::new();
+        let mut page = String::new();
+        loop {
+            let mut body = json!({"pageSize": 100});
+            if !page.is_empty() {
+                body["pageToken"] = json!(page);
+            }
+            let r: Value = match ureq::post(&format!("{}/{parent}:listCollectionIds", self.base()))
+                .timeout(Duration::from_secs(30))
+                .set("Authorization", &format!("Bearer {}", self.token()?))
+                .send_json(body)
+            {
+                Ok(r) => r.into_json().map_err(|e| e.to_string())?,
+                Err(ureq::Error::Status(404, _)) => break,
+                Err(e) => return Err(format!("Firestore could not list the collections of {parent}: {e}")),
+            };
+            out.extend(r.get("collectionIds").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string));
+            page = r.get("nextPageToken").and_then(Value::as_str).unwrap_or("").to_string();
+            if page.is_empty() {
+                break;
+            }
+        }
+        Ok(out)
     }
 }
 

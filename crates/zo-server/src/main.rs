@@ -1,40 +1,118 @@
-//! ZO-AI in the cloud. The same brain as the desktop app (zo-core's service), reachable over HTTPS behind a Firebase login, with
-//! its chats, memory and settings kept in Firestore because the server's own disk does not last.
+//! ZO-AI in the cloud, as a public service: anybody with a Google account may sign in and use the same brain as the desktop app,
+//! each person in their own isolated corner (a "tenant") with their own API key, their data kept in Firestore because the server's
+//! own disk does not last. Only the owner's addresses are admins; everybody else is restricted to a small set of safe tools.
 //!
 //! Settings (environment):
 //!   PORT                       where to listen (Render sets it)
-//!   FIREBASE_SERVICE_ACCOUNT   the service account key file's contents (JSON): turns on the login check and Firestore
-//!   ZO_ALLOWED_EMAILS          who may sign in, separated by commas (required with the login check)
-//!   ZO_SERVER_SECRET           a long random text: API keys are stored in Firestore encrypted with it
+//!   FIREBASE_SERVICE_ACCOUNT   the service account key file's contents (JSON): turns on the login check and Firestore (required)
+//!   ZO_ADMIN_EMAILS            the owner's address(es), separated by commas: admins (unrestricted tools, Claude Code, SSH, Bypass)
+//!   ZO_BLOCKED_EMAILS          addresses that are refused (optional)
+//!   ZO_MAX_USERS               how many people may register (default 200)
+//!   ZO_MAX_RUNS                answers being written at once on the whole server (default 8)
+//!   ZO_SERVER_SECRET           a long random text: each person's API keys are encrypted with a key derived from it
+//!   ZO_TENANT_ROOT             where the people's folders live on the disk (default /tmp/zo-tenants; emptied at start, Firestore is the record)
 //!   RENDER_EXTERNAL_URL        the server's own address (Render sets it): it calls itself every few minutes so it is not put to sleep
-//!   ZO_ACCESS_TOKEN            the owner's own-devices key (at least 32 characters): `Authorization: Bearer <it>` is accepted on every /api call
-//!                              (desktop sync, terminal client). Without FIREBASE_SERVICE_ACCOUNT the server runs "token-only": no Firebase
-//!                              login, no Firestore, listens on 127.0.0.1 unless PORT and ZO_BIND (for example 0.0.0.0) are both set
-//!   ZO_SERVER_NO_AUTH=1        for testing on your own computer only: no login, listens on 127.0.0.1 only, no Firestore
+//!   ZO_SERVER_NO_AUTH=1        for testing on your own computer only: no login, listens on 127.0.0.1 only, no Firestore, one fixed
+//!                              (restricted) person; ZO_NOAUTH_ADMIN=1 makes that person an admin
 
+mod account;
 mod auth;
+mod db;
+mod devices;
 mod firestore;
+mod pages;
 mod sync;
 mod sync_api;
+mod tenants;
+#[cfg(test)]
+mod testenv;
 
+use auth::{Policy, Verifier};
+use devices::{Devices, Miss, Scope};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tenants::{Lease, Refusal, TenantMap};
 use tiny_http::{Header, Method, Request, Response, Server};
 
-struct App {
-    project: String,
-    allowed: Vec<String>,
-    no_auth: bool,
-    /// ZO_ACCESS_TOKEN (at least 32 characters), if set.
-    access_token: Option<String>,
-    /// Answers running right now: the web app can talk to one (approve a step, stop it) by its number.
-    streams: Mutex<HashMap<u64, UnixStream>>,
-    next: AtomicU64,
+/// Request bodies: /api/op, /api/send and /api/reply, and the desktop sync.
+const BODY_LIMIT: usize = 1_000_000;
+const SYNC_BODY_LIMIT: usize = 20_000_000;
+/// Requests being handled at the same time, for the whole server.
+const MAX_CONNECTIONS: usize = 400;
+
+/// What a request is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Route {
+    Op,
+    Send,
+    Reply,
+    Sync,
+    Account,
+}
+
+/// How a caller proved who they are.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Cred {
+    /// A Firebase sign-in (or the local test person).
+    Account { uid: String, email: String },
+    Device { scope: Scope },
+}
+
+#[derive(Clone, Debug)]
+pub struct Who {
+    pub cred: Cred,
+    pub tenant: String,
+    pub admin: bool,
+}
+
+/// Which routes a credential may call. A signed-in person: all. A `full` device: the API and the sync. A `sync` device: the sync.
+pub fn permits(cred: &Cred, route: Route) -> bool {
+    match cred {
+        Cred::Account { .. } => true,
+        Cred::Device { scope: Scope::Full } => route != Route::Account,
+        Cred::Device { scope: Scope::Sync } => route == Route::Sync,
+    }
+}
+
+pub fn route_of(method: &Method, path: &str) -> Option<Route> {
+    if *method != Method::Post {
+        return None;
+    }
+    match path {
+        "/api/op" => Some(Route::Op),
+        "/api/send" => Some(Route::Send),
+        "/api/reply" => Some(Route::Reply),
+        "/api/sync/manifest" | "/api/sync/get" | "/api/sync/put" | "/api/sync/delete" => Some(Route::Sync),
+        p => p.strip_prefix("/api/account/").filter(|n| account::CALLS.contains(n)).map(|_| Route::Account),
+    }
+}
+
+pub struct App {
+    pub no_auth: bool,
+    pub noauth_admin: bool,
+    pub verifier: Option<Arc<dyn Verifier>>,
+    pub policy: Policy,
+    pub tenants: Arc<TenantMap>,
+    pub devices: Option<Devices>,
+    /// Answers running right now, with the person they belong to: the web app can talk to one (approve a step, stop it) by its number.
+    pub streams: Mutex<HashMap<u64, (String, UnixStream)>>,
+    pub next: AtomicU64,
+    pub conns: AtomicUsize,
+}
+
+impl App {
+    pub fn close_streams(&self, tenant: &str) {
+        for (_, (t, s)) in self.streams.lock().unwrap().iter() {
+            if t == tenant {
+                let _ = s.shutdown(std::net::Shutdown::Both);
+            }
+        }
+    }
 }
 
 fn env(name: &str) -> Option<String> {
@@ -45,11 +123,8 @@ fn header(k: &str, v: &str) -> Header {
     Header::from_bytes(k.as_bytes(), v.as_bytes()).expect("header")
 }
 
-/// Set in the no-login test mode: nothing from another web address may talk to the server then (see `local_only`).
-static NO_AUTH: AtomicBool = AtomicBool::new(false);
-
-fn cors() -> Vec<Header> {
-    if NO_AUTH.load(Ordering::Relaxed) {
+fn cors(app: &App) -> Vec<Header> {
+    if app.no_auth {
         return Vec::new(); // no cross-site access: only the page the server itself serves
     }
     vec![
@@ -60,44 +135,90 @@ fn cors() -> Vec<Header> {
     ]
 }
 
-fn reply(req: Request, status: u16, body: Value) {
-    let mut r = Response::from_string(body.to_string()).with_status_code(status).with_header(header("Content-Type", "application/json"));
-    for h in cors() {
+/// Headers every answer carries.
+fn secure(app: &App) -> Vec<Header> {
+    let mut h = vec![header("X-Content-Type-Options", "nosniff"), header("Referrer-Policy", "no-referrer")];
+    if !app.no_auth {
+        h.push(header("Strict-Transport-Security", "max-age=31536000"));
+    }
+    h
+}
+
+fn send_response(app: &App, req: Request, mut r: Response<std::io::Cursor<Vec<u8>>>) {
+    for h in cors(app).into_iter().chain(secure(app)) {
         r.add_header(h);
     }
     let _ = req.respond(r);
 }
 
-fn text(req: Request, status: u16, body: &str) {
-    let mut r = Response::from_string(body).with_status_code(status);
-    for h in cors() {
-        r.add_header(h);
-    }
-    let _ = req.respond(r);
+fn reply(app: &App, req: Request, status: u16, body: Value) {
+    let r = Response::from_string(body.to_string()).with_status_code(status).with_header(header("Content-Type", "application/json")).with_header(header("Cache-Control", "no-store"));
+    send_response(app, req, r);
 }
 
-/// Same result for any two texts of any length, in time that does not depend on where they differ.
-fn same_secret(a: &str, b: &str) -> bool {
-    use sha2::{Digest, Sha256};
-    let (x, y) = (Sha256::digest(a.as_bytes()), Sha256::digest(b.as_bytes()));
-    x.iter().zip(y.iter()).fold(0u8, |acc, (p, q)| acc | (p ^ q)) == 0
+fn text(app: &App, req: Request, status: u16, body: &str) {
+    send_response(app, req, Response::from_string(body).with_status_code(status).with_header(header("Cache-Control", "no-store")));
+}
+
+fn html(app: &App, req: Request, body: String, csp: &str) {
+    let r = Response::from_string(body)
+        .with_header(header("Content-Type", "text/html; charset=utf-8"))
+        .with_header(header("Cache-Control", "no-cache"))
+        .with_header(header("Content-Security-Policy", csp))
+        .with_header(header("X-Frame-Options", "DENY"));
+    send_response(app, req, r);
+}
+
+/// Why a request is not served.
+pub struct Fail {
+    pub status: u16,
+    pub error: String,
+    pub retry: Option<u64>,
+}
+
+impl Fail {
+    fn new(status: u16, error: impl Into<String>) -> Fail {
+        Fail { status, error: error.into(), retry: None }
+    }
+}
+
+impl From<Refusal> for Fail {
+    fn from(r: Refusal) -> Fail {
+        match r {
+            Refusal::Rate(s) => Fail { status: 429, error: "You are sending requests too fast. Wait a moment.".into(), retry: Some(s) },
+            Refusal::Busy(m, s) => Fail { status: 429, error: m.into(), retry: Some(s) },
+            Refusal::Full => Fail::new(503, "ZO-AI has as many people as it can take right now. Try again later."),
+            Refusal::Gone => Fail::new(410, "This account was deleted."),
+            Refusal::Storage(e) => Fail::new(503, e),
+        }
+    }
+}
+
+fn fail(app: &App, req: Request, f: Fail) {
+    let body = json!({"ok": false, "error": f.error, "retry_after": f.retry});
+    let mut r = Response::from_string(body.to_string()).with_status_code(f.status).with_header(header("Content-Type", "application/json")).with_header(header("Cache-Control", "no-store"));
+    if let Some(s) = f.retry {
+        r.add_header(header("Retry-After", &s.to_string()));
+    }
+    send_response(app, req, r);
+}
+
+fn get_header(req: &Request, name: &'static str) -> Option<String> {
+    req.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string())
 }
 
 /// The no-login test mode has no password, so it must only answer the page it serves itself, on this computer. A web page from
 /// another site cannot add a custom header without the server's permission (which is never given), and a name that points at
 /// this computer from elsewhere (DNS rebinding) has another Host, so both are refused.
 fn local_only(req: &Request) -> Result<(), String> {
-    fn get(req: &Request, name: &'static str) -> Option<String> {
-        req.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string())
-    }
-    if get(req, "X-ZO-Local").as_deref() != Some("1") {
+    if get_header(req, "X-ZO-Local").as_deref() != Some("1") {
         return Err("The test mode only answers its own page.".into());
     }
-    let host = get(req, "Host").unwrap_or_default().to_lowercase();
+    let host = get_header(req, "Host").unwrap_or_default().to_lowercase();
     if !host_is_local(&host) {
         return Err("The test mode only answers requests addressed to this computer.".into());
     }
-    if let Some(origin) = get(req, "Origin") {
+    if let Some(origin) = get_header(req, "Origin") {
         if origin.split_once("://").map(|(_, h)| h.to_lowercase()).as_deref() != Some(host.as_str()) {
             return Err("The test mode does not answer other web pages.".into());
         }
@@ -115,38 +236,66 @@ fn host_is_local(host: &str) -> bool {
     matches!(name, "127.0.0.1" | "localhost" | "[::1]")
 }
 
-/// Who is asking, or why they are refused.
-fn who(app: &App, req: &Request) -> Result<String, String> {
-    if app.no_auth {
-        return local_only(req).map(|_| "local".into());
-    }
-    let token = req
-        .headers()
-        .iter()
-        .find(|h| h.field.equiv("Authorization"))
-        .map(|h| h.value.as_str().to_string())
-        .and_then(|v| v.strip_prefix("Bearer ").map(str::to_string))
-        .ok_or("Sign in first.")?;
-    if let Some(own) = &app.access_token {
-        if same_secret(&token, own) {
-            return Ok("access token".into());
-        }
-    }
-    if app.project.is_empty() {
-        return Err("The access token is not right.".into());
-    }
-    auth::verify(&token, &app.project, &app.allowed)
+/// The one person of the no-login test mode.
+pub fn local_tenant() -> String {
+    auth::tenant_id("zo-no-auth-local-person")
 }
 
-fn body(req: &mut Request) -> Result<Value, String> {
+/// Who is asking, or why they are refused. A Firebase token makes (or finds) a person; a device token finds the person who made it.
+fn who(app: &App, req: &Request) -> Result<Who, Fail> {
+    if app.no_auth {
+        local_only(req).map_err(|e| Fail::new(401, e))?;
+        return Ok(Who { cred: Cred::Account { uid: "local".into(), email: String::new() }, tenant: local_tenant(), admin: app.noauth_admin });
+    }
+    let token = get_header(req, "Authorization").and_then(|v| v.strip_prefix("Bearer ").map(|t| t.trim().to_string())).ok_or_else(|| Fail::new(401, "Sign in first."))?;
+    if token.starts_with("zd_") {
+        let Some(devs) = &app.devices else { return Err(Fail::new(401, "The device token is not right.")) };
+        let r = devs.resolve(&token).map_err(|m| match m {
+            Miss::Unknown => Fail::new(401, "The device token is not right (or it was revoked)."),
+            Miss::Rate(s) => Fail { status: 429, error: "Too many wrong tokens. Wait a moment.".into(), retry: Some(s) },
+            Miss::Storage(e) => {
+                eprintln!("zo-server: {e}");
+                Fail::new(503, "The storage is not reachable right now. Try again in a moment.")
+            }
+        })?;
+        if app.policy.is_blocked_hash(&r.eh) {
+            return Err(Fail::new(403, "This account is blocked."));
+        }
+        return Ok(Who { cred: Cred::Device { scope: r.scope }, tenant: r.tenant, admin: !r.eh.is_empty() && app.policy.is_admin_hash(&r.eh) });
+    }
+    let verifier = app.verifier.as_ref().ok_or_else(|| Fail::new(401, "Sign in first."))?;
+    let id = verifier.verify(&token).map_err(|e| Fail::new(401, e))?;
+    if app.policy.is_blocked(&id.email) {
+        return Err(Fail::new(403, "This account is blocked."));
+    }
+    let admin = app.policy.is_admin(&id.email);
+    Ok(Who { cred: Cred::Account { uid: id.uid.clone(), email: id.email }, tenant: auth::tenant_id(&id.uid), admin })
+}
+
+fn body(req: &mut Request, limit: usize) -> Result<Value, Fail> {
+    if req.body_length().is_some_and(|n| n > limit) {
+        return Err(Fail::new(413, "The request is too big."));
+    }
     let mut s = String::new();
-    req.as_reader().take(20_000_000).read_to_string(&mut s).map_err(|e| e.to_string())?;
-    let v: Value = serde_json::from_str(&s).map_err(|_| "The request is not JSON.")?;
-    if v.is_object() { Ok(v) } else { Err("The request must be a JSON object.".into()) }
+    req.as_reader().take(limit as u64 + 1).read_to_string(&mut s).map_err(|_| Fail::new(400, "The request could not be read."))?;
+    if s.len() > limit {
+        return Err(Fail::new(413, "The request is too big."));
+    }
+    if s.trim().is_empty() {
+        return Ok(json!({}));
+    }
+    let v: Value = serde_json::from_str(&s).map_err(|_| Fail::new(400, "The request is not JSON."))?;
+    if v.is_object() { Ok(v) } else { Err(Fail::new(400, "The request must be a JSON object.")) }
 }
 
 fn connect() -> Result<UnixStream, String> {
     UnixStream::connect(zo_core::service::socket_path()).map_err(|e| format!("ZO-AI's service is not running: {e}"))
+}
+
+/// The request as the service gets it: whose it is comes from the verified credential, whatever the client wrote.
+fn for_service(mut v: Value, t: &zo_core::tenant::Tenant) -> Value {
+    v["tenant"] = json!({"id": t.id, "restricted": t.restricted});
+    v
 }
 
 /// One question, one answer (everything except sending a message).
@@ -159,28 +308,32 @@ fn op(v: &Value) -> Result<Value, String> {
     serde_json::from_str(&line).map_err(|_| "ZO-AI gave no answer.".into())
 }
 
-/// Sends a message and passes the answer on as it is written: one JSON object per line.
-fn send(app: &Arc<App>, req: Request, mut v: Value) {
+/// Sends a message and passes the answer on as it is written: one JSON object per line. The lease and the permit are held until
+/// the answer is over, so a deleted account waits for it and the limits count it.
+fn send(app: &Arc<App>, req: Request, v: Value, lease: Lease, tenant: zo_core::tenant::Tenant) {
+    let permit = match lease.permit_send() {
+        Ok(p) => p,
+        Err(r) => return fail(app, req, r.into()),
+    };
+    let mut v = for_service(v, &tenant);
     v["op"] = json!("send");
     let conn = match connect() {
         Ok(c) => c,
-        Err(e) => return reply(req, 503, json!({"ok": false, "error": e})),
+        Err(e) => return reply(app, req, 503, json!({"ok": false, "error": e})),
     };
     let mut to_service = match conn.try_clone() {
         Ok(c) => c,
-        Err(e) => return reply(req, 500, json!({"ok": false, "error": e.to_string()})),
+        Err(e) => return reply(app, req, 500, json!({"ok": false, "error": e.to_string()})),
     };
     if to_service.write_all(format!("{v}\n").as_bytes()).is_err() {
-        return reply(req, 503, json!({"ok": false, "error": "ZO-AI's service closed the connection."}));
+        return reply(app, req, 503, json!({"ok": false, "error": "ZO-AI's service closed the connection."}));
     }
     let id = app.next.fetch_add(1, Ordering::SeqCst);
-    app.streams.lock().unwrap().insert(id, to_service);
+    app.streams.lock().unwrap().insert(id, (tenant.id.clone(), to_service));
     let mut out = req.into_writer();
-    let cors = if NO_AUTH.load(Ordering::Relaxed) { "" } else { "Access-Control-Allow-Origin: *\r\n" };
-    let head = &format!("HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-cache\r\nX-Accel-Buffering: no\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n{cors}\r\n");
-    let chunk = |out: &mut Box<dyn Write + Send>, line: &str| -> bool {
-        out.write_all(format!("{:x}\r\n{line}\r\n", line.len()).as_bytes()).is_ok() && out.flush().is_ok()
-    };
+    let cors = if app.no_auth { "" } else { "Access-Control-Allow-Origin: *\r\n" };
+    let head = &format!("HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nX-Accel-Buffering: no\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n{cors}\r\n");
+    let chunk = |out: &mut Box<dyn Write + Send>, line: &str| -> bool { out.write_all(format!("{:x}\r\n{line}\r\n", line.len()).as_bytes()).is_ok() && out.flush().is_ok() };
     let mut ok = out.write_all(head.as_bytes()).is_ok() && chunk(&mut out, &format!("{}\n", json!({"event": "stream", "id": id})));
     let mut reader = BufReader::new(conn);
     let mut line = String::new();
@@ -194,116 +347,178 @@ fn send(app: &Arc<App>, req: Request, mut v: Value) {
     let _ = out.write_all(b"0\r\n\r\n");
     let _ = out.flush();
     // closing the connection tells the service to stop if the person went away
-    if let Some(s) = app.streams.lock().unwrap().remove(&id) {
+    if let Some((_, s)) = app.streams.lock().unwrap().remove(&id) {
         let _ = s.shutdown(std::net::Shutdown::Both);
     }
+    drop(permit);
+    drop(lease);
 }
 
 fn route(app: Arc<App>, mut req: Request) {
     let path = req.url().split('?').next().unwrap_or("").to_string();
-    match (req.method().clone(), path.as_str()) {
-        (Method::Options, _) => text(req, 204, ""),
-        (Method::Get, "/healthz") => text(req, 200, "ok"),
-        (Method::Get, "/") | (Method::Get, "/index.html") => {
-            let r = Response::from_string(include_str!("../web/index.html")).with_header(header("Content-Type", "text/html; charset=utf-8")).with_header(header("Cache-Control", "no-cache"));
-            let _ = req.respond(r);
-        }
-        (Method::Post, "/api/op") | (Method::Post, "/api/send") | (Method::Post, "/api/reply") | (Method::Post, "/api/sync/manifest") | (Method::Post, "/api/sync/get") | (Method::Post, "/api/sync/put") | (Method::Post, "/api/sync/delete") => {
-            if let Err(e) = who(&app, &req) {
-                return reply(req, 401, json!({"ok": false, "error": e}));
+    let method = req.method().clone();
+    match (&method, path.as_str()) {
+        (Method::Options, _) => return text(&app, req, 204, ""),
+        (Method::Get, "/healthz") => return text(&app, req, 200, "ok"),
+        (Method::Get, "/") | (Method::Get, "/index.html") => return html(&app, req, include_str!("../web/index.html").to_string(), pages::APP_CSP),
+        (Method::Get, "/privacy") => return html(&app, req, pages::page("ZO-AI privacy notice", pages::PRIVACY_MD), pages::PLAIN_CSP),
+        (Method::Get, "/terms") => return html(&app, req, pages::page("ZO-AI terms of use", pages::TERMS_MD), pages::PLAIN_CSP),
+        _ => {}
+    }
+    let Some(r) = route_of(&method, &path) else { return text(&app, req, 404, "not found") };
+    let who = match who(&app, &req) {
+        Ok(w) => w,
+        Err(f) => return fail(&app, req, f),
+    };
+    if !permits(&who.cred, r) {
+        return fail(&app, req, Fail::new(403, "This device token may not do that."));
+    }
+    let lease = match app.tenants.acquire(&who.tenant, who.admin, Instant::now()) {
+        Ok(l) => l,
+        Err(e) => return fail(&app, req, e.into()),
+    };
+    let tenant = lease.tenant(!who.admin);
+    let v = match body(&mut req, if r == Route::Sync { SYNC_BODY_LIMIT } else { BODY_LIMIT }) {
+        Ok(v) => v,
+        Err(f) => return fail(&app, req, f),
+    };
+    match r {
+        Route::Send => send(&app, req, v, lease, tenant),
+        Route::Sync => match sync_api::handle(&path, &v, &tenant) {
+            Ok(r) => reply(&app, req, 200, r),
+            Err(e) => reply(&app, req, 400, json!({"ok": false, "error": e})),
+        },
+        Route::Reply => {
+            // a line for an answer that is running: {"stream": 3, "op": "stop"} or an approval; only the person's own answers
+            let id = v.get("stream").and_then(Value::as_u64).unwrap_or(0);
+            let mut v = v;
+            if let Some(o) = v.as_object_mut() {
+                o.remove("tenant");
             }
-            let v = match body(&mut req) {
-                Ok(v) => v,
-                Err(e) => return reply(req, 400, json!({"ok": false, "error": e})),
+            let sent = match app.streams.lock().unwrap().get_mut(&id) {
+                Some((t, s)) if *t == tenant.id => s.write_all(format!("{v}\n").as_bytes()).is_ok(),
+                _ => false,
             };
-            match path.as_str() {
-                "/api/send" => send(&app, req, v),
-                p if p.starts_with("/api/sync/") => match sync_api::handle(p, &v) {
-                    Ok(r) => reply(req, 200, r),
-                    Err(e) => reply(req, 400, json!({"ok": false, "error": e})),
-                },
-                "/api/reply" => {
-                    // a line for an answer that is running: {"stream": 3, "op": "stop"} or an approval
-                    let id = v.get("stream").and_then(Value::as_u64).unwrap_or(0);
-                    let sent = match app.streams.lock().unwrap().get_mut(&id) {
-                        Some(s) => s.write_all(format!("{v}\n").as_bytes()).is_ok(),
-                        None => false,
-                    };
-                    reply(req, if sent { 200 } else { 404 }, json!({"ok": sent}))
-                }
-                _ => {
-                    if v.get("op").and_then(Value::as_str) == Some("send") {
-                        return reply(req, 400, json!({"ok": false, "error": "Use /api/send to send a message."}));
-                    }
-                    match op(&v) {
-                        Ok(r) => reply(req, 200, r),
-                        Err(e) => reply(req, 502, json!({"ok": false, "error": e})),
-                    }
-                }
+            reply(&app, req, if sent { 200 } else { 404 }, json!({"ok": sent}))
+        }
+        Route::Account => {
+            let name = path.strip_prefix("/api/account/").unwrap_or("");
+            let (status, out) = account::handle(&app, name, &v, &who, &lease);
+            reply(&app, req, status, out)
+        }
+        Route::Op => {
+            if v.get("op").and_then(Value::as_str) == Some("send") {
+                return reply(&app, req, 400, json!({"ok": false, "error": "Use /api/send to send a message."}));
+            }
+            match op(&for_service(v, &tenant)) {
+                Ok(r) => reply(&app, req, 200, r),
+                Err(e) => reply(&app, req, 502, json!({"ok": false, "error": e})),
             }
         }
-        _ => text(req, 404, "not found"),
+    }
+}
+
+/// Serves requests until the listener ends.
+pub fn serve(app: Arc<App>, server: Server) {
+    for req in server.incoming_requests() {
+        if app.conns.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+            app.conns.fetch_sub(1, Ordering::SeqCst);
+            fail(&app, req, Fail { status: 503, error: "The server is busy. Try again in a moment.".into(), retry: Some(5) });
+            continue;
+        }
+        let app = app.clone();
+        std::thread::spawn(move || {
+            struct Done(Arc<App>);
+            impl Drop for Done {
+                fn drop(&mut self) {
+                    self.0.conns.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+            let _d = Done(app.clone());
+            route(app, req);
+        });
+    }
+}
+
+/// Empties the people's folders at start: Firestore is the record, and a leftover folder (an account deleted meanwhile, or changes
+/// that were never sent) must not come back. Only folders that are named like a person's are touched.
+fn clean_root(root: &std::path::Path) {
+    for e in std::fs::read_dir(root).into_iter().flatten().flatten() {
+        if e.file_name().to_str().is_some_and(zo_core::tenant::valid_id) {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
     }
 }
 
 fn main() {
     let no_auth = env("ZO_SERVER_NO_AUTH").as_deref() == Some("1");
     let account = env("FIREBASE_SERVICE_ACCOUNT");
-    let allowed: Vec<String> = env("ZO_ALLOWED_EMAILS").map(|s| s.split(',').map(|e| e.trim().to_lowercase()).filter(|e| !e.is_empty()).collect()).unwrap_or_default();
-    let access_token = env("ZO_ACCESS_TOKEN").filter(|t| {
-        let long = t.chars().count() >= 32;
-        if !long {
-            eprintln!("zo-server: ZO_ACCESS_TOKEN is shorter than 32 characters, so it is ignored.");
-        }
-        long
-    });
-    // token-only: the access token is the only way in; no Firebase login and no Firestore
-    let token_only = !no_auth && account.is_none() && access_token.is_some();
-    if !no_auth && !token_only && (account.is_none() || allowed.is_empty()) {
-        eprintln!("zo-server: set FIREBASE_SERVICE_ACCOUNT and ZO_ALLOWED_EMAILS (or ZO_ACCESS_TOKEN for token-only mode, or ZO_SERVER_NO_AUTH=1 to try it on your own computer).");
+    if !no_auth && account.is_none() {
+        eprintln!("zo-server: set FIREBASE_SERVICE_ACCOUNT (and ZO_ADMIN_EMAILS), or ZO_SERVER_NO_AUTH=1 to try it on your own computer.");
         std::process::exit(2);
     }
-    let (config, data) = (zo_core::audit::config_dir(), zo_core::audit::data_dir());
-    let _ = std::fs::create_dir_all(&config);
-    let _ = std::fs::create_dir_all(&data);
-    let keys_file = match env("ZO_AI_KEYS_FILE") {
-        Some(p) => p.into(),
-        None => {
-            let p = config.join("keys.json");
-            std::env::set_var("ZO_AI_KEYS_FILE", &p);
-            p
-        }
-    };
+    let policy = Policy::new(env("ZO_ADMIN_EMAILS"), env("ZO_BLOCKED_EMAILS"), env("ZO_MAX_USERS"));
+    if !no_auth && policy.admin_count() == 0 {
+        eprintln!("zo-server: ZO_ADMIN_EMAILS is empty: nobody is an admin; everybody is restricted.");
+    }
+    let max_runs = env("ZO_MAX_RUNS").and_then(|m| m.parse::<usize>().ok()).filter(|n| *n > 0).unwrap_or(8);
 
-    // Firestore first, so the service starts with the saved chats, memory and settings
-    let mut project = env("FIREBASE_PROJECT_ID").unwrap_or_default();
+    // from here on zo-core serves many people: every request must name its tenant, and the default folders are never used
+    let root = std::path::PathBuf::from(env("ZO_TENANT_ROOT").unwrap_or_else(|| "/tmp/zo-tenants".into()));
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        if let Err(e) = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&root) {
+            eprintln!("zo-server: cannot make {}: {e}", root.display());
+            std::process::exit(2);
+        }
+    }
+    std::env::set_var("ZO_MULTI_TENANT", "1");
+    std::env::set_var("ZO_TENANT_ROOT", &root);
+    let secret = env("ZO_SERVER_SECRET");
+    if secret.is_none() && !no_auth {
+        eprintln!("zo-server: ZO_SERVER_SECRET is not set: nobody can save an API key here.");
+    }
+
+    let (mut verifier, mut database): (Option<Arc<dyn Verifier>>, Option<Arc<dyn db::Db>>) = (None, None);
     if let (Some(account), false) = (account, no_auth) {
-        let fs = match firestore::Firestore::new(&account, &env("ZO_FIRESTORE_ROOT").unwrap_or_else(|| "zoai/owner".into())) {
+        let fs = match firestore::Firestore::new(&account) {
             Ok(fs) => fs,
             Err(e) => {
                 eprintln!("zo-server: {e}");
                 std::process::exit(2);
             }
         };
-        project = fs.project().to_string();
-        let secret = env("ZO_SERVER_SECRET");
-        if secret.is_none() {
-            eprintln!("zo-server: ZO_SERVER_SECRET is not set: API keys entered here are lost when the server restarts.");
-        }
-        let mut sync = sync::Sync::new(fs, secret, keys_file);
-        match sync.pull(&config, &data) {
-            Ok((chats, notes)) => eprintln!("zo-server: fetched {chats} chats and {notes} memory notes from Firestore"),
+        verifier = Some(Arc::new(auth::Firebase { project: env("FIREBASE_PROJECT_ID").unwrap_or_else(|| fs.project().to_string()) }));
+        database = Some(Arc::new(fs));
+        clean_root(&root);
+    }
+    let tenants = Arc::new(TenantMap::new(root, database.clone(), secret.clone().unwrap_or_default(), policy.max_users, max_runs));
+    // never start without the database and then overwrite what is saved
+    if let Some(reg) = tenants.registry() {
+        match reg.count() {
+            Ok(n) => eprintln!("zo-server: Firestore is reachable; {n} people registered (at most {})", policy.max_users),
             Err(e) => {
-                // never start empty and then overwrite what is saved
-                eprintln!("zo-server: cannot read Firestore, so nothing will be saved there: {e}");
+                eprintln!("zo-server: cannot read Firestore, so the server does not start: {e}");
                 std::process::exit(3);
             }
         }
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_secs(3));
-            if let Err(e) = sync.push(&config, &data) {
-                eprintln!("zo-server: {e}");
-                std::thread::sleep(Duration::from_secs(20));
+    }
+    {
+        let t = tenants.clone();
+        std::thread::spawn(move || {
+            let mut last_evict = Instant::now();
+            loop {
+                std::thread::sleep(Duration::from_secs(3));
+                if t.push_all() > 0 {
+                    std::thread::sleep(Duration::from_secs(20));
+                }
+                if last_evict.elapsed() > Duration::from_secs(60) {
+                    last_evict = Instant::now();
+                    let n = t.evict_idle(Instant::now());
+                    if n > 0 {
+                        eprintln!("zo-server: {n} idle people taken off the disk");
+                    }
+                }
             }
         });
     }
@@ -324,17 +539,7 @@ fn main() {
     }
 
     let port = env("PORT").unwrap_or_else(|| "8787".into());
-    let host = if no_auth {
-        "127.0.0.1".to_string()
-    } else if token_only {
-        // token-only listens on this computer only, unless PORT and ZO_BIND are both set on purpose
-        match (env("PORT"), env("ZO_BIND")) {
-            (Some(_), Some(b)) => b,
-            _ => "127.0.0.1".to_string(),
-        }
-    } else {
-        "0.0.0.0".to_string()
-    };
+    let host = if no_auth { "127.0.0.1" } else { "0.0.0.0" };
     let addr = format!("{host}:{port}");
     let server = match Server::http(&addr) {
         Ok(s) => s,
@@ -343,26 +548,21 @@ fn main() {
             std::process::exit(1);
         }
     };
-    eprintln!("zo-server: listening on {addr}{}", if no_auth { " (no login: testing only)" } else if token_only { " (token-only: no Firebase login, no Firestore)" } else { "" });
-    NO_AUTH.store(no_auth, Ordering::Relaxed);
-    let app = Arc::new(App { project, allowed, no_auth, access_token, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1) });
-    for req in server.incoming_requests() {
-        let app = app.clone();
-        std::thread::spawn(move || route(app, req));
-    }
+    eprintln!("zo-server: listening on {addr}{}", if no_auth { " (no login: testing only)" } else { "" });
+    let devices = database.clone().map(Devices::new);
+    let app = Arc::new(App {
+        no_auth,
+        noauth_admin: no_auth && env("ZO_NOAUTH_ADMIN").as_deref() == Some("1"),
+        verifier,
+        policy,
+        tenants,
+        devices,
+        streams: Mutex::new(HashMap::new()),
+        next: AtomicU64::new(1),
+        conns: AtomicUsize::new(0),
+    });
+    serve(app, server);
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_this_computer_counts_as_local() {
-        for h in ["127.0.0.1", "127.0.0.1:8787", "localhost:8787", "[::1]:8787", "[::1]"] {
-            assert!(host_is_local(h), "{h}");
-        }
-        for h in ["", "evil.example", "127.0.0.1.evil.example", "localhost.evil.example:80", "[::1]x", "0.0.0.0:8787", "attacker.test:8787"] {
-            assert!(!host_is_local(h), "{h}");
-        }
-    }
-}
+mod tests;

@@ -1,0 +1,144 @@
+//! /api/account/*: what a person can do about their own account. Always about the caller's own tenant (taken from the verified
+//! token, never from the request) and only for a signed-in person (a device token cannot reach any of this).
+
+use crate::auth::email_hash;
+use crate::devices::Scope;
+use crate::tenants::{Lease, Registry};
+use crate::{App, Cred, Who};
+use serde_json::{json, Value};
+use zo_core::tenant::{self, Tenant};
+
+/// The names under /api/account/.
+pub const CALLS: [&str; 6] = ["whoami", "devices_list", "device_create", "device_revoke", "export", "delete"];
+
+fn text<'a>(v: &'a Value, k: &str) -> &'a str {
+    v.get(k).and_then(Value::as_str).unwrap_or("")
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// The limits that apply to this person, as the Account page shows them.
+pub fn limits(admin: bool, per_min: u32) -> Value {
+    let mut l = json!({"requests_per_min": per_min, "concurrent_sends": crate::tenants::SENDS_PER_TENANT});
+    if !admin {
+        l["message_chars"] = json!(tenant::MAX_MESSAGE_CHARS);
+        l["data_bytes"] = json!(tenant::MAX_DATA_BYTES);
+        l["tool_steps"] = json!(tenant::MAX_STEPS);
+        l["answer_secs"] = json!(tenant::MAX_ANSWER_SECS);
+    }
+    l
+}
+
+/// Everything of the person that is worth taking along: chats, memory notes and personalities. Never keys, tokens or logs.
+pub fn export(t: &Tenant) -> Value {
+    let read = |p: std::path::PathBuf| std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    let chats = match read(t.data.join("chats.json")) {
+        Some(Value::Array(a)) => a,
+        _ => Vec::new(),
+    };
+    let (mut memory, mut memory_settings) = (Vec::new(), json!({}));
+    if let Some(Value::Object(mut m)) = read(t.data.join("memory.json")) {
+        if let Some(Value::Array(items)) = m.remove("items") {
+            memory = items;
+        }
+        for k in ["enabled", "every"] {
+            if let Some(v) = m.remove(k) {
+                memory_settings[k] = v;
+            }
+        }
+    }
+    let personalities = match read(t.config.join("personalities.json")) {
+        Some(v) => v,
+        None => json!({}),
+    };
+    json!({"ok": true, "format": "zo-ai-export-1", "exported_at": now_secs(), "chats": chats, "memory": memory, "memory_settings": memory_settings, "personalities": personalities})
+}
+
+pub fn handle(app: &App, name: &str, v: &Value, who: &Who, lease: &Lease) -> (u16, Value) {
+    let err = |status: u16, e: &str| (status, json!({"ok": false, "error": e}));
+    let id = &who.tenant;
+    let me = lease.tenant(!who.admin);
+    match name {
+        "whoami" => {
+            let used = tenant::scope(&me, tenant::used_bytes);
+            let email = match &who.cred {
+                Cred::Account { email, .. } => email.clone(),
+                _ => String::new(),
+            };
+            (200, json!({"ok": true, "admin": who.admin, "restricted": !who.admin, "email": email, "tenant": id, "limits": limits(who.admin, app.tenants.per_min()), "data_bytes": used}))
+        }
+        "devices_list" => match &app.devices {
+            None => (200, json!({"ok": true, "devices": []})),
+            Some(d) => match d.list(id) {
+                Ok(l) => (200, json!({"ok": true, "devices": l.iter().map(|d| d.public()).collect::<Vec<_>>()})),
+                Err(e) => err(503, &e),
+            },
+        },
+        "device_create" => {
+            let Some(d) = &app.devices else { return err(400, "Device tokens need the cloud database, which this server does not have.") };
+            let Some(scope) = Scope::parse(text(v, "scope")) else { return err(400, "The scope must be \"sync\" or \"full\".") };
+            let eh = match &who.cred {
+                Cred::Account { email, .. } => email_hash(email),
+                _ => String::new(),
+            };
+            match d.create(id, &eh, !who.admin, text(v, "name"), scope) {
+                // the token is in this answer and nowhere else
+                Ok((token, dev)) => (200, json!({"ok": true, "id": dev.id, "token": token, "name": dev.name, "scope": scope.name()})),
+                Err(e) => err(400, &e),
+            }
+        }
+        "device_revoke" => {
+            let Some(d) = &app.devices else { return err(404, "There is no such device.") };
+            match d.revoke(id, text(v, "id")) {
+                Ok(true) => (200, json!({"ok": true})),
+                Ok(false) => err(404, "There is no such device."),
+                Err(e) => err(503, &e),
+            }
+        }
+        "export" => (200, export(&me)),
+        "delete" => {
+            if text(v, "confirm") != "DELETE" {
+                return err(400, "Send {\"confirm\": \"DELETE\"} to delete the account.");
+            }
+            let uid = match &who.cred {
+                Cred::Account { uid, .. } => uid.clone(),
+                _ => String::new(),
+            };
+            let mut login_removed = false;
+            let r = app.tenants.delete_account(
+                lease,
+                || app.close_streams(id),
+                || {
+                    if let Some(db) = app.tenants.db() {
+                        if let Some(d) = &app.devices {
+                            d.purge(id)?;
+                        }
+                        crate::db::wipe_tree(&**db, &format!("users/{id}"), &["chats", "memory", "files", "meta"])?;
+                        if let Some(reg) = app.tenants.registry() {
+                            let reg: &Registry = reg;
+                            reg.remove(id)?;
+                        }
+                        // everything of theirs is gone: now their Firebase login (best effort; the data is gone either way)
+                        if !uid.is_empty() {
+                            match db.delete_login(&uid) {
+                                Ok(done) => login_removed = done,
+                                Err(e) => eprintln!("zo-server: {e}"),
+                            }
+                        }
+                    }
+                    Ok(())
+                },
+            );
+            match r {
+                Ok(()) => (200, json!({"ok": true, "login_removed": login_removed})),
+                Err(e) => {
+                    eprintln!("zo-server: deleting an account did not finish: {e}");
+                    err(503, "Deleting did not finish. Nothing more of yours is served; try again in a moment to finish it.")
+                }
+            }
+        }
+        _ => err(404, "Unknown account call."),
+    }
+}
