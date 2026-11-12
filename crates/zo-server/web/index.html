@@ -1548,6 +1548,8 @@ async function modelSheet() {
   groups.forEach(([lbl, f]) => { const g = list.filter(f); if (g.length) sp.insertAdjacentHTML("beforeend", `<optgroup label="${lbl}">${g.map(opt).join("")}</optgroup>`); });
   let models = [], chosen = st.model || "", effort = "", loading = false, error = "", seq = 0, dirty = false, filter = "";
   const cur = () => prov.providers.find(p => p.id === sp.value);
+  /* the address saved for the provider in use (the providers answer carries it; it is empty when the normal address is used) */
+  const saved = p => (p && p.id === prov.current && p.base_url && p.base_url !== p.default_url) ? p.base_url : "";
   const pinned = () => new Set(activePins(prof));
 
   function setAddrUi() {
@@ -1616,7 +1618,7 @@ async function modelSheet() {
       await mop("select", body); dropCache("profiles"); sh.close(); await refreshModel(); toast("Using " + chosen);
     } catch (e) { toast(e.message); useBtn.disabled = false; }
   }
-  sp.onchange = () => { dirty = false; const p = cur(); url.value = (p && p.id === prov.current && st.base_url) || ""; chosen = p && p.id === prov.current ? st.model || "" : ""; models = []; filter = ""; $$("mQ").value = ""; setAddrUi(); if (p && p.needs_url && !url.value) { error = ""; renderList(); $$("mUrl").focus(); } else fetchModels(); };
+  sp.onchange = () => { dirty = false; const p = cur(); url.value = saved(p); chosen = p && p.id === prov.current ? st.model || "" : ""; models = []; filter = ""; $$("mQ").value = ""; setAddrUi(); if (p && p.needs_url && !url.value) { error = ""; renderList(); $$("mUrl").focus(); } else fetchModels(); };
   url.oninput = () => { dirty = true; };
   url.onchange = () => { const p = cur(); const bad = (dsk ? () => "" : validAddr)(url.value, p && p.needs_url); $$("mUrlHint").textContent = bad; if (!bad) fetchModels(); };
   $$("mTestB").onclick = async () => {
@@ -1636,7 +1638,7 @@ async function modelSheet() {
   };
   let qt; $$("mQ").oninput = e => { clearTimeout(qt); qt = setTimeout(() => { filter = e.target.value; renderList(); }, 150); };
   $$("mFetch").onclick = fetchModels;
-  url.value = prov.current ? (st.base_url || "") : "";
+  url.value = saved(cur());
   setAddrUi(); renderList();
   if (cur()) fetchModels(); else $$("mState").textContent = "Choose a provider to see its models.";
 }
