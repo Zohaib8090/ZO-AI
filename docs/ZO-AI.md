@@ -14,8 +14,8 @@ More detail on MCP is in [MCP.md](MCP.md).
 ## Using it
 
 * **Window:** `zo-ai` opens it; `zo-ai --background` only starts the helper that keeps the shortcut, approvals and scheduled tasks alive
-  (it starts at sign-in). **Ctrl+Super+C** opens the quick popup. The Copilot key cannot be used: Plasma reads it as Touchpad Off.
-* **Sidebar:** New chat, Search, Projects, Artifacts, Scheduled, then Pinned and Recents. The button in the corner closes it; with it
+  (it starts at sign-in). A tray icon shows what is running and offers Open and Quit ([ACTIVITY.md](ACTIVITY.md)). **Ctrl+Super+C** opens the quick popup. The Copilot key cannot be used: Plasma reads it as Touchpad Off.
+* **Sidebar:** New chat, Search, Projects, Artifacts, Scheduled, Activity (what is running now, see [ACTIVITY.md](ACTIVITY.md)), then Pinned and Recents. The button in the corner closes it; with it
   closed, the pointer on the corner button slides it out over the chat. A narrow window closes it by itself.
 * **Size:** Ctrl + / Ctrl - / Ctrl 0 change the size of the interface (saved); the first run picks a size that fits the screen.
 * **Messages:** under your message, Copy and Edit (edit sends it again from there); under a reply, Copy and Try again. These show

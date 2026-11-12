@@ -54,6 +54,10 @@ Quotas: message text up to 20,000 characters, tenant data folder up to 25 MB (wr
 | device-code phishing: tricking a victim into approving the attacker's sign-in request | the approval page needs the code to be **typed** (links never carry it), shows device name, kind and requesting address with a warning, codes last 10 minutes and are single use, 5 wrong codes per person per 10 minutes, caps on requests per address (10/min, 5 waiting) and overall (1000 waiting) | a person who types a code an attacker dictated and ignores the warning; see `LOGIN.md` |
 | using the server as a free relay to attack the web | fetch is rate limited by the per-user bucket and runs only from the model's tool loop | a user can still make the server fetch public pages; the 8-step cap bounds it |
 
+## Activity
+
+The service operations `activity` and `activity_stop` list and stop what is running, scoped to the calling tenant: a user sees and stops only their own answers, memory jobs and open client connections (restricted users cannot have anything else). Details: [ACTIVITY.md](ACTIVITY.md).
+
 ## Limits (defaults)
 
 60 requests/minute per user, 8 requests at once per user, 2 concurrent answers per user (ops that call a model, `compact`,

@@ -93,6 +93,7 @@ cargo run -p zo-core --example mock-model   # a fake model server, to try the ch
 
 * [docs/ZO-AI.md](docs/ZO-AI.md): how the app, the model layer, context and compaction, profiles and storage work.
 * [docs/CLI.md](docs/CLI.md): the `zo` terminal client.
+* [docs/ACTIVITY.md](docs/ACTIVITY.md): what is running now (tray icon, Activity page, web menu), and how to stop it.
 * [docs/LOGIN.md](docs/LOGIN.md): signing in (desktop, terminal, web), the device flow and its security.
 * [docs/MCP.md](docs/MCP.md): MCP servers, sign-in and the redirect address.
 * [docs/PUBLIC.md](docs/PUBLIC.md), [docs/SERVER.md](docs/SERVER.md), [docs/SYNC.md](docs/SYNC.md), [docs/DEPLOY.md](docs/DEPLOY.md): the public server, sync and deployment.
