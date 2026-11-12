@@ -815,6 +815,7 @@ mod tests {
 
     #[test]
     fn a_picture_the_model_asks_for_is_sent_to_a_model_that_can_see() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // the loop reads the MCP servers of the config folder: another test may be setting one up
         let png = picture("seen.png");
         let (url, server) = mock(vec![
             json!({"choices":[{"message":{"content":"Let me look.","tool_calls":[{"id":"c1","function":{"name":"zohara_view_image","arguments":json!({"path": png}).to_string()}}]}}]}),
@@ -836,6 +837,7 @@ mod tests {
 
     #[test]
     fn a_model_that_cannot_see_is_told_so_and_gets_no_picture() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // the loop reads the MCP servers of the config folder: another test may be setting one up
         let png = picture("unseen.png");
         let (url, server) = mock(vec![
             json!({"choices":[{"message":{"tool_calls":[{"id":"c1","function":{"name":"zohara_view_image","arguments":json!({"path": png}).to_string()}}]}}]}),
@@ -850,6 +852,7 @@ mod tests {
 
     #[test]
     fn a_picture_typed_into_the_message_goes_along_and_a_refusing_model_gets_it_left_out() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // the loop reads the MCP servers of the config folder: another test may be setting one up
         let png = picture("typed.png");
         // first the provider refuses pictures (as a text-only model does), then it answers
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -890,6 +893,7 @@ mod tests {
 
     #[test]
     fn the_loop_runs_a_tool_and_feeds_the_result_back() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // the loop reads the MCP servers of the config folder: another test may be setting one up
         let (url, server) = mock(vec![
             json!({"choices":[{"message":{"content":"Checking.","tool_calls":[{"id":"c1","function":{"name":"zohara_shell","arguments":"{\"cmd\":\"echo zo-loop-ok\"}"}}]}}]}),
             json!({"choices":[{"message":{"content":"It printed zo-loop-ok."}}]}),
@@ -911,6 +915,7 @@ mod tests {
 
     #[test]
     fn a_refused_tool_is_reported_to_the_model_not_run() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // the loop reads the MCP servers of the config folder: another test may be setting one up
         let (url, server) = mock(vec![
             json!({"content":[{"type":"tool_use","id":"u1","name":"zohara_fs_rm","input":{"path":"/tmp/zo-never-removed"}}]}),
             json!({"content":[{"type":"text","text":"Understood, I stopped."}]}),
@@ -954,6 +959,7 @@ mod tests {
 
     #[test]
     fn a_streamed_answer_arrives_in_pieces_and_its_tool_call_is_assembled() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // the loop reads the MCP servers of the config folder: another test may be setting one up
         let sse = |lines: &[&str]| ("text/event-stream".to_string(), lines.iter().map(|l| format!("data: {l}\n\n")).collect::<String>());
         let (url, server) = serve(vec![
             sse(&[
@@ -980,6 +986,7 @@ mod tests {
 
     #[test]
     fn stop_works_while_the_model_is_still_thinking() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // the loop reads the MCP servers of the config folder: another test may be setting one up
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         std::thread::spawn(move || {
@@ -1002,6 +1009,7 @@ mod tests {
 
     #[test]
     fn an_http_error_is_a_readable_message() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // the loop reads the MCP servers of the config folder: another test may be setting one up
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         std::thread::spawn(move || {
@@ -1016,6 +1024,7 @@ mod tests {
 
     #[test]
     fn a_sub_agent_does_a_job_and_only_its_report_comes_back() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // the loop reads the MCP servers of the config folder: another test may be setting one up
         crate::term::enable_in_app();
         let (url, server) = mock(vec![
             // the main model hands a job over
