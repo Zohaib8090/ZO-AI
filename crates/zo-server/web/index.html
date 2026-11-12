@@ -168,6 +168,18 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .pill{border-radius:9px;color:var(--text3);padding:6px 10px;font-size:13px}.pill:hover{background:var(--hov);color:var(--text)}.pill-muted{color:var(--dim)}
 .pill svg{width:11px;height:11px}
 .foot-note{font-size:12px;color:var(--dimmer);text-align:center;padding:12px 0 0}
+/* LINK-CSS-BEGIN: run on my computer */
+.pill.pill-run{display:inline-flex;align-items:center;gap:7px;max-width:min(46vw,260px)}.pill-run .pt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pdot{width:8px;height:8px;border-radius:50%;background:var(--dimmer);flex:none;display:inline-block}.pdot.on{background:#3FB57A}.pdot.wait{background:#D9A441}
+.pills{flex-wrap:wrap}
+.runnote{margin:8px 8px 0;padding:10px 12px;border:1px solid var(--line2);border-radius:12px;background:var(--card);font-size:13px;color:var(--text2);display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.runnote .btn{flex:none}
+.waitappr{border:1px dashed var(--line2);border-radius:12px;padding:10px 14px;color:var(--text2);display:flex;gap:10px;align-items:center;font-size:13.5px}
+.waitappr .spin{color:var(--accent)}
+.devrow-dot{display:inline-flex;align-items:center;gap:8px}
+.cap-chip{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--card2);color:var(--text3);margin:4px 6px 0 0}
+.popover .pdot{margin-right:2px}.pop-row .pdot{align-self:center}
+/* LINK-CSS-END */
 
 /* pages */
 .pagebox{width:100%;padding:0 44px 44px}.pagebox.narrow{max-width:760px;margin:0 auto;padding:0 30px 34px}
@@ -428,8 +440,9 @@ function composerHTML() {
     <div class="row"><button class="tool-btn" id="plus" title="Attach (not on the web yet)" data-i="plus" disabled></button><span class="grow"></span>
     <button class="tool-btn mic" id="mic" data-i="mic" aria-pressed="false"></button>
     <button class="tool-btn send" id="send" title="Send" data-i="up"></button><button class="tool-btn stop hide" id="stop" title="Stop" data-i="stop"></button></div></div>
-    <div class="pills"><button class="pill" id="pModel"><span id="pModelT">…</span><i data-i="down"></i></button><button class="pill pill-muted" id="pMode">${esc(mode)}</button></div>
-    <div class="foot-note">ZO-AI can make mistakes. Check what it did.</div>`;
+    <div class="runnote hide" id="runNote" role="status" aria-live="polite"></div>
+    <div class="pills"><button class="pill pill-run" id="pRun" aria-haspopup="menu" title="Where ZO-AI runs"><span class="pdot" id="pRunDot"></span><span class="pt" id="pRunT">Cloud</span><i data-i="down"></i></button><button class="pill" id="pModel"><span id="pModelT">…</span><i data-i="down"></i></button><button class="pill pill-muted" id="pMode">${esc(mode)}</button></div>
+    <div class="foot-note" id="footNote">ZO-AI can make mistakes. Check what it did.</div>`;
 }
 function wireComposer() {
   paint(view());
@@ -438,17 +451,139 @@ function wireComposer() {
   t.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
   $("send").onclick = send;
   voiceWire();
-  $("stop").onclick = () => { if (stream) api("/api/reply", { stream, op: "stop" }).catch(() => {}); };
+  $("stop").onclick = () => { if (stream) api("/api/reply", { stream, op: "stop" }).then(() => { if (onDesktop()) toast("Stop sent to your computer."); }).catch(() => {}); };
   $("pModel").onclick = e => modelPopover(e.currentTarget);
+  $("pRun").onclick = e => runPopover(e.currentTarget);
+  runPaint(); linkRefresh();
   $("pMode").onclick = e => modePopover(e.currentTarget);
   refreshModel(); t.focus();
 }
 function setBusy(b) { busy = b; if ($("send")) { $("send").classList.toggle("hide", b); $("stop").classList.toggle("hide", !b); $("text").disabled = b; voiceMicPaint(); } }
 async function refreshModel() {
+  if (onDesktop()) {
+    const id = runOn; let ok = true;
+    try { const r = await dop("status"); if (id === runOn) dstat = r || {}; } catch { ok = false; if (id === runOn) dstat = {}; }
+    if (id !== runOn) return;
+    if ($("pModelT")) $("pModelT").textContent = !ok ? "Computer not reachable" : dstat.ready ? (dstat.model || dstat.provider) : "Choose a model";
+    if ($("pMode")) $("pMode").textContent = curMode();
+    return;
+  }
   try { status = await op("status"); mode = status.mode || mode; } catch {}
   if ($("pModelT")) $("pModelT").textContent = status.ready ? (status.model || status.provider) : "Choose a model";
   if ($("pMode")) $("pMode").textContent = mode;
 }
+
+/* ===== LINK-BEGIN: run on my own computer (the desktop link) and the owner's Claude subscription =====
+   Everything a desktop sends back (its name, events, tool output) is untrusted: it only goes into the page through textContent or esc(). */
+const OFFLINE_MSG = "Your computer is not reachable. Start ZO-AI on your computer (it can run in the tray) and turn on Settings > Account and sync > Control this computer from the web.";
+const RUNON_KEY = "zo-runon";
+let runOn = "", runName = "";
+try { const j = JSON.parse(localStorage.getItem(RUNON_KEY) || "null"); if (j && typeof j.id === "string") { runOn = j.id.slice(0, 80); runName = String(j.name || "").slice(0, 60); } } catch {}
+const runSave = () => { try { runOn ? localStorage.setItem(RUNON_KEY, JSON.stringify({ id: runOn, name: runName })) : localStorage.removeItem(RUNON_KEY); } catch {} };
+let links = { devices: [], at: 0, ok: false, busy: false };
+let dstat = {}, waitNode = null;
+const onDesktop = () => !!runOn;
+const curDev = () => links.devices.find(d => d.id === runOn) || null;
+const devOnline = d => !!d && d.online === true;
+const devName = d => String((d && d.name) || "Computer").slice(0, 60);
+const curMode = () => onDesktop() ? (dstat.mode === "Bypass" ? "Auto" : (dstat.mode || "Manual")) : mode;
+const dcaps = d => (d && d.caps && typeof d.caps === "object") ? d.caps : {};
+const secs = t => t ? (t > 1e12 ? t : t * 1000) : 0;
+function setRunOn(id, name) { runOn = id || ""; runName = id ? String(name || "").slice(0, 60) : ""; runSave(); dstat = {}; runPaint(); refreshModel(); }
+async function linkRefresh() {
+  if (links.busy) return links.ok; links.busy = true; runPaint();
+  try {
+    const r = await api("/api/link/status", {});
+    links.devices = (Array.isArray(r.devices) ? r.devices : []).filter(d => d && (typeof d.id === "string" || typeof d.id === "number")).slice(0, 30).map(d => ({ ...d, id: String(d.id), online: d.online === true }));
+    links.ok = true; links.at = Date.now();
+    if (runOn && !curDev()) { runOn = ""; runName = ""; runSave(); dstat = {}; toast("That computer is no longer linked. Back to the cloud."); refreshModel(); }
+    else if (runOn) { const d = curDev(); if (d && d.name) { runName = devName(d); runSave(); } }
+  } catch { links.ok = false; }
+  links.busy = false; runPaint(); return links.ok;
+}
+/* the control by the model pill, the note under the composer and the line about where this runs */
+function runPaint() {
+  const t = $("pRunT"); if (!t) return;
+  const on = onDesktop(), d = curDev(), online = devOnline(d), nm = d ? devName(d) : runName;
+  t.textContent = on ? "My computer" + (nm ? " (" + nm + ")" : "") : "Cloud";
+  const dot = $("pRunDot"); dot.className = "pdot" + (on ? (online ? " on" : "") : " hide");
+  $("pRun").title = on ? (online ? "Running on your computer: online" : "Your computer is not reachable") : "Running in the cloud. Click to run on your own computer instead.";
+  const n = $("runNote"), asking = on && (links.at || !links.ok) && !online;
+  n.classList.toggle("hide", !asking);
+  if (asking) {
+    n.textContent = ""; const sp = document.createElement("span"); sp.textContent = links.ok || links.at ? OFFLINE_MSG : "Could not check your computer. Check your connection."; n.appendChild(sp);
+    const b = btn(links.busy ? "Checking…" : "Check again", "", () => linkRefresh()); b.disabled = links.busy; n.appendChild(b);
+  }
+  const f = $("footNote");
+  if (f) f.textContent = (on ? "Running on " + (nm ? "your computer (" + nm + ")" : "your computer") + ": it can use the files and tools there, and asks on the computer before it changes anything. " : "Running in the cloud: chat, web search and memory. Choose My computer to use the tools on your own computer. ") + "ZO-AI can make mistakes. Check what it did.";
+}
+function runPopover(a) {
+  const p = popover(a, "");
+  const fill = () => {
+    const row = (id, title, sub, dotc, checked) => `<button class="pop-row" data-r="${esc(id)}" data-n="${esc(title)}"><div class="c"><div class="pop-title">${dotc !== null ? `<span class="pdot${dotc ? " on" : ""}"></span> ` : ""}${esc(title)}</div><div class="pop-sub">${esc(sub)}</div></div><span class="pop-check">${checked ? icon("check") : ""}</span></button>`;
+    p.innerHTML = '<div class="pop-head">Run on</div>' + row("", "Cloud", "The ZO-AI server: chat, web search and memory.", null, !runOn)
+      + links.devices.map(d => row(d.id, "My computer (" + devName(d) + ")", d.online ? "Online" + (dcaps(d).claude_code ? " · Claude Code installed" : "") : "Not reachable" + (d.last_seen ? " · last seen " + ago(secs(d.last_seen)) : ""), d.online, runOn === d.id)).join("")
+      + (links.ok && !links.devices.length ? '<div class="pop-sub" style="padding:6px 10px">No computer is linked yet. On your computer: open ZO-AI, sign in with this account, then turn on Settings > Account and sync > Control this computer from the web.</div>' : "")
+      + (!links.ok && links.at === 0 && !links.busy ? '<div class="pop-sub" style="padding:6px 10px">Could not check your computers.</div>' : "")
+      + '<div class="pop-sep"></div><button class="pop-row" data-check><div class="c"><div class="pop-title">' + (links.busy ? "Checking…" : "Check again") + "</div></div></button>";
+    paint(p);
+    p.querySelectorAll("[data-r]").forEach(b => b.onclick = () => { setRunOn(b.dataset.r, b.dataset.n.replace(/^My computer \((.*)\)$/, "$1")); p.remove(); const d = curDev(); if (runOn && d && !d.online) toast("That computer is not reachable right now."); });
+    p.querySelector("[data-check]").onclick = async () => { await linkRefresh(); if (document.body.contains(p)) fill(); };
+  };
+  fill(); linkRefresh().then(() => { if (document.body.contains(p)) fill(); });
+}
+/* the desktop's own answers: only whitelisted settings questions go through /api/op desktop_op */
+async function dop(inner, extra = {}) {
+  try {
+    const r = await api("/api/op", { op: "desktop_op", device: runOn, inner: { op: inner, ...extra } });
+    return (r && r.result && typeof r.result === "object") ? r.result : r;
+  } catch (e) {
+    if (/desktop_offline|not reachable|offline/i.test(e.message)) { linkRefresh(); throw new Error(OFFLINE_MSG); }
+    throw e;
+  }
+}
+const mop = (o, extra = {}) => onDesktop() ? dop(o, extra) : op(o, extra);
+function clearWait() { if (waitNode) { waitNode.remove(); waitNode = null; } }
+function waitApproval(summary) {
+  clearWait(); const d = document.createElement("div"); d.className = "waitappr"; d.setAttribute("role", "status");
+  d.innerHTML = '<span class="spin"></span><span></span>'; d.lastChild.textContent = "Waiting for your approval on your computer" + (summary ? ": " + String(summary).slice(0, 300) : ".");
+  thread().appendChild(d); waitNode = d; scrollEnd();
+}
+function claudeLine(cc) {
+  if (!cc || !cc.present) return "Send your Claude sign-in from the desktop app (Settings > Account and sync) to use your Claude subscription here.";
+  return "Claude Code (your subscription) is ready on the server. Sign-in sent " + (cc.set_at ? when(secs(+cc.set_at)) : "earlier") + ". It lasts about a year; send a new one from the desktop app before then.";
+}
+/* Settings > My computers */
+async function pageComputers(b) {
+  await linkRefresh(); b.innerHTML = "";
+  b.appendChild(head("My computers"));
+  b.appendChild(cardOf(row("Run ZO-AI on your own computer", "A linked computer lets this page run ZO-AI there, with that computer's files and tools. Choose it with the Run on control under the message box. Anyone who can sign in to your account on the web can run tools on this computer. Keep Ask-first on.")));
+  if (!links.ok) { const r = btn("Try again", "primary", () => settingsPage("computers")); b.appendChild(cardOf(row("Could not check your computers", "Check your connection and try again.", r))); return; }
+  const rows = links.devices.map(d => {
+    const c = dcaps(d), chips = [];
+    chips.push(c.claude_code ? "Claude Code installed" : "Claude Code not found");
+    if (c.version) chips.push("ZO-AI " + String(c.version).slice(0, 24)); if (c.os) chips.push(String(c.os).slice(0, 32));
+    chips.push(c.approvals_from_web ? "Approvals can be answered here" : "Approvals are answered on the computer");
+    const use = btn(runOn === d.id ? "In use" : "Run chats here", runOn === d.id ? "" : "primary", () => { setRunOn(d.id, devName(d)); go("new"); }); use.disabled = runOn === d.id || !d.online;
+    const r = row(devName(d), (d.online ? "Online now" : "Not reachable" + (d.last_seen ? " · last seen " + ago(secs(d.last_seen)) : "")), use);
+    const dot = document.createElement("span"); dot.className = "pdot" + (d.online ? " on" : ""); dot.style.marginRight = "8px"; r.querySelector(".pc-name2").prepend(dot);
+    const ch = document.createElement("div"); chips.forEach(t => { const s = document.createElement("span"); s.className = "cap-chip"; s.textContent = t; ch.appendChild(s); }); r.querySelector(".col").appendChild(ch);
+    return r;
+  });
+  b.appendChild(head("Linked computers"));
+  b.appendChild(cardOf(...(rows.length ? rows : [row("No computer is linked", "Open ZO-AI on your computer and sign in with this account. Then turn on Settings > Account and sync > Control this computer from the web. The app can run in the tray.")]),
+    row("Presence", "A computer counts as online when ZO-AI on it checked in within the last 40 seconds.", btn("Check again", "", () => settingsPage("computers")))));
+}
+async function claudeCard(b) {
+  if (restricted()) return;
+  let cc = null; try { cc = await acctOp("claude_status"); } catch { return; }
+  if (!cc || !cc.admin) return;
+  b.appendChild(head("Claude Code (your subscription)"));
+  b.appendChild(cardOf(row(cc.present ? "Ready on the server" : "Not set up", claudeLine(cc))));
+}
+setInterval(() => { if (!document.hidden && !$("app").classList.contains("hide") && ($("pRun") || nav === "settings")) linkRefresh().then(() => { if ($("pModelT") && onDesktop() && links.ok) refreshModel(); }); }, 20000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && !$("app").classList.contains("hide") && $("pRun")) linkRefresh(); });
+/* ===== LINK-END ===== */
 
 /* ---------- voice: speech in (Web Speech API) and answers read aloud (speechSynthesis) ---------- */
 /* Chrome and Edge send the audio to the browser maker's speech service; it never goes to ZO-AI's server. */
@@ -553,7 +688,7 @@ function voiceSpeak(text, wrap) {
 /* ---------- home and chat ---------- */
 function showHome() {
   chatId = ""; setNav("new"); setTitle("");
-  view().innerHTML = `<div class="home"><div class="hero"><svg class="mark" viewBox="0 0 120 120" data-mark></svg><div class="hero-title">${esc(greet())}</div></div><div class="composer-wrap">${composerHTML()}${restricted() ? '<div class="web-note">Web version: chat, web search and memory. Computer control runs in the desktop app, which syncs your chats here.</div>' : ""}</div></div>`;
+  view().innerHTML = `<div class="home"><div class="hero"><svg class="mark" viewBox="0 0 120 120" data-mark></svg><div class="hero-title">${esc(greet())}</div></div><div class="composer-wrap">${composerHTML()}${restricted() ? '<div class="web-note">Web version: chat, web search and memory. Computer control runs in the desktop app, which syncs your chats here. To run on your own computer from this page, choose My computer under the message box.</div>' : ""}</div></div>`;
   wireComposer();
 }
 function showThread(title) {
@@ -606,13 +741,19 @@ async function openChat(id) {
 
 async function send() {
   voiceStop(true); voiceSpeakStop(); const t = $("text"); const text = t.value.trim(); if (!text || busy) return;
+  const dsk = onDesktop();
+  if (dsk) { /* look first: if the computer is not there, say so and keep the text */
+    setBusy(true); const ok = await linkRefresh(); setBusy(false);
+    if (!onDesktop()) { $("text")?.focus(); return toast("Back to the cloud: send again."); }
+    if (!ok || !devOnline(curDev())) { runPaint(); toast(ok ? "Your computer is not reachable." : "Could not check your computer."); $("text")?.focus(); return; }
+  }
   if (!$("thread")) showThread("New chat");
   const first = !chatId;
   t.value = ""; t.style.height = "auto";
   addUser(text); setBusy(true);
-  let ai = null, acc = "", group = null;
+  let ai = null, acc = "", group = null, gotDone = false;
   try {
-    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId }) });
+    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify(dsk ? { text, chat: chatId, target: "desktop", device: runOn } : { text, chat: chatId }) });
     if (r.status === 429) { const m = limitMsg(r); toast(m); throw new Error(m); }
     if (!r.ok || !r.body) { let j = {}; try { j = await r.json(); } catch {} throw new Error(j.error || "Error " + r.status); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
@@ -623,25 +764,29 @@ async function send() {
         const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue;
         let ev; try { ev = JSON.parse(line); } catch { continue; }
         switch (ev.event) {
-          case "stream": stream = ev.id; break;
+          case "stream": stream = ev.id; if (dsk) { const m = document.createElement("div"); m.className = "pc-meta"; m.textContent = "Running on your computer" + (ev.device ? " (" + String(ev.device).slice(0, 60) + ")" : ""); thread().appendChild(m); } break;
+          case "done": gotDone = true; clearWait(); break;
           case "chat": chatId = ev.id; setTitle(ev.title || "Chat"); break;
-          case "delta": endGroup(group); group = null; if (!ai) { ai = aiBox(); acc = ""; } acc += ev.text; setAi(ai, acc); break;
+          case "delta": clearWait(); endGroup(group); group = null; if (!ai) { ai = aiBox(); acc = ""; } acc += ev.text; setAi(ai, acc); break;
           case "text": if (!acc) { if (!ai) ai = aiBox(); acc = ev.text; setAi(ai, acc); } break;
-          case "tool_start": ai = null; acc = ""; if (!group) group = newGroup(true); groupAdd(group, ev.summary || ev.name); scrollEnd(); break;
-          case "tool_done": if (group && ev.output) groupOut(group, ev.output); break;
-          case "approval": ask(ev); break;
-          case "error": addError(ev.error); break;
-          case "stopped": addError("Stopped."); break;
+          case "tool_start": clearWait(); ai = null; acc = ""; if (!group) group = newGroup(true); groupAdd(group, ev.summary || ev.name); scrollEnd(); break;
+          case "tool_done": clearWait(); if (group && ev.output) groupOut(group, ev.output); break;
+          case "approval": if (dsk && !dcaps(curDev()).approvals_from_web) waitApproval(ev.summary || ev.tool); else ask(ev); break;
+          case "approval_wait": case "waiting_approval": if (dsk) waitApproval(ev.summary); break;
+          case "error": if (ev.error === "desktop_offline") { addError(OFFLINE_MSG); linkRefresh(); } else addError(ev.message && dsk ? ev.message : ev.error); break;
+          case "stopped": clearWait(); addError("Stopped."); gotDone = true; break;
         }
       }
     }
+    if (dsk && !gotDone) { addError("The connection to your computer was lost. The task may still be running there: check Running now on your computer."); linkRefresh(); }
   } catch (e) { addError(e.message); }
-  endGroup(group); stream = 0; setBusy(false); $("text")?.focus(); refreshChats();
+  clearWait(); endGroup(group); stream = 0; setBusy(false); $("text")?.focus(); refreshChats();
+  if (dsk) setTimeout(refreshChats, 6000); /* the computer syncs the chat to the server after the turn */
   if (ai && acc && ai.isConnected && voiceGet("read") === "1") voiceSpeak(acc, ai);
 }
 function ask(ev) {
   const d = document.createElement("div"); d.className = "ask";
-  d.innerHTML = `<div>ZO-AI wants to: ${esc(ev.summary || ev.tool)}</div><div class="row"><button class="btn primary">Allow</button><button class="btn">Deny</button></div>`;
+  d.innerHTML = `<div>${onDesktop() ? "Your computer: " : ""}ZO-AI wants to: ${esc(ev.summary || ev.tool)}</div><div class="row"><button class="btn primary">Allow</button><button class="btn">Deny</button></div>`;
   thread().appendChild(d); scrollEnd();
   const [yes, no] = d.querySelectorAll("button");
   const answer = ok => { api("/api/reply", { stream, op: "approve", id: ev.id, yes: ok }).catch(() => {}); d.innerHTML = `<span class="pc-meta">${ok ? "Allowed" : "Denied"}: ${esc(ev.summary || ev.tool)}</span>`; };
@@ -688,36 +833,39 @@ function popover(anchor, html) {
   setTimeout(() => document.addEventListener("mousedown", function h(e) { if (!p.contains(e.target)) { p.remove(); document.removeEventListener("mousedown", h); } }), 0);
   return p;
 }
-const modes = () => restricted() ? ["Manual", "Auto"] : ["Manual", "Auto", "Bypass"];
+const modes = () => (restricted() || onDesktop()) ? ["Manual", "Auto"] : ["Manual", "Auto", "Bypass"];
 function modePopover(a) {
   const info = { Manual: "Asks before every change and command.", Auto: "Looking around runs; changes ask first.", Bypass: "Never asks." };
-  const p = popover(a, '<div class="pop-head">What ZO-AI may do</div>' + modes().map(m => `<button class="pop-row" data-m="${m}"><div class="c"><div class="pop-title">${m}</div><div class="pop-sub">${info[m]}</div></div><span class="pop-check">${m === mode ? icon("check") : ""}</span></button>`).join(""));
-  p.querySelectorAll("[data-m]").forEach(b => b.onclick = async () => { await op("mode", { set: b.dataset.m }); mode = b.dataset.m; p.remove(); refreshModel(); });
+  const p = popover(a, '<div class="pop-head">What ZO-AI may do</div>' + modes().map(m => `<button class="pop-row" data-m="${m}"><div class="c"><div class="pop-title">${m}</div><div class="pop-sub">${info[m]}</div></div><span class="pop-check">${m === curMode() ? icon("check") : ""}</span></button>`).join("") + (onDesktop() ? '<div class="pop-sub" style="padding:4px 10px 8px">Your computer may limit this: web sessions never run on Bypass unless you allowed it there.</div>' : ""));
+  p.querySelectorAll("[data-m]").forEach(b => b.onclick = async () => { try { await mop("mode", { set: b.dataset.m }); if (!onDesktop()) mode = b.dataset.m; } catch (e) { toast(e.message); } p.remove(); refreshModel(); });
 }
 async function modelPopover(a) {
-  let prof = { profiles: [] }; try { prof = await op("profiles"); } catch {}
+  let prof = { profiles: [] }; try { prof = await mop("profiles"); if (!Array.isArray(prof.profiles)) prof.profiles = []; } catch (e) { if (onDesktop()) toast(e.message); }
   const rows = prof.profiles.map(x => `<button class="pop-row" data-p="${esc(x.id)}"><div class="c"><div class="pop-title">${esc(x.name)}</div><div class="pop-sub">${esc(x.provider)} · ${esc(x.model)}</div></div><span class="pop-check">${prof.active === x.id ? icon("check") : ""}</span></button>`).join("");
-  const p = popover(a, (rows ? '<div class="pop-head">Profiles</div>' + rows : "") + `<button class="pop-row" data-more><div class="c"><div class="pop-title">Model and API key…</div></div></button>`);
-  p.querySelectorAll("[data-p]").forEach(b => b.onclick = async () => { await op("profile_use", { id: b.dataset.p }); p.remove(); refreshModel(); });
+  const p = popover(a, (rows ? '<div class="pop-head">Profiles</div>' + rows : "") + `<button class="pop-row" data-more><div class="c"><div class="pop-title">${onDesktop() ? "Models on your computer…" : "Model and API key…"}</div></div></button>`);
+  p.querySelectorAll("[data-p]").forEach(b => b.onclick = async () => { try { await mop("profile_use", { id: b.dataset.p }); } catch (e) { toast(e.message); } p.remove(); refreshModel(); });
   p.querySelector("[data-more]").onclick = () => { p.remove(); modelSheet(); };
 }
 async function modelSheet() {
-  let prov; try { prov = await op("providers"); } catch (e) { return toast(e.message); }
+  const dsk = onDesktop(); let prov; try { prov = await mop("providers"); if (!Array.isArray(prov.providers)) prov.providers = []; } catch (e) { return toast(e.message); }
+  let cc = null; if (!dsk && !restricted()) { try { cc = await acctOp("claude_status"); } catch { cc = null; } }
   const wrap = document.createElement("div");
-  wrap.innerHTML = `<div class="field-label">Provider</div><select id="mProv"></select><div class="field-label">API key</div><input class="field-input" id="mKey" type="password" placeholder="Paste the key (empty keeps the saved one)" autocomplete="off"><div class="field-hint">${restricted() ? "Bring your own key: it is stored encrypted on our server and only used to call your provider for you. Only public https model addresses work." : "Keys stay on the server, stored encrypted."}</div><div class="field-label">Model</div><select id="mModel"></select><div class="field-hint" id="mMsg"></div>`;
-  const sh = sheet("Model and API key", wrap, [btn("Close", "", () => { sh.close(); refreshModel(); })]);
+  wrap.innerHTML = `<div class="field-label">Provider</div><select id="mProv"></select><div class="field-hint hide" id="mCC"></div><div id="mKeyBox" ${dsk ? "hidden" : ""}><div class="field-label">API key</div><input class="field-input" id="mKey" type="password" placeholder="Paste the key (empty keeps the saved one)" autocomplete="off"><div class="field-hint">${restricted() ? "Bring your own key: it is stored encrypted on our server and only used to call your provider for you. Only public https model addresses work." : "Keys stay on the server, stored encrypted."}</div></div>${dsk ? '<div class="field-hint">This changes the model on your computer. API keys are set in the desktop app, never here.</div>' : ""}<div class="field-label">Model</div><select id="mModel"></select><div class="field-hint" id="mMsg"></div>`;
+  const sh = sheet(dsk ? "Models on your computer" : "Model and API key", wrap, [btn("Close", "", () => { sh.close(); refreshModel(); })]);
   const sp = wrap.querySelector("#mProv"), sm = wrap.querySelector("#mModel"), msg = wrap.querySelector("#mMsg");
-  if (restricted()) prov.providers = prov.providers.filter(p => !p.local && p.id !== "claude-code" && !/^(ollama|lmstudio|llamacpp|vllm|sglang|claude-code)$/.test(p.id));
+  if (!dsk && cc && cc.admin) { const h = wrap.querySelector("#mCC"); h.classList.remove("hide"); h.textContent = claudeLine(cc); if (!cc.present) prov.providers = prov.providers.filter(p => p.id !== "claude-code"); }
+  else if (!dsk && !restricted()) prov.providers = prov.providers.filter(p => p.id !== "claude-code");
+  if (!dsk && restricted()) prov.providers = prov.providers.filter(p => !p.local && p.id !== "claude-code" && !/^(ollama|lmstudio|llamacpp|vllm|sglang|claude-code)$/.test(p.id));
   prov.providers.forEach(p => sp.insertAdjacentHTML("beforeend", `<option value="${esc(p.id)}" ${p.id === prov.current ? "selected" : ""}>${esc(p.name)}${p.has_key ? " ✓" : ""}</option>`));
   if (!prov.current) sp.insertAdjacentHTML("afterbegin", '<option value="" selected>Choose…</option>');
   async function models() {
     if (!sp.value) { sm.innerHTML = ""; return; }
     sm.innerHTML = "<option>Loading…</option>";
-    try { const r = await op("models", { provider: sp.value }); sm.innerHTML = ""; (r.models || []).forEach(x => sm.insertAdjacentHTML("beforeend", `<option ${x === r.current ? "selected" : ""}>${esc(x)}</option>`)); if (!r.models.length) sm.innerHTML = "<option value=''>No models: save the key first</option>"; }
+    try { const r = await mop("models", { provider: sp.value }); sm.innerHTML = ""; (r.models || []).forEach(x => sm.insertAdjacentHTML("beforeend", `<option ${x === r.current ? "selected" : ""}>${esc(x)}</option>`)); if (!(r.models || []).length) sm.innerHTML = dsk ? "<option value=''>No models listed</option>" : "<option value=''>No models: save the key first</option>"; }
     catch (e) { sm.innerHTML = "<option value=''></option>"; msg.textContent = e.message; }
   }
-  sp.onchange = async () => { if (sp.value) { await op("select", { provider: sp.value }); prov.current = sp.value; msg.textContent = ""; models(); } };
-  sm.onchange = async () => { if (sm.value) { await op("select", { model: sm.value }); msg.textContent = "Model chosen."; } };
+  sp.onchange = async () => { if (sp.value) { try { await mop("select", { provider: sp.value }); prov.current = sp.value; msg.textContent = ""; models(); } catch (e) { msg.textContent = e.message; } } };
+  sm.onchange = async () => { if (sm.value) { try { await mop("select", { model: sm.value }); msg.textContent = "Model chosen."; } catch (e) { msg.textContent = e.message; } } };
   wrap.querySelector("#mKey").onchange = async e => { const k = e.target.value.trim(); if (!k || !sp.value) return; try { await op("set_key", { provider: sp.value, key: k }); e.target.value = ""; msg.textContent = "Key saved."; models(); } catch (er) { msg.textContent = er.message; } };
   models();
 }
@@ -774,7 +922,7 @@ async function showScheduled() {
 }
 
 /* ---------- settings: a list of pages, each with a Back button ---------- */
-const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How ZO-AI talks to you."], ["memory", "Memory", "What ZO-AI remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."], ["apps", "Connected apps", "Tools ZO-AI can use (MCP servers)."], ["machines", "Machines", "Computers ZO-AI can reach over SSH."], ["sync", "Desktop sync", "Share chats and memory with the desktop app."], ["account", "Account", "Your data, signed-in devices, export and delete."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
+const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How ZO-AI talks to you."], ["memory", "Memory", "What ZO-AI remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."], ["apps", "Connected apps", "Tools ZO-AI can use (MCP servers)."], ["machines", "Machines", "Computers ZO-AI can reach over SSH."], ["sync", "Desktop sync", "Share chats and memory with the desktop app."], ["computers", "My computers", "Computers you can run ZO-AI on from this page."], ["account", "Account", "Your data, signed-in devices, export and delete."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
 const pages = () => PAGES.filter(p => !(restricted() && ADMIN_PAGES.includes(p[0])));
 function row(title, sub, control) { const r = document.createElement("div"); r.className = "settings-row"; r.innerHTML = `<div class="col"><div class="pc-name2"></div>${sub ? '<div class="pc-meta2"></div>' : ""}</div>`; r.querySelector(".pc-name2").textContent = title; if (sub) r.querySelector(".pc-meta2").textContent = sub; if (control) r.appendChild(control); return r; }
 function cardOf(...rows) { const c = document.createElement("div"); c.className = "settings-card"; rows.forEach(r => c.appendChild(r)); return c; }
@@ -792,7 +940,7 @@ async function settingsPage(id) {
   view().style.overflow = ""; view().innerHTML = `<div class="pagebox narrow"><div class="page-head" id="ph" style="gap:10px"></div><div id="pbody"></div></div>`;
   $("ph").appendChild(bk); $("ph").insertAdjacentHTML("beforeend", '<div class="page-title"></div>'); $("ph").querySelector(".page-title").textContent = name;
   const b = $("pbody"); b.innerHTML = '<div class="pc-meta">Loading…</div>';
-  try { await ({ model: pageModel, personality: pagePersonality, memory: pageMemory, general: pageGeneral, apps: pageApps, machines: pageMachines, sync: pageSync, account: pageAccount, data: pageData, about: pageAbout })[id](b); } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
+  try { await ({ model: pageModel, personality: pagePersonality, memory: pageMemory, general: pageGeneral, apps: pageApps, machines: pageMachines, sync: pageSync, computers: pageComputers, account: pageAccount, data: pageData, about: pageAbout })[id](b); } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
 }
 async function pageModel(b) {
   const [s, prof] = await Promise.all([op("status"), op("profiles")]); b.innerHTML = "";
@@ -802,6 +950,7 @@ async function pageModel(b) {
   b.appendChild(head("Profiles"));
   const rows = prof.profiles.map(p => { const on = prof.active === p.id; const u = btn(on ? "In use" : "Use", on ? "" : "primary", async () => { await op("profile_use", { id: p.id }); settingsPage("model"); }); u.disabled = on; return row(p.name, p.provider + " · " + p.model, u); });
   b.appendChild(rows.length ? cardOf(...rows) : cardOf(row("No profiles yet", "A profile is a preset: a provider, a model, its address, how hard it thinks and its own API key. Make several and switch between them here. Profiles made on the computer sync here.")));
+  await claudeCard(b);
 }
 async function pagePersonality(b) {
   const st = await op("personalities"); b.innerHTML = "";
