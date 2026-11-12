@@ -419,13 +419,14 @@ pub fn update_text(id: &str, text: &str) -> bool {
 }
 
 pub fn forget(id: &str) -> bool {
-    let gone = change(|s| {
+    let (gone, updated) = change(|s| {
+        let updated = s.items.iter().find(|i| i.id == id).map_or(0, |i| i.updated);
         let before = s.items.len();
         s.items.retain(|i| i.id != id);
-        s.items.len() != before
+        (s.items.len() != before, updated)
     });
     if gone {
-        crate::sync::tombstone("memory", id);
+        crate::sync::tombstone("memory", id, updated);
     }
     gone
 }
@@ -450,12 +451,12 @@ pub fn set_pinned(id: &str, on: bool) {
 }
 
 pub fn clear_all() {
-    let ids: Vec<String> = change(|s| {
+    let items: Vec<(String, u64)> = change(|s| {
         s.read.clear();
-        s.items.drain(..).map(|i| i.id).collect()
+        s.items.drain(..).map(|i| (i.id, i.updated)).collect()
     });
-    for id in ids {
-        crate::sync::tombstone("memory", &id);
+    for (id, updated) in items {
+        crate::sync::tombstone("memory", &id, updated);
     }
 }
 

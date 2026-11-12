@@ -142,7 +142,9 @@ pub fn run_on(name: &str, remote_cmd: &str, input: Option<&[u8]>, timeout: u64, 
     drop(key);
     let _ = std::fs::create_dir_all(crate::audit::config_dir());
     let args = argv(&m, &key_file.0, &known_hosts(), remote_cmd)?;
-    let mut child = Command::new("ssh")
+    let mut ssh = Command::new("ssh");
+    crate::exec::scrub(&mut ssh);
+    let mut child = ssh
         .args(&args)
         .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())

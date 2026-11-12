@@ -86,28 +86,40 @@ fn handle_line(v: &Value, session: &mut Option<String>, names: &mut Vec<(String,
 /// server the session files are lost at a redeploy or sleep) and nothing came back, it is dropped and the message is sent again
 /// as a new session.
 pub fn run(model: &str, effort: Option<&str>, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+    run_in_mode(None, model, effort, session, prompt, system_extra, cancel, on_event)
+}
+
+/// `run`, with a permission mode for this question only (None: the saved mode, as the tools server reads it).
+#[allow(clippy::too_many_arguments)]
+pub fn run_in_mode(mode: Option<crate::policy::Mode>, model: &str, effort: Option<&str>, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     let had_session = session.is_some();
     let mut got_event = false;
-    let r = run_once(model, effort, session, prompt, system_extra, cancel, &mut |e| {
+    let r = run_once(mode, model, effort, session, prompt, system_extra, cancel, &mut |e| {
         got_event = true;
         on_event(e)
     });
     match r {
         Err(ref e) if had_session && !got_event && e != super::agent::STOPPED && !cancel.load(Ordering::Relaxed) => {
             *session = None;
-            run_once(model, effort, session, prompt, system_extra, cancel, on_event)
+            run_once(mode, model, effort, session, prompt, system_extra, cancel, on_event)
         }
         r => r,
     }
 }
 
-fn run_once(model: &str, effort: Option<&str>, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+fn run_once(mode: Option<crate::policy::Mode>, model: &str, effort: Option<&str>, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     let system = if system_extra.trim().is_empty() { SYSTEM_PROMPT.to_string() } else { format!("{SYSTEM_PROMPT}\n\n{system_extra}") };
     // Claude can look at what the tools return as pictures (a screenshot comes back as an image)
     let system = format!("{system}\n\n{}", super::agent::VISION_YES);
     let bin = binary().ok_or("Claude Code is not installed. Install it (npm install -g @anthropic-ai/claude-code), then sign in with: claude auth login (on a server, set CLAUDE_CODE_OAUTH_TOKEN instead: run `claude setup-token` on your own computer)")?;
-    let config = json!({ "mcpServers": { "zohara": { "command": mcp_binary(), "env": { "ZO_MCP_EXTERNAL": "1" } } } }).to_string();
+    let mut env = json!({ "ZO_MCP_EXTERNAL": "1" });
+    if let Some(m) = mode {
+        env["ZO_MCP_MODE"] = json!(m.name());
+    }
+    let config = json!({ "mcpServers": { "zohara": { "command": mcp_binary(), "env": env } } }).to_string();
     let mut cmd = Command::new(bin);
+    crate::exec::scrub_server(&mut cmd);
     cmd.args(["-p", prompt, "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--strict-mcp-config", "--mcp-config", &config,
         // Claude's own file and shell tools are off: everything goes through ZO-AI's tools, so ZO-AI's permission modes apply
         "--tools", "", "--allowedTools", "mcp__zohara__*", "--append-system-prompt", &system]);
@@ -174,6 +186,7 @@ fn run_once(model: &str, effort: Option<&str>, session: &mut Option<String>, pro
 pub fn complete(model: &str, system: &str, prompt: &str, cancel: &Arc<AtomicBool>) -> Result<String, String> {
     let bin = binary().ok_or("Claude Code is not installed.")?;
     let mut cmd = Command::new(bin);
+    crate::exec::scrub_server(&mut cmd);
     cmd.args(["-p", prompt, "--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--tools", "", "--no-session-persistence", "--system-prompt", system]);
     if !model.is_empty() {
         cmd.args(["--model", model]);

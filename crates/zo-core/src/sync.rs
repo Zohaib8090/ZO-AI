@@ -22,6 +22,13 @@ pub const KINDS: [&str; 3] = ["chats", "memory", "personalities"];
 pub const STATE_ID: &str = "_state";
 /// Tombstones are forgotten after this long (a computer that was off for longer may bring a deleted item back).
 const TOMB_KEEP_MS: u64 = 90 * 86_400_000;
+/// A change or deletion stamped further ahead than this is refused (a clock that is wrong, or a bad caller): it would block every
+/// later edit of the item. It is tried again each round, so it goes through once the time has come.
+const MAX_AHEAD_MS: u64 = 3_600_000;
+
+fn too_far_ahead(at: u64) -> bool {
+    at > chats::now_millis().saturating_add(MAX_AHEAD_MS)
+}
 
 /// `"kind:id"` -> a time in milliseconds.
 pub type Times = BTreeMap<String, u64>;
@@ -123,9 +130,10 @@ fn tomb_edit(f: impl FnOnce(&mut Times)) {
     }
 }
 
-/// Remembers that the item was deleted now.
-pub fn tombstone(kind: &str, id: &str) {
-    tomb_set(&key(kind, id), chats::now_millis());
+/// Remembers that the item was deleted now. `item_updated` is when it last changed: the deletion is never stamped before that
+/// (a clock that went back would otherwise make the deletion look stale and undo it).
+pub fn tombstone(kind: &str, id: &str, item_updated: u64) {
+    tomb_set(&key(kind, id), chats::now_millis().max(item_updated.saturating_add(1)));
 }
 
 /// Remembers a deletion at `at` (the newest time is kept).
@@ -170,7 +178,8 @@ pub fn manifest_json() -> Value {
 }
 
 pub fn side_to_json(s: &Side) -> Value {
-    let mut out = json!({"chats": {}, "memory": {}, "personalities": {}, "deleted": s.deleted});
+    // `now` is this computer's clock: the other side uses it to see how far its own clock is off
+    let mut out = json!({"chats": {}, "memory": {}, "personalities": {}, "deleted": s.deleted, "now": chats::now_millis()});
     for (k, u) in &s.items {
         if let Some((kind, id)) = split_key(k) {
             out[kind][id] = json!(u);
@@ -259,38 +268,46 @@ pub fn put_doc(kind: &str, id: &str, doc: &Value) -> Result<bool, String> {
     if id_in_doc != id {
         return Err("The document's id is not the one asked for.".into());
     }
+    if too_far_ahead(up) {
+        return Err("That item is dated in the future (is a clock wrong?), so it is not taken in yet.".into());
+    }
     let k = key(kind, id);
     let tomb = tombstones().get(&k).copied();
     if tomb.is_some_and(|t| t >= up) || local_updated(kind, id).is_some_and(|l| l >= up) {
         return Ok(false);
     }
-    match parsed {
-        Parsed::Chat(c) => {
-            if !chats::fits(up) {
-                return Ok(false);
-            }
-            chats::import(c);
-        }
+    // the last check and the write happen together (under the store's own lock), so a change made here meanwhile is not overwritten
+    let applied = match parsed {
+        Parsed::Chat(c) => chats::import_if_newer(c),
         Parsed::State(enabled, every) => memory::change(|s| {
+            if s.state_updated >= up {
+                return false;
+            }
             s.enabled = enabled;
             s.every = every;
             s.state_updated = up;
+            true
         }),
         Parsed::Note(i) => memory::change(|s| {
+            if s.items.iter().any(|x| x.id == i.id && x.updated >= i.updated) {
+                return false;
+            }
             s.items.retain(|x| x.id != i.id);
             s.items.push(i);
+            true
         }),
         Parsed::Person(p) => {
             if personality::builtin().iter().any(|b| b.id == p.id) {
                 return Err("That is a built-in personality.".into());
             }
             personality::import(p);
+            true
         }
-    }
-    if tomb.is_some() {
+    };
+    if applied && tomb.is_some() {
         tomb_clear(&k);
     }
-    Ok(true)
+    Ok(applied)
 }
 
 /// Applies a deletion that came from the other side: remembers it, and removes the item here unless it changed after `at`.
@@ -299,6 +316,9 @@ pub fn apply_delete(kind: &str, id: &str, at: u64) -> Result<bool, String> {
     checked(kind, id)?;
     if kind == "memory" && id == STATE_ID {
         return Err("The memory state cannot be deleted.".into());
+    }
+    if too_far_ahead(at) {
+        return Err("That deletion is dated in the future (is a clock wrong?), so it is not taken in yet.".into());
     }
     tomb_set(&key(kind, id), at);
     let Some(l) = local_updated(kind, id) else { return Ok(false) };
@@ -336,11 +356,34 @@ pub fn config() -> Config {
 /// (plain http only for this computer itself).
 pub fn clean_url(url: &str) -> Result<String, String> {
     let u = url.trim().trim_end_matches('/').to_string();
-    let local = ["http://127.0.0.1", "http://localhost", "http://[::1]"].iter().any(|p| u.strip_prefix(p).is_some_and(|rest| rest.is_empty() || rest.starts_with(':')));
-    if u.starts_with("https://") && u.len() > 10 || local {
+    let err = || "The server address must start with https:// (so the access token is not sent in the open).".to_string();
+    let (https, rest) = match (u.strip_prefix("https://"), u.strip_prefix("http://")) {
+        (Some(r), _) => (true, r),
+        (None, Some(r)) => (false, r),
+        _ => return Err(err()),
+    };
+    // the host is what stands before the first `/ ? # \`; `user@host` tricks (http://localhost:80@evil.example) are refused, and
+    // plain http is only for this computer itself, matched on the whole host
+    let authority = rest.split(['/', '?', '#', '\\']).next().unwrap_or("");
+    if authority.is_empty() || authority.contains(['@', ' ']) || u.contains('\\') || u.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(err());
+    }
+    if https {
+        return Ok(u);
+    }
+    let (host, port) = if let Some(rest) = authority.strip_prefix("[::1]") {
+        ("[::1]", if rest.is_empty() { None } else { Some(rest.strip_prefix(':').unwrap_or("x")) })
+    } else {
+        match authority.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (authority, None),
+        }
+    };
+    let port_ok = port.map_or(true, |p| !p.is_empty() && p.len() <= 5 && p.chars().all(|c| c.is_ascii_digit()));
+    if port_ok && matches!(host, "127.0.0.1" | "localhost" | "[::1]") {
         Ok(u)
     } else {
-        Err("The server address must start with https:// (so the access token is not sent in the open).".into())
+        Err(err())
     }
 }
 
@@ -393,6 +436,8 @@ fn post(base: &str, token: &str, path: &str, body: &Value) -> Result<Value, Stri
     match ureq::post(&url).timeout(Duration::from_secs(20)).set("Authorization", &format!("Bearer {token}")).send_json(body.clone()) {
         Ok(r) => r.into_json::<Value>().map_err(|_| "The server's answer was not understood.".to_string()),
         Err(ureq::Error::Status(401, _)) => Err("The server refused the access token.".into()),
+        // a server that is down or restarting is not an answer about the item
+        Err(ureq::Error::Status(c, _)) if c >= 500 => Err(format!("The server answered {c}.")),
         Err(ureq::Error::Status(c, r)) => {
             let msg = r.into_json::<Value>().ok().and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string));
             Err(msg.unwrap_or_else(|| format!("The server answered {c}.")))
@@ -401,55 +446,140 @@ fn post(base: &str, token: &str, path: &str, body: &Value) -> Result<Value, Stri
     }
 }
 
+/// How far this computer's clock is behind the server's (add it to a local time to get the server's), from the server's `now` in
+/// its manifest and the middle of the time the request took. Under 5 seconds counts as none; it is kept to whole seconds so that
+/// it does not change from round to round.
+pub fn skew_ms(sent: u64, received: u64, server_now: u64) -> i64 {
+    let mid = sent / 2 + received / 2;
+    let d = server_now as i64 - mid as i64;
+    if d.abs() < 5_000 {
+        0
+    } else {
+        d / 1000 * 1000
+    }
+}
+
+fn shift_time(t: u64, by: i64) -> u64 {
+    if by >= 0 {
+        t.saturating_add(by as u64)
+    } else {
+        t.saturating_sub(by.unsigned_abs())
+    }
+}
+
+/// A side with its times moved onto the other computer's clock. Personalities keep theirs: their time is in their id.
+fn shifted(s: &Side, by: i64) -> Side {
+    let f = |m: &Times, tomb: bool| -> Times { m.iter().map(|(k, t)| (k.clone(), if !tomb && k.starts_with("personalities:") { *t } else { shift_time(*t, by) })).collect() };
+    Side { items: f(&s.items, false), deleted: f(&s.deleted, true) }
+}
+
+/// Moves the time inside a document (chats and memory carry one) by `by`.
+fn shift_doc(kind: &str, doc: &mut Value, by: i64) {
+    if kind != "personalities" {
+        if let Some(u) = doc.get("updated").and_then(Value::as_u64) {
+            doc["updated"] = json!(shift_time(u, by));
+        }
+    }
+}
+
+/// Things that stop the whole round: the server cannot be reached or does not accept the token. Any other error belongs to one item.
+fn is_fatal(e: &str) -> bool {
+    e.starts_with("Cannot reach the server") || e.starts_with("The server refused the access token") || e.starts_with("The server's answer") || e.starts_with("The server answered 5")
+}
+
+/// The items the last round skipped because of an error of their own (the rest of the round went on).
+static SKIPPED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+pub fn skipped() -> Vec<String> {
+    SKIPPED.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
 /// One round: compare with the server and carry out the plan. Returns (pulled, pushed, deleted on either side).
+/// An error that belongs to one item (the server refuses it, it does not parse, it is dated in the future) skips that item and
+/// goes on with the others; see `skipped()`. Only a failure to reach the server or sign in ends the round.
 pub fn sync_with(base: &str, token: &str) -> Result<(usize, usize, usize), String> {
     let base = clean_url(base)?;
-    let remote = side_from_json(&post(&base, token, "/api/sync/manifest", &json!({}))?)?;
-    let local = local_side();
+    let sent = chats::now_millis();
+    let manifest = post(&base, token, "/api/sync/manifest", &json!({}))?;
+    let received = chats::now_millis();
+    let remote = side_from_json(&manifest)?;
+    // the two computers' clocks may differ: times are compared on the server's clock, and documents are moved onto it or back
+    let skew = manifest.get("now").and_then(Value::as_u64).map_or(0, |n| skew_ms(sent, received, n));
+    let local_raw = local_side();
+    let local = shifted(&local_raw, skew);
     let plan = plan(&local, &remote);
     let (mut pulled, mut pushed, mut deleted) = (0, 0, 0);
+    let mut skipped: Vec<String> = Vec::new();
     let split = |k: &str| split_key(k).map(|(a, b)| (a.to_string(), b.to_string())).ok_or_else(|| "The server named an unknown kind of item.".to_string());
+    let is_refused = |what: &str, k: &str, up: u64| REFUSED.lock().unwrap_or_else(|e| e.into_inner()).contains(&(format!("{what} {k}"), up));
+    let refuse = |what: &str, k: &str, up: u64| {
+        REFUSED.lock().unwrap_or_else(|e| e.into_inner()).insert((format!("{what} {k}"), up));
+    };
+    // Err(fatal) ends the round; an item's own error is noted and the next item goes on
+    let mut note = |k: &str, e: String| -> Result<(), String> {
+        if is_fatal(&e) {
+            return Err(e);
+        }
+        skipped.push(format!("{k}: {e}"));
+        Ok(())
+    };
     for (k, at) in &plan.delete_local {
-        let (kind, id) = split(k)?;
-        if apply_delete(&kind, &id, *at)? {
-            deleted += 1;
+        let r = split(k).and_then(|(kind, id)| apply_delete(&kind, &id, shift_time(*at, -skew)));
+        match r {
+            Ok(true) => deleted += 1,
+            Ok(false) => {}
+            Err(e) => note(k, e)?,
         }
     }
     for (k, at) in &plan.delete_remote {
-        let (kind, id) = split(k)?;
-        let r = post(&base, token, "/api/sync/delete", &json!({"kind": kind, "id": id, "at": at}))?;
-        if r.get("deleted").and_then(Value::as_bool) == Some(true) {
-            deleted += 1;
+        let r = split(k).and_then(|(kind, id)| post(&base, token, "/api/sync/delete", &json!({"kind": kind, "id": id, "at": at})));
+        match r {
+            Ok(r) if r.get("deleted").and_then(Value::as_bool) == Some(true) => deleted += 1,
+            Ok(_) => {}
+            Err(e) => note(k, e)?,
         }
     }
     for k in &plan.pull {
-        let (kind, id) = split(k)?;
         let up = remote.items.get(k).copied().unwrap_or(0);
-        if REFUSED.lock().unwrap_or_else(|e| e.into_inner()).contains(&(format!("pull {k}"), up)) {
+        if is_refused("pull", k, up) {
             continue;
         }
-        let r = post(&base, token, "/api/sync/get", &json!({"kind": kind, "id": id}))?;
-        let doc = r.get("doc").filter(|d| d.is_object()).ok_or("The server has no such document any more.")?;
-        if put_doc(&kind, &id, doc)? {
-            pulled += 1;
-        } else {
-            REFUSED.lock().unwrap_or_else(|e| e.into_inner()).insert((format!("pull {k}"), up));
+        let r = split(k).and_then(|(kind, id)| {
+            let r = post(&base, token, "/api/sync/get", &json!({"kind": kind, "id": id}))?;
+            let mut doc = r.get("doc").filter(|d| d.is_object()).cloned().ok_or("The server has no such document any more.")?;
+            shift_doc(&kind, &mut doc, -skew);
+            put_doc(&kind, &id, &doc)
+        });
+        match r {
+            Ok(true) => pulled += 1,
+            Ok(false) => refuse("pull", k, up),
+            Err(e) => note(k, e)?,
         }
     }
     for k in &plan.push {
-        let (kind, id) = split(k)?;
         let up = local.items.get(k).copied().unwrap_or(0);
-        if REFUSED.lock().unwrap_or_else(|e| e.into_inner()).contains(&(format!("push {k}"), up)) {
+        if is_refused("push", k, up) {
             continue;
         }
-        let Some(doc) = get_doc(&kind, &id) else { continue };
-        let r = post(&base, token, "/api/sync/put", &json!({"kind": kind, "id": id, "doc": doc}))?;
-        if r.get("applied").and_then(Value::as_bool) == Some(true) {
-            pushed += 1;
-        } else {
-            REFUSED.lock().unwrap_or_else(|e| e.into_inner()).insert((format!("push {k}"), up));
+        let r = split(k).and_then(|(kind, id)| {
+            let Some(mut doc) = get_doc(&kind, &id) else { return Ok(None) };
+            shift_doc(&kind, &mut doc, skew);
+            post(&base, token, "/api/sync/put", &json!({"kind": kind, "id": id, "doc": doc})).map(Some)
+        });
+        match r {
+            Ok(Some(r)) if r.get("applied").and_then(Value::as_bool) == Some(true) => pushed += 1,
+            Ok(Some(_)) => refuse("push", k, up),
+            Ok(None) => {}
+            Err(e) => {
+                // the server refused this very version (too big, not valid): not sent again until the item changes
+                if !is_fatal(&e) {
+                    refuse("push", k, up);
+                }
+                note(k, e)?
+            }
         }
     }
+    *SKIPPED.lock().unwrap_or_else(|e| e.into_inner()) = skipped;
     Ok((pulled, pushed, deleted))
 }
 
@@ -466,7 +596,14 @@ pub fn sync_now() -> Result<(usize, usize, usize), String> {
     let mut s = STATUS.lock().unwrap_or_else(|e| e.into_inner());
     s.running = false;
     match &result {
-        Ok((a, b, c)) => *s = Status { last_ok: chats::now_millis(), error: String::new(), pulled: *a, pushed: *b, deleted: *c, running: false },
+        Ok((a, b, c)) => {
+            let sk = skipped();
+            let error = match sk.first() {
+                Some(first) => format!("{} item(s) were skipped. First: {first}", sk.len()),
+                None => String::new(),
+            };
+            *s = Status { last_ok: chats::now_millis(), error, pulled: *a, pushed: *b, deleted: *c, running: false }
+        }
         Err(e) => s.error = e.clone(),
     }
     result
@@ -587,6 +724,12 @@ mod tests {
         assert!(clean_url("http://zo.onrender.com").is_err());
         assert!(clean_url("http://127.0.0.1:8799").is_ok());
         assert!(clean_url("http://127.0.0.1.evil.com").is_err());
+        for bad in ["http://localhost:80@evil.example/", "http://127.0.0.1:1@evil.example", "http://[::1]:80@evil.example", "https://localhost:80@evil.example", "http://localhost:80\\@evil.example", "http://localhost:abc", "http://localhost:", "http://localhost.evil.com", "http://[::1]x", "http://localhost@evil.example", "https:// x.com"] {
+            assert!(clean_url(bad).is_err(), "{bad}");
+        }
+        for good in ["http://localhost", "http://localhost:8787/", "http://[::1]:8787", "http://[::1]", "https://zo.onrender.com:443"] {
+            assert!(clean_url(good).is_ok(), "{good}");
+        }
         assert!(clean_url("zo.onrender.com").is_err());
         assert!(clean_url("https://").is_err());
     }
@@ -685,6 +828,131 @@ mod tests {
         assert_eq!(m["chats"]["c1"], 100);
         assert_eq!(m["personalities"].as_object().unwrap().len(), 1, "built-in ones are not synced");
         assert!(m["deleted"].as_object().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_tombstone_is_never_stamped_before_the_item_it_deletes() {
+        let (_g, dir) = sandbox("skew");
+        let now = chats::now_millis();
+        // a chat dated half an hour ahead (a clock that was wrong): deleting it must still count as newer than the chat
+        assert!(put_doc("chats", "c1", &chat("c1", "x", now + 1_800_000)).unwrap());
+        chats::delete("c1");
+        assert!(tombstones()["chats:c1"] > now + 1_800_000);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn times_far_in_the_future_are_refused() {
+        let (_g, dir) = sandbox("future");
+        let now = chats::now_millis();
+        assert!(put_doc("chats", "c1", &chat("c1", "x", u64::MAX)).is_err());
+        assert!(put_doc("chats", "c1", &chat("c1", "x", now + 2 * MAX_AHEAD_MS)).is_err());
+        assert!(apply_delete("chats", "c1", u64::MAX).is_err());
+        assert!(put_doc("memory", STATE_ID, &json!({"enabled": true, "every": 3, "updated": u64::MAX})).is_err());
+        assert!(tombstones().is_empty() && chats::load().is_empty());
+        // a few minutes ahead is a normal clock difference
+        assert!(put_doc("chats", "c1", &chat("c1", "x", now + 300_000)).unwrap());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn clock_difference_is_measured_and_times_are_moved() {
+        assert_eq!(skew_ms(1_000_000, 1_000_400, 1_000_200), 0);
+        assert_eq!(skew_ms(1_000_000, 1_000_400, 1_000_200 + 120_000), 120_000);
+        assert_eq!(skew_ms(1_000_000, 1_000_400, 1_000_200 - 120_000), -120_000);
+        assert_eq!(shift_time(5, -10), 0);
+        let s = shifted(&side(&[("chats:a", 100), ("personalities:p1", 1)], &[("chats:z", 50)]), 20);
+        assert_eq!(s.items["chats:a"], 120);
+        assert_eq!(s.items["personalities:p1"], 1);
+        assert_eq!(s.deleted["chats:z"], 70);
+        let mut d = json!({"updated": 100});
+        shift_doc("chats", &mut d, -30);
+        assert_eq!(d["updated"], 70);
+    }
+
+    #[test]
+    fn a_chat_that_grew_while_it_was_answered_keeps_the_new_messages() {
+        let (_g, dir) = sandbox("merge");
+        let e = |k: &str, t: &str| chats::Entry { kind: k.into(), text: t.into() };
+        let mut c = chats::Chat { id: "c1".into(), title: "t".into(), updated: 100, entries: vec![e("msg-user", "one")], ..Default::default() };
+        chats::upsert(c.clone());
+        let base = chats::Base::of(&c);
+        // meanwhile the other computer adds a question and its answer (a sync put)
+        let mut theirs = c.clone();
+        theirs.entries.push(e("msg-user", "from the laptop"));
+        theirs.entries.push(e("msg-ai", "laptop answer"));
+        theirs.updated = 200;
+        assert!(chats::import_if_newer(theirs));
+        assert!(!chats::import_if_newer(chats::Chat { id: "c1".into(), updated: 200, ..Default::default() }), "not newer");
+        // the answer to the first question arrives
+        c.entries.push(e("msg-ai", "server answer"));
+        c.updated = 150;
+        let id = chats::upsert_checked(c, base);
+        assert_eq!(id, "c1");
+        let got = &chats::load()[0];
+        let texts: Vec<&str> = got.entries.iter().map(|x| x.text.as_str()).collect();
+        assert_eq!(texts, ["one", "from the laptop", "laptop answer", "server answer"]);
+        assert!(got.updated > 200);
+        // a chat that was changed in another way (an edit) is not overwritten: the answer is kept as a copy
+        let mut edited = got.clone();
+        let base2 = chats::Base::of(&edited);
+        let mut other = got.clone();
+        other.entries[0].text = "one, edited".into();
+        other.updated += 10;
+        assert!(chats::import_if_newer(other));
+        edited.entries.push(e("msg-ai", "late"));
+        edited.updated += 5;
+        let id2 = chats::upsert_checked(edited, base2);
+        assert_ne!(id2, "c1");
+        assert_eq!(chats::load().len(), 2);
+        assert_eq!(chats::load().iter().find(|c| c.id == "c1").unwrap().entries[0].text, "one, edited");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A tiny server: answers /api/sync/manifest with a tombstone of a kind nobody knows, and accepts every put.
+    fn fake_server() -> String {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in l.incoming().flatten() {
+                let mut r = BufReader::new(stream.try_clone().unwrap());
+                let mut first = String::new();
+                r.read_line(&mut first).unwrap();
+                let mut len = 0usize;
+                loop {
+                    let mut h = String::new();
+                    r.read_line(&mut h).unwrap();
+                    if h.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
+                        len = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0u8; len];
+                r.read_exact(&mut body).unwrap();
+                let answer = if first.contains("/manifest") {
+                    json!({"ok": true, "chats": {}, "memory": {}, "personalities": {}, "deleted": {"weird:1": 5}}).to_string()
+                } else {
+                    json!({"ok": true, "applied": true}).to_string()
+                };
+                let mut w = stream;
+                let _ = write!(w, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}", answer.len());
+            }
+        });
+        format!("http://127.0.0.1:{}", addr.port())
+    }
+
+    #[test]
+    fn one_item_that_always_fails_does_not_stop_the_others() {
+        let (_g, dir) = sandbox("isolate");
+        put_doc("chats", "c1", &chat("c1", "x", chats::now_millis() - 5000)).unwrap();
+        let url = fake_server();
+        let (pulled, pushed, _) = sync_with(&url, "t").unwrap();
+        assert_eq!((pulled, pushed), (0, 1), "the chat was still sent");
+        assert!(skipped().iter().any(|s| s.starts_with("weird:1")), "{:?}", skipped());
         let _ = std::fs::remove_dir_all(dir);
     }
 }

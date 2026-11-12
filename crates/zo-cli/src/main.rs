@@ -318,8 +318,9 @@ fn arr<'a>(v: &'a Value, k: &str) -> &'a [Value] {
     v.get(k).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
 }
 
-fn txt<'a>(v: &'a Value, k: &str) -> &'a str {
-    v.get(k).and_then(Value::as_str).unwrap_or("")
+/// A text from the server's answer, safe to print (see `proto::clean`).
+fn txt(v: &Value, k: &str) -> String {
+    proto::clean(v.get(k).and_then(Value::as_str).unwrap_or(""))
 }
 
 fn list_chats(t: &Target) -> Result<(String, Vec<String>), String> {
@@ -333,7 +334,7 @@ fn list_chats(t: &Target) -> Result<(String, Vec<String>), String> {
     let mut ids = vec![];
     for (n, c) in items.iter().enumerate() {
         let pin = if c["pinned"].as_bool() == Some(true) { "*" } else { " " };
-        out += &format!("{:>3}{pin} {:<18} {:<12} {}\n", n + 1, txt(c, "id"), ago(now, c["updated"].as_u64().unwrap_or(0)), one_line(txt(c, "title"), 60));
+        out += &format!("{:>3}{pin} {:<18} {:<12} {}\n", n + 1, txt(c, "id"), ago(now, c["updated"].as_u64().unwrap_or(0)), one_line(&txt(c, "title"), 60));
         ids.push(txt(c, "id").to_string());
     }
     Ok((out.trim_end().to_string(), ids))
@@ -343,14 +344,14 @@ fn show_chat(t: &Target, id: &str, color: bool, last: Option<usize>) -> Result<S
     let r = t.op(&json!({"op": "chat", "id": id}))?;
     let all = arr(&r, "entries");
     let skip = last.map(|n| all.len().saturating_sub(n)).unwrap_or(0);
-    let mut out = format!("{}\n\n", paint(color, "1", &one_line(txt(&r, "title"), 100)));
+    let mut out = format!("{}\n\n", paint(color, "1", &one_line(&txt(&r, "title"), 100)));
     for e in &all[skip..] {
         let text = txt(e, "text");
-        out += &match txt(e, "kind") {
+        out += &match txt(e, "kind").as_str() {
             "msg-user" => format!("{}\n\n", paint(color, "1", &format!("> {text}"))),
             "msg-ai" => format!("{text}\n\n"),
             "msg-error" => format!("{}\n", paint(color, "31", &format!("error: {text}"))),
-            _ => format!("{}\n", paint(color, "2", text)),
+            _ => format!("{}\n", paint(color, "2", &text)),
         };
     }
     Ok(out.trim_end().to_string())
@@ -367,7 +368,7 @@ fn list_memory(t: &Target) -> Result<String, String> {
         return Ok(format!("{out}Nothing remembered yet."));
     }
     for i in items {
-        out += &format!("{:<14}{} [{}] {}\n", txt(i, "id"), if i["pinned"].as_bool() == Some(true) { "*" } else { " " }, txt(i, "kind"), one_line(txt(i, "text"), 200));
+        out += &format!("{:<14}{} [{}] {}\n", txt(i, "id"), if i["pinned"].as_bool() == Some(true) { "*" } else { " " }, txt(i, "kind"), one_line(&txt(i, "text"), 200));
     }
     Ok(out.trim_end().to_string())
 }
@@ -377,7 +378,7 @@ fn status(t: &Target) -> Result<String, String> {
     let ready = r["ready"].as_bool() == Some(true);
     Ok(format!(
         "provider  {}\nmodel     {}\nmode      {}\nready     {}\nversion   {}",
-        if ready { txt(&r, "provider") } else { "(none chosen)" },
+        if ready { txt(&r, "provider") } else { "(none chosen)".to_string() },
         txt(&r, "model"),
         txt(&r, "mode"),
         if ready { "yes" } else { "no: choose a model with `zo use <provider> <model>`" },
@@ -398,7 +399,7 @@ fn models(t: &Target, provider: Option<&str>) -> Result<String, String> {
     let m = t.op(&req).map_err(|e| format!("{}\nModels of the provider could not be listed: {e}", out.trim_end()))?;
     out += &format!("\nModels of {} (* = current):\n", txt(&m, "provider"));
     for x in arr(&m, "models") {
-        let name = x.as_str().map(str::to_string).unwrap_or_else(|| x.to_string());
+        let name = proto::clean(&x.as_str().map(str::to_string).unwrap_or_else(|| x.to_string()));
         out += &format!("  {} {name}\n", if name == txt(&m, "current") { "*" } else { " " });
     }
     Ok(out.trim_end().to_string())
@@ -647,10 +648,14 @@ fn run() -> i32 {
     let remote = if o.local { None } else { o.remote.clone().or_else(|| std::env::var("ZO_REMOTE_URL").ok()).map(|u| u.trim().to_string()).filter(|u| !u.is_empty()) };
     let target = match remote {
         Some(url) => {
-            if !url.starts_with("http://") && !url.starts_with("https://") {
-                eprintln!("zo: the server address must start with https:// (got {url})");
-                return 2;
-            }
+            // the same rule as the desktop sync: https, or http only for this computer itself (the token goes with every call)
+            let url = match zo_core::sync::clean_url(&url) {
+                Ok(u) => u,
+                Err(_) => {
+                    eprintln!("zo: the server address must start with https:// (http only for localhost); got {}", proto::one_line(&url, 80));
+                    return 2;
+                }
+            };
             let token = match read_token(o.token_file.as_deref(), o.token_env.as_deref().unwrap_or("ZO_ACCESS_TOKEN"), &|n| std::env::var(n).ok()) {
                 Ok(t) => t,
                 Err(e) => {

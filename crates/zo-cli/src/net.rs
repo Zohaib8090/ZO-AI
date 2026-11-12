@@ -50,7 +50,7 @@ pub fn local_hint(path: &std::path::Path) -> String {
 
 fn check(v: Value) -> Result<Value, String> {
     if v.get("ok").and_then(Value::as_bool) == Some(false) {
-        return Err(v.get("error").and_then(Value::as_str).unwrap_or("the service refused").to_string());
+        return Err(crate::proto::clean(v.get("error").and_then(Value::as_str).unwrap_or("the service refused")));
     }
     Ok(v)
 }
@@ -60,7 +60,7 @@ fn remote_error(e: ureq::Error) -> String {
         ureq::Error::Status(401, _) => "The server refused the token (401). Check the file or variable that holds it (--token-file, or $ZO_ACCESS_TOKEN).".into(),
         ureq::Error::Status(code, resp) => {
             let body = resp.into_string().unwrap_or_default();
-            let msg = serde_json::from_str::<Value>(&body).ok().and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string));
+            let msg = serde_json::from_str::<Value>(&body).ok().and_then(|v| v.get("error").and_then(Value::as_str).map(crate::proto::clean));
             format!("The server answered {code}{}", msg.map(|m| format!(": {m}")).unwrap_or_default())
         }
         ureq::Error::Transport(t) => format!("Cannot reach the server: {t}"),

@@ -47,7 +47,32 @@ fn drain(mut r: impl Read + Send + 'static) -> thread::JoinHandle<String> {
     })
 }
 
+/// Variables that hold the server's own secrets. No program the AI starts gets them.
+const SERVER_ENV: &[&str] = &["FIREBASE_SERVICE_ACCOUNT", "ZO_SERVER_SECRET", "ZO_ACCESS_TOKEN"];
+
+/// Takes every secret out of what a child program inherits: the server's variables, the Claude Code login token
+/// and the provider keys (`ZOAI_KEY_*`).
+pub fn scrub(cmd: &mut Command) -> &mut Command {
+    scrub_server(cmd);
+    cmd.env_remove("CLAUDE_CODE_OAUTH_TOKEN");
+    for (k, _) in std::env::vars_os() {
+        if k.to_string_lossy().starts_with("ZOAI_KEY_") {
+            cmd.env_remove(k);
+        }
+    }
+    cmd
+}
+
+/// Only the server's own variables: for Claude Code itself, which needs its login token and the provider keys.
+pub fn scrub_server(cmd: &mut Command) -> &mut Command {
+    for k in SERVER_ENV {
+        cmd.env_remove(k);
+    }
+    cmd
+}
+
 pub fn run(cmd: &mut Command, limit: Duration) -> Result<Out, String> {
+    scrub(cmd);
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -79,4 +104,21 @@ pub fn run(cmd: &mut Command, limit: Duration) -> Result<Out, String> {
 /// Shorthand: program + args, 30 s limit.
 pub fn simple(program: &str, args: &[&str]) -> Result<String, String> {
     run(Command::new(program).args(args), Duration::from_secs(30)).map(|o| o.text())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn programs_do_not_get_the_servers_secrets() {
+        let mut c = Command::new("sh");
+        c.args(["-c", "echo \"[$FIREBASE_SERVICE_ACCOUNT|$ZO_SERVER_SECRET|$ZO_ACCESS_TOKEN|$CLAUDE_CODE_OAUTH_TOKEN|$HOME_OK]\""])
+            .env("FIREBASE_SERVICE_ACCOUNT", "a")
+            .env("ZO_SERVER_SECRET", "b")
+            .env("ZO_ACCESS_TOKEN", "c")
+            .env("CLAUDE_CODE_OAUTH_TOKEN", "d")
+            .env("HOME_OK", "e");
+        assert_eq!(run(&mut c, Duration::from_secs(5)).unwrap().text(), "[||||e]");
+    }
 }

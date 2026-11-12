@@ -134,6 +134,14 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             chats::delete(s(req, "id"));
             Ok(json!({}))
         }
+        "delete_all_chats" => {
+            // every saved chat (not only the ones a list shows); each leaves a tombstone, so a syncing computer drops them too
+            let all = chats::load();
+            for c in &all {
+                chats::delete(&c.id);
+            }
+            Ok(json!({"deleted": all.len()}))
+        }
         "pin_chat" => {
             chats::set_pinned(s(req, "id"), req.get("on").and_then(Value::as_bool).unwrap_or(true));
             Ok(json!({}))
@@ -428,6 +436,8 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
         Some(id) => chats::load().into_iter().find(|c| c.id == id).unwrap_or_else(|| new_chat(&text)),
         None => new_chat(&text),
     };
+    // what the chat looked like now: if it changes while the answer is made, the answer is added to it, not written over it
+    let base = chats::Base::of(&chat);
     // editing or asking again: what is there from that message on is kept as an earlier take
     if let Some(n) = edit {
         match chat.fork_at(n) {
@@ -444,10 +454,8 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
         }
     }
     line(&out, &json!({"event": "chat", "id": chat.id, "title": chat.title}));
-    if let Some(m) = req.get("mode").and_then(Value::as_str) {
-        Mode::parse(m).save();
-    }
-    let mode = Mode::load();
+    // a mode in the request is for this question only (the saved mode, which the app and the phone share, is not changed)
+    let mode = req.get("mode").and_then(Value::as_str).and_then(Mode::parse_known).unwrap_or_else(Mode::load);
 
     // the phone's answers and "stop" arrive while the AI works
     let cancel = Arc::new(AtomicBool::new(false));
@@ -516,7 +524,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
         };
         if sel.provider == "claude-code" {
             let model = if sel.model.is_empty() { "sonnet".to_string() } else { sel.model.clone() };
-            claude_code::run(&model, sel.effort.as_deref(), &mut session, &text, &system, &cancel, &mut on)
+            claude_code::run_in_mode(req.get("mode").and_then(Value::as_str).and_then(Mode::parse_known), &model, sel.effort.as_deref(), &mut session, &text, &system, &cancel, &mut on)
         } else {
             match Config::from_selection(&sel, &system) {
                 Ok(cfg) => agent::run(&cfg, &mut history, &text, mode, &approver, &cancel, &mut on),
@@ -538,7 +546,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
     chat.branches = chat.snapshot_branches();
     chat.updated = chats::now_millis();
     crate::ai::memory_agent::after_turn(&chat.id, &chat.title, &chat.entries);
-    chats::upsert(chat);
+    chats::upsert_checked(chat, base);
     line(&out, &json!({"event": "done"}));
     // the helper thread that listens for answers still holds the other end: close the connection so the client sees the end
     let _ = out.lock().unwrap().shutdown(std::net::Shutdown::Both);
@@ -598,7 +606,7 @@ mod tests {
         let (client, server) = UnixStream::pair().unwrap();
         std::thread::spawn(move || serve(server));
         let mut w = client.try_clone().unwrap();
-        writeln!(w, "{}", json!({"op": "send", "text": "hi from the phone"})).unwrap();
+        writeln!(w, "{}", json!({"op": "send", "text": "hi from the phone", "mode": "bypass"})).unwrap();
         let mut events = Vec::new();
         for l in BufReader::new(client).lines() {
             let v: Value = serde_json::from_str(&l.unwrap()).unwrap();
@@ -619,8 +627,16 @@ mod tests {
         // the other requests
         let r = handle("chats", &json!({})).unwrap();
         assert_eq!(r["chats"].as_array().unwrap().len(), 1);
+        // a mode sent with a question is for that question only: the saved one did not change
+        assert_eq!(Mode::load(), Mode::Auto);
         assert_eq!(handle("mode", &json!({"set": "manual"})).unwrap()["mode"], "Manual");
         assert!(handle("nonsense", &json!({})).is_err());
+        for n in 0..70 {
+            chats::upsert(Chat { id: format!("x{n}"), title: "x".into(), updated: 1000 + n, ..Default::default() });
+        }
+        assert_eq!(handle("delete_all_chats", &json!({})).unwrap()["deleted"], 71.min(100));
+        assert!(chats::load().is_empty());
+        assert!(crate::sync::tombstones().len() >= 70, "each deletion is remembered for the sync");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

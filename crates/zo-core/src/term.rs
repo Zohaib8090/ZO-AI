@@ -68,6 +68,7 @@ pub fn open(name: &str, cwd: Option<&str>, cmd: Option<&str>, by_ai: bool) -> Re
     let (master, slave) = unsafe { (OwnedFd::from_raw_fd(m), OwnedFd::from_raw_fd(s)) };
     let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/bash".into());
     let mut c = Command::new(&shell);
+    crate::exec::scrub(&mut c);
     if let Some(cmd) = cmd {
         c.args(["-c", cmd]);
     }

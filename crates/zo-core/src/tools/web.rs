@@ -8,8 +8,49 @@ use std::time::Duration;
 
 const UA: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0";
 
+const PRIVATE_MSG: &str = "That address is on this computer or its own network, so it is not read.";
+
+/// False for addresses on this computer or its own network (loopback, private, link-local, carrier-grade NAT, multicast, ...),
+/// including IPv4 addresses written inside an IPv6 one.
+fn is_public_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v) => {
+            let o = v.octets();
+            !(v.is_private() || v.is_loopback() || v.is_link_local() || v.is_unspecified() || v.is_broadcast() || v.is_multicast() || o[0] == 0 || o[0] >= 240 || o[0] == 100 && (64..128).contains(&o[1]))
+        }
+        IpAddr::V6(v) => {
+            let s = v.segments();
+            if let Some(m) = v.to_ipv4_mapped().or_else(|| v.to_ipv4()) {
+                return is_public_ip(IpAddr::V4(m)); // ::ffff:127.0.0.1 and ::127.0.0.1
+            }
+            if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+                return is_public_ip(IpAddr::V4(std::net::Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8))); // NAT64
+            }
+            !(v.is_loopback() || v.is_unspecified() || v.is_multicast() || (s[0] & 0xfe00) == 0xfc00 || (s[0] & 0xffc0) == 0xfe80 || (s[0] & 0xffc0) == 0xfec0)
+        }
+    }
+}
+
+/// Looks names up like the system does, then keeps only public addresses. The address that was checked is the one that is
+/// connected to, so odd spellings (`127.1`, `0x7f.1`), names that point at private addresses (`127.0.0.1.nip.io`) and
+/// redirects to such addresses all end here.
+struct PublicOnly;
+
+impl ureq::Resolver for PublicOnly {
+    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        use std::net::ToSocketAddrs;
+        let all: Vec<_> = netloc.to_socket_addrs()?.collect();
+        let ok: Vec<_> = all.iter().copied().filter(|a| is_public_ip(a.ip())).collect();
+        if ok.is_empty() && !all.is_empty() {
+            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, PRIVATE_MSG));
+        }
+        Ok(ok)
+    }
+}
+
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(8)).timeout(Duration::from_secs(20)).user_agent(UA).build()
+    ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(8)).timeout(Duration::from_secs(20)).user_agent(UA).resolver(PublicOnly).build()
 }
 
 pub fn entities(s: &str) -> String {
@@ -110,15 +151,12 @@ fn host_is_public(url: &str) -> Result<(), String> {
     let host = rest.split(['/', '?', '#']).next().unwrap_or("").rsplit('@').next().unwrap_or("");
     let host = host.rsplit_once(':').filter(|(_, p)| p.chars().all(|c| c.is_ascii_digit())).map(|(h, _)| h).unwrap_or(host).trim_matches(['[', ']']).to_lowercase();
     if host.is_empty() || host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") || host.ends_with(".internal") || !host.contains('.') && !host.contains(':') {
-        return Err("That address is on this computer or its own network, so it is not read.".into());
+        return Err(PRIVATE_MSG.into());
     }
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        let private = match ip {
-            std::net::IpAddr::V4(v) => v.is_private() || v.is_loopback() || v.is_link_local() || v.is_unspecified() || v.octets()[0] == 100 && (64..128).contains(&v.octets()[1]),
-            std::net::IpAddr::V6(v) => v.is_loopback() || v.is_unspecified() || (v.segments()[0] & 0xfe00) == 0xfc00 || (v.segments()[0] & 0xffc0) == 0xfe80,
-        };
+        let private = !is_public_ip(ip);
         if private {
-            return Err("That address is on this computer or its own network, so it is not read.".into());
+            return Err(PRIVATE_MSG.into());
         }
     }
     Ok(())
@@ -205,8 +243,20 @@ mod tests {
         for bad in ["http://localhost:8080/x", "http://127.0.0.1/", "http://192.168.1.5/admin", "http://10.0.0.1", "http://[::1]/", "http://router/", "ftp://example.com/", "http://nas.local/", "http://169.254.169.254/latest", "http://user@127.0.0.1/"] {
             assert!(host_is_public(bad).is_err(), "{bad}");
         }
+        for bad in ["http://[::ffff:127.0.0.1]:9/", "http://[::ffff:7f00:1]/", "http://[::ffff:a00:1]/", "http://[64:ff9b::7f00:1]/", "http://0.0.0.0/"] {
+            assert!(host_is_public(bad).is_err(), "{bad}");
+        }
         for good in ["https://example.com/a?b=1", "http://93.184.216.34/", "https://docs.rs:443/x"] {
             assert!(host_is_public(good).is_ok(), "{good}");
+        }
+    }
+
+    #[test]
+    fn odd_spellings_of_local_addresses_are_refused_when_fetching() {
+        // the system turns these into 127.0.0.1; the resolver refuses them before any connection is made
+        for bad in ["http://127.1:9/", "http://0x7f.1:9/", "http://2130706433:9/", "http://[::ffff:127.0.0.1]:9/", "http://127.0.0.1.nip.io:9/", "http://localtest.me:9/"] {
+            let e = fetch(&serde_json::json!({ "url": bad })).unwrap_err();
+            assert!(!e.contains("Connection refused"), "{bad}: {e}");
         }
     }
 

@@ -26,8 +26,9 @@ client), `crates/zo-server/src/sync_api.rs` (the server's side), Settings > Web 
   It writes through zo-core's stores, so the Firestore push sees the change like any other.
 * **Tombstones** are in `tombstones.json` in the data folder (the server's one also goes to Firestore like the other small files).
   They are written when the app deletes a chat, forgets a note, clears the memory or removes a personality, and kept for 90 days.
-* **Safety**: an empty, failing or unreachable server never deletes anything here: only a tombstone deletes. Any error stops the round,
-  keeps the status text and changes nothing more. Manifests that do not look like manifests are errors, not "empty".
+* **Safety**: an empty, failing or unreachable server never deletes anything here: only a tombstone deletes. If the server cannot be
+  reached or does not accept the token, the round stops and changes nothing more. An error that belongs to one item (the server refuses
+  it, it does not parse) skips that item and goes on; the status text says how many were skipped and the first reason. Manifests that do not look like manifests are errors, not "empty".
 * **Not synced**: API keys and the keys file, the chosen model, the permission mode, projects, artifacts, scheduled tasks, MCP servers,
   which personality is in use, and the memory agent's "read N messages" counters. Pinning a note or a chat does not change its `updated`,
   so a pin only travels with the next edit (a chat already on both sides keeps its own local pin).
@@ -35,7 +36,14 @@ client), `crates/zo-server/src/sync_api.rs` (the server's side), Settings > Web 
 * Memory also has one pseudo item, `memory:_state` (memory on/off and how often the agent reads a chat), newest change wins.
 * Only the newest 100 chats are kept on each side (the store's own limit): a chat older than all 100 of the other side is not copied, and
   that refusal is remembered so it is not retried every 30 seconds.
-* A chat that is being answered right now has a newer `updated` than any copy, so a sync never overwrites it.
+* **Clocks**: the server's manifest carries its `now`. The computer measures how far its clock is off (ignored under 5 seconds), compares
+  all times on the server's clock, and moves the time inside a document when it sends or takes it. A change or deletion dated more than
+  an hour ahead is refused (and tried again each round until its time has come), so a wrong clock cannot block an item for good. A
+  deletion is never stamped before the item's own last change.
+* A chat that is being answered is not overwritten by a sync and does not overwrite one: when the answer is saved and the stored chat
+  grew meanwhile (another device added messages), the new messages are added after what is there. If the stored chat changed in another
+  way (an edit), the answer is saved as a separate "(copy)" chat. The window of the desktop app is not covered yet: it saves its own chat
+  as it holds it.
 
 ## Server API (all need `Authorization: Bearer <ZO_ACCESS_TOKEN or Firebase ID token>`; bodies up to 20 MB)
 

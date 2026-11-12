@@ -75,9 +75,22 @@ pub fn ago(now_ms: u64, then_ms: u64) -> String {
     }
 }
 
+/// Text from the model, a tool or the server as it is safe to print: control characters (escape sequences that move the cursor,
+/// set the title or write to the clipboard, a lone carriage return that overwrites the line) are shown as a visible mark.
+/// New lines and tabs stay.
+pub fn clean(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '\n' | '\t' => c.to_string(),
+            c if c.is_control() => "\u{fffd}".to_string(),
+            c => c.to_string(),
+        })
+        .collect()
+}
+
 /// Cuts a text to one line of at most `max` characters.
 pub fn one_line(s: &str, max: usize) -> String {
-    let joined = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let joined = clean(&s.split_whitespace().collect::<Vec<_>>().join(" "));
     if joined.chars().count() <= max {
         joined
     } else {
@@ -109,18 +122,18 @@ impl<O: Write, E: Write> Renderer<O, E> {
 
     pub fn dim_err(&mut self, s: &str) {
         self.break_line();
-        let _ = writeln!(self.err, "{}", Self::paint(self.color_err, "2", s));
+        let _ = writeln!(self.err, "{}", Self::paint(self.color_err, "2", &clean(s)));
         let _ = self.err.flush();
     }
 
     pub fn error(&mut self, s: &str) {
         self.break_line();
-        let _ = writeln!(self.err, "{}", Self::paint(self.color_err, "1;31", &format!("error: {s}")));
+        let _ = writeln!(self.err, "{}", Self::paint(self.color_err, "1;31", &format!("error: {}", clean(s))));
         let _ = self.err.flush();
     }
 
     pub fn print_out(&mut self, s: &str) {
-        let _ = self.out.write_all(s.as_bytes());
+        let _ = self.out.write_all(clean(s).as_bytes());
         let _ = self.out.flush();
         if let Some(c) = s.chars().last() {
             self.at_line_start = c == '\n';
@@ -157,14 +170,14 @@ impl<O: Write, E: Write> Renderer<O, E> {
             }
             Event::ToolDone { ok, output, .. } => {
                 let line = format!("  {} {}", if *ok { "✓" } else { "✗" }, one_line(output, 160));
-                if *ok { self.dim_err(line.trim_end()) } else { self.break_line(); let _ = writeln!(self.err, "{}", Self::paint(self.color_err, "31", line.trim_end())); }
+                if *ok { self.dim_err(line.trim_end()) } else { self.break_line(); let _ = writeln!(self.err, "{}", Self::paint(self.color_err, "31", &clean(line.trim_end()))); }
             }
             Event::Approval { tool, summary, .. } => {
                 self.break_line();
-                let _ = writeln!(self.err, "{}", Self::paint(self.color_err, "1", &format!("Allow {tool}?")));
+                let _ = writeln!(self.err, "{}", Self::paint(self.color_err, "1", &format!("Allow {}?", clean(tool))));
                 let body = summary.strip_prefix(tool.as_str()).unwrap_or(summary).trim_start_matches('\n');
                 for l in body.lines().take(12) {
-                    let _ = writeln!(self.err, "  {l}");
+                    let _ = writeln!(self.err, "  {}", clean(l));
                 }
             }
             Event::Usage { input, output } => self.tokens = (self.tokens.0 + input, self.tokens.1 + output),
@@ -209,6 +222,19 @@ mod tests {
         assert_eq!(parse_event(r#"{"event":"from_the_future"}"#), None);
         assert_eq!(parse_event("not json"), None);
         assert_eq!(parse_event(""), None);
+    }
+
+    #[test]
+    fn escape_sequences_and_carriage_returns_are_not_printed() {
+        let nasty = "ls\r\u{1b}[2K\u{1b}]52;c;ZXZpbA==\u{7}safe \u{9b}31m";
+        let c = clean(nasty);
+        assert!(!c.chars().any(|ch| ch.is_control()), "{c:?}");
+        assert_eq!(clean("a\nb\tc"), "a\nb\tc");
+        let mut rr = r(true);
+        rr.event(&Event::Approval { id: 1, tool: "shell".into(), summary: "shell\nrm -rf x\r echo harmless\u{1b}[1A".into() });
+        rr.event(&Event::Delta("hi\u{1b}[31m".into()));
+        let out = s(&rr.err) + &s(&rr.out);
+        assert!(!out.contains('\r') && !out.contains("\u{1b}[1A") && !out.contains("hi\u{1b}"), "{out:?}");
     }
 
     #[test]

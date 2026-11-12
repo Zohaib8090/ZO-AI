@@ -179,6 +179,31 @@ pub(crate) fn expand(p: &str) -> std::path::PathBuf {
     }
 }
 
+/// Files and folders the AI's file tools never read: the app's settings and keys, SSH keys and any process's environment
+/// (it holds the server's secrets). Symbolic links are followed before the check.
+pub(crate) fn guard_read(p: &std::path::Path) -> Result<(), String> {
+    let canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let mut blocked = vec![crate::audit::config_dir()];
+    if let Some(k) = std::env::var_os("ZO_AI_KEYS_FILE").filter(|k| !k.is_empty()) {
+        blocked.push(k.into());
+    }
+    if let Some(h) = std::env::var_os("HOME") {
+        for d in [".ssh", ".gnupg", ".aws", ".kube"] {
+            blocked.push(std::path::Path::new(&h).join(d));
+        }
+    }
+    let blocked_path = blocked.iter().any(|b| {
+        let b = std::fs::canonicalize(b).unwrap_or_else(|_| b.clone());
+        canon.starts_with(&b) || p.starts_with(&b)
+    });
+    let s = canon.to_string_lossy();
+    let proc_env = s.starts_with("/proc/") && (s.ends_with("/environ") || s.contains("/environ/"));
+    if blocked_path || proc_env {
+        return Err(format!("{} holds secrets, so it is not available to the AI.", p.display()));
+    }
+    Ok(())
+}
+
 /// Run a tool. The caller has already decided it is allowed (see `policy`).
 pub fn call(name: &str, a: &Value) -> Result<String, String> {
     let result = call_inner(name, a);

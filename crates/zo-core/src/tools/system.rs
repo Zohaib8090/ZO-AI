@@ -90,6 +90,7 @@ pub fn view_image(path: &str) -> Result<String, String> {
         Some(rest) => std::env::var("HOME").map(|h| format!("{h}/{rest}")).unwrap_or_else(|_| path.to_string()),
         None => path.to_string(),
     };
+    super::guard_read(std::path::Path::new(&full))?;
     if !std::path::Path::new(&full).is_file() {
         return Err(format!("There is no file at {path}."));
     }

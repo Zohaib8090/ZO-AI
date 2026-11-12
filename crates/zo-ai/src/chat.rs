@@ -47,6 +47,8 @@ pub struct Ctl {
     last_nav: RefCell<Option<gtk::Widget>>,
     /// What the provider said the last request used.
     last_usage: Cell<Option<zo_core::ai::wire::Usage>>,
+    /// What the open chat looked like when it was opened or last saved: a save keeps what a sync added to the stored chat since.
+    base: Cell<chats::Base>,
     /// The box that gathers the tool runs of the current turn ("Running a task in the terminal…", then "Ran 3 commands").
     group: RefCell<Option<Group>>,
 }
@@ -88,7 +90,7 @@ impl Ctl {
         scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         scroll.set_visible(false);
         chat.insert_child_after(&scroll, Some(hero));
-        Rc::new(Ctl { chat: chat.clone(), hero: hero.clone(), thread, scroll, history: RefCell::new(Vec::new()), session: RefCell::new(None), extra: RefCell::new(String::new()), title: RefCell::new(String::new()), id: RefCell::new(String::new()), entries: RefCell::new(Vec::new()), on_saved: RefCell::new(None), busy: Cell::new(false), cancel: Arc::new(AtomicBool::new(false)), on_busy: RefCell::new(None), on_retry: Rc::new(RefCell::new(None)), on_edit: Rc::new(RefCell::new(None)), last_retry: RefCell::new(None), branches: RefCell::new(Default::default()), on_switch: Rc::new(RefCell::new(None)), last_nav: RefCell::new(None), last_usage: Cell::new(None), group: RefCell::new(None) })
+        Rc::new(Ctl { chat: chat.clone(), hero: hero.clone(), thread, scroll, history: RefCell::new(Vec::new()), session: RefCell::new(None), extra: RefCell::new(String::new()), title: RefCell::new(String::new()), id: RefCell::new(String::new()), entries: RefCell::new(Vec::new()), on_saved: RefCell::new(None), busy: Cell::new(false), cancel: Arc::new(AtomicBool::new(false)), on_busy: RefCell::new(None), on_retry: Rc::new(RefCell::new(None)), on_edit: Rc::new(RefCell::new(None)), last_retry: RefCell::new(None), branches: RefCell::new(Default::default()), on_switch: Rc::new(RefCell::new(None)), last_nav: RefCell::new(None), last_usage: Cell::new(None), group: RefCell::new(None), base: Cell::new(Default::default()) })
     }
 
     pub fn on_saved(&self, f: Rc<dyn Fn()>) {
@@ -100,7 +102,7 @@ impl Ctl {
         if entries.is_empty() {
             return;
         }
-        chats::upsert(Chat {
+        let chat = Chat {
             id: self.id.borrow().clone(),
             title: self.title.borrow().clone(),
             updated: chats::now_millis(),
@@ -110,7 +112,23 @@ impl Ctl {
             context: self.extra.borrow().clone(),
             pinned: false,
             branches: self.snapshot_branches(),
-        });
+        };
+        // a chat the sync changed since it was opened keeps what was added there (see chats::upsert_checked); if that happened, the
+        // window shows what was saved, so the next save starts from it
+        let sent = (self.entries.borrow().len(), self.id.borrow().clone());
+        let id = chats::upsert_checked(chat, self.base.get());
+        if let Some(saved) = chats::load().into_iter().find(|c| c.id == id) {
+            self.base.set(chats::Base::of(&saved));
+            if saved.entries.len() != sent.0 || id != sent.1 {
+                *self.id.borrow_mut() = saved.id;
+                *self.title.borrow_mut() = saved.title;
+                *self.history.borrow_mut() = saved.history;
+                *self.session.borrow_mut() = saved.session;
+                *self.branches.borrow_mut() = saved.branches;
+                *self.entries.borrow_mut() = saved.entries;
+                self.redraw();
+            }
+        }
         zo_core::ai::memory_agent::after_turn(&self.id.borrow(), &self.title.borrow(), &self.entries.borrow());
         let f = self.on_saved.borrow().clone();
         if let Some(f) = f {
@@ -124,6 +142,7 @@ impl Ctl {
             return;
         }
         self.new_conversation();
+        self.base.set(chats::Base::of(&chat));
         *self.id.borrow_mut() = chat.id;
         *self.title.borrow_mut() = chat.title;
         *self.history.borrow_mut() = chat.history;
@@ -440,6 +459,7 @@ impl Ctl {
             return;
         }
         self.group.borrow_mut().take();
+        self.base.set(Default::default());
         self.branches.borrow_mut().clear();
         self.history.borrow_mut().clear();
         *self.session.borrow_mut() = None;

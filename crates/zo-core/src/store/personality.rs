@@ -99,8 +99,9 @@ pub fn add(name: &str, prompt: &str, generated: bool) -> Result<Personality, Str
 }
 
 pub fn remove(id: &str) {
+    let made = load().items.iter().find(|p| p.id == id).map_or(0, made_at);
     remove_quiet(id);
-    crate::sync::tombstone("personalities", id);
+    crate::sync::tombstone("personalities", id, made);
 }
 
 /// Removes a personality without a tombstone (the sync uses this when the removal came from the other side).

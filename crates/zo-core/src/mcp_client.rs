@@ -257,7 +257,9 @@ impl Connection {
         }
         let words = split_command(&cfg.command);
         let (program, args) = words.split_first().ok_or("The command is empty.")?;
-        let mut child = Command::new(program)
+        let mut cmd = Command::new(program);
+        crate::exec::scrub(&mut cmd);
+        let mut child = cmd
             .args(args)
             .envs(&cfg.env)
             .stdin(Stdio::piped())

@@ -5,7 +5,7 @@
 //! small files: the chosen model, profiles, personalities, projects, ...; `c_` is the config folder, `d_` the data folder).
 //! API keys are sent encrypted (`files/keys_enc`), and only when ZO_SERVER_SECRET is set.
 
-use crate::firestore::{doc_id, Firestore};
+use crate::firestore::{doc_id, encode_parts, Firestore, Joined};
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine;
@@ -23,6 +23,9 @@ pub struct Sync {
     pub keys_file: PathBuf,
     /// What Firestore holds, as far as we know: a fingerprint of the text and how many documents it takes.
     known: BTreeMap<Name, (u64, usize)>,
+    /// Documents Firestore holds that could not be read (parts missing, or not valid): left exactly as they are, never deleted.
+    /// The number is how many documents they take, so that a later save of the same name cleans up after itself.
+    damaged: BTreeMap<Name, usize>,
     seen: String,
 }
 
@@ -130,9 +133,21 @@ fn fingerprint(dirs: &[&Path]) -> String {
     s
 }
 
+/// The documents of one collection that can be read (parts complete, valid JSON); the names of the others go to `bad`.
+fn readable(col: &str, m: &BTreeMap<String, Joined>, bad: &mut Vec<Name>) -> Vec<Value> {
+    let mut out = Vec::new();
+    for (name, j) in m {
+        match j.ok.then(|| serde_json::from_str::<Value>(&j.text).ok()).flatten() {
+            Some(v) => out.push(v),
+            None => bad.push((col.to_string(), name.clone())),
+        }
+    }
+    out
+}
+
 impl Sync {
     pub fn new(fs: Firestore, secret: Option<String>, keys_file: PathBuf) -> Sync {
-        Sync { fs, secret, keys_file, known: BTreeMap::new(), seen: String::new() }
+        Sync { fs, secret, keys_file, known: BTreeMap::new(), damaged: BTreeMap::new(), seen: String::new() }
     }
 
     /// At start: bring everything from Firestore to the disk. Returns how many chats and notes came.
@@ -140,18 +155,32 @@ impl Sync {
         let chats = self.fs.all("chats")?;
         let memory = self.fs.all("memory")?;
         let files = self.fs.all("files")?;
-        let parse = |m: &BTreeMap<String, (String, usize)>| m.values().filter_map(|(t, _)| serde_json::from_str::<Value>(t).ok()).collect::<Vec<Value>>();
-        if !chats.is_empty() {
-            write(&data.join("chats.json"), &Value::Array(parse(&chats)).to_string());
+        // a chat or note that cannot be read (damaged parts, or not valid JSON) is kept in Firestore as it is and reported; it is
+        // not on disk, so it is never saved over or deleted by this program
+        let mut bad: Vec<Name> = Vec::new();
+        let (chat_docs, note_docs) = (readable("chats", &chats, &mut bad), readable("memory", &memory, &mut bad));
+        for key in &bad {
+            let parts = (if key.0 == "chats" { &chats } else { &memory }).get(&key.1).map_or(1, |j| j.parts);
+            eprintln!("zo-server: {}/{} in Firestore cannot be read; it is left as it is", key.0, key.1);
+            self.damaged.insert(key.clone(), parts);
         }
-        let mut state = files.get("memory_state").and_then(|(t, _)| serde_json::from_str::<Value>(t).ok()).unwrap_or_else(|| json!({}));
+        if !chats.is_empty() {
+            write(&data.join("chats.json"), &Value::Array(chat_docs).to_string());
+        }
+        let mut state = files.get("memory_state").filter(|j| j.ok).and_then(|j| serde_json::from_str::<Value>(&j.text).ok()).unwrap_or_else(|| json!({}));
         if !memory.is_empty() || files.contains_key("memory_state") {
             if let Some(o) = state.as_object_mut() {
-                o.insert("items".into(), Value::Array(parse(&memory)));
+                o.insert("items".into(), Value::Array(note_docs));
             }
             write(&data.join("memory.json"), &state.to_string());
         }
-        for (name, (text, _)) in &files {
+        for (name, j) in &files {
+            let text = &j.text;
+            if !j.ok {
+                eprintln!("zo-server: files/{name} in Firestore cannot be read; it is left as it is");
+                self.damaged.insert(("files".into(), name.clone()), j.parts);
+                continue;
+            }
             if let Some(n) = name.strip_prefix("c_") {
                 write(&config.join(n), text);
             } else if let Some(n) = name.strip_prefix("d_") {
@@ -167,13 +196,16 @@ impl Sync {
         // remember what is there, so that only real changes are sent later
         let now = desired(config, data, &self.keys_file, self.secret.is_some());
         for (col, m) in [("chats", &chats), ("memory", &memory), ("files", &files)] {
-            for (name, (_, parts)) in m {
+            for (name, j) in m {
                 let key = (col.to_string(), name.clone());
+                if self.damaged.contains_key(&key) {
+                    continue; // not known: so it is neither compared nor deleted
+                }
                 let h = now.get(&key).map(|(t, _)| hash(t)).unwrap_or(0);
-                self.known.insert(key, (h, *parts));
+                self.known.insert(key, (h, j.parts));
             }
         }
-        Ok((chats.len(), memory.len()))
+        Ok((chats.len() - bad.iter().filter(|k| k.0 == "chats").count(), memory.len() - bad.iter().filter(|k| k.0 == "memory").count()))
     }
 
     /// Sends what changed on disk. Returns how many documents were written or removed.
@@ -191,9 +223,20 @@ impl Sync {
                 continue;
             }
             let body = if *secret { encrypt(self.secret.as_deref().unwrap_or(""), text)? } else { text.clone() };
-            let parts = self.fs.put(&key.0, &key.1, &body, old.map(|o| o.1).unwrap_or(0))?;
-            self.known.insert(key.clone(), (h, parts));
-            n += 1;
+            let old_parts = old.map(|o| o.1).or_else(|| self.damaged.get(key).copied()).unwrap_or(0);
+            match self.fs.put(&key.0, &key.1, &body, old_parts) {
+                Ok(parts) => {
+                    self.known.insert(key.clone(), (h, parts));
+                    self.damaged.remove(key);
+                    n += 1;
+                }
+                Err(e) => {
+                    // some parts may have been written: the next save (maybe a shorter one) has to remove what is left over
+                    let may_take = old_parts.max(encode_parts(&body).len());
+                    self.known.insert(key.clone(), (old.map_or(0, |o| o.0), may_take));
+                    return Err(e);
+                }
+            }
         }
         let gone: Vec<Name> = self.known.keys().filter(|k| !want.contains_key(*k)).cloned().collect();
         for key in gone {
@@ -217,6 +260,19 @@ mod tests {
         assert!(!c.contains("sk-abc"));
         assert_eq!(decrypt("s3cret", &c).unwrap(), "{\"openrouter\":\"sk-abc\"}");
         assert!(decrypt("other", &c).is_err());
+    }
+
+    #[test]
+    fn a_document_that_cannot_be_read_is_reported_and_left_out_not_dropped_silently() {
+        let mut m = BTreeMap::new();
+        let j = |text: &str, ok: bool| Joined { text: text.into(), parts: 1, ok };
+        m.insert("good".to_string(), j("{\"id\":\"good\"}", true));
+        m.insert("cut".to_string(), j("", false));
+        m.insert("garbled".to_string(), j("{\"id\":", true));
+        let mut bad = Vec::new();
+        let docs = readable("chats", &m, &mut bad);
+        assert_eq!(docs.len(), 1);
+        assert_eq!(bad, vec![("chats".to_string(), "cut".to_string()), ("chats".to_string(), "garbled".to_string())]);
     }
 
     #[test]

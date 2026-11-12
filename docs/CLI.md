@@ -28,7 +28,7 @@ memory, model choice and permission mode with the app and the phone. Small on pu
 | `zo models [provider]`, `zo use <provider> [model]` | Providers and models; choose one. |
 | `zo mode [Manual\|Auto\|Bypass]` | Show or set the permission mode. |
 
-Options: `-c/--chat ID` (continue a chat with a one-shot question), `--mode MODE` (for this question), `--no-color`, `--help`, `--version`.
+Options: `-c/--chat ID` (continue a chat with a one-shot question), `--mode MODE` (for this question only: the saved mode that the app and the phone share is not changed), `--no-color`, `--help`, `--version`.
 `zo ssh ...` is reserved; machines over SSH are not in this client yet.
 
 ## Approvals, Ctrl-C, exit codes

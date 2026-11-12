@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tiny_http::{Header, Method, Request, Response, Server};
@@ -45,10 +45,16 @@ fn header(k: &str, v: &str) -> Header {
     Header::from_bytes(k.as_bytes(), v.as_bytes()).expect("header")
 }
 
+/// Set in the no-login test mode: nothing from another web address may talk to the server then (see `local_only`).
+static NO_AUTH: AtomicBool = AtomicBool::new(false);
+
 fn cors() -> Vec<Header> {
+    if NO_AUTH.load(Ordering::Relaxed) {
+        return Vec::new(); // no cross-site access: only the page the server itself serves
+    }
     vec![
         header("Access-Control-Allow-Origin", "*"),
-        header("Access-Control-Allow-Headers", "Authorization, Content-Type"),
+        header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-ZO-Local"),
         header("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
         header("Access-Control-Max-Age", "86400"),
     ]
@@ -77,10 +83,42 @@ fn same_secret(a: &str, b: &str) -> bool {
     x.iter().zip(y.iter()).fold(0u8, |acc, (p, q)| acc | (p ^ q)) == 0
 }
 
+/// The no-login test mode has no password, so it must only answer the page it serves itself, on this computer. A web page from
+/// another site cannot add a custom header without the server's permission (which is never given), and a name that points at
+/// this computer from elsewhere (DNS rebinding) has another Host, so both are refused.
+fn local_only(req: &Request) -> Result<(), String> {
+    fn get(req: &Request, name: &'static str) -> Option<String> {
+        req.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string())
+    }
+    if get(req, "X-ZO-Local").as_deref() != Some("1") {
+        return Err("The test mode only answers its own page.".into());
+    }
+    let host = get(req, "Host").unwrap_or_default().to_lowercase();
+    if !host_is_local(&host) {
+        return Err("The test mode only answers requests addressed to this computer.".into());
+    }
+    if let Some(origin) = get(req, "Origin") {
+        if origin.split_once("://").map(|(_, h)| h.to_lowercase()).as_deref() != Some(host.as_str()) {
+            return Err("The test mode does not answer other web pages.".into());
+        }
+    }
+    Ok(())
+}
+
+/// `127.0.0.1`, `localhost` or `[::1]`, with or without a port.
+fn host_is_local(host: &str) -> bool {
+    let name = if let Some(rest) = host.strip_prefix("[::1]") {
+        if rest.is_empty() || rest.starts_with(':') { "[::1]" } else { "" }
+    } else {
+        host.split(':').next().unwrap_or("")
+    };
+    matches!(name, "127.0.0.1" | "localhost" | "[::1]")
+}
+
 /// Who is asking, or why they are refused.
 fn who(app: &App, req: &Request) -> Result<String, String> {
     if app.no_auth {
-        return Ok("local".into());
+        return local_only(req).map(|_| "local".into());
     }
     let token = req
         .headers()
@@ -138,7 +176,8 @@ fn send(app: &Arc<App>, req: Request, mut v: Value) {
     let id = app.next.fetch_add(1, Ordering::SeqCst);
     app.streams.lock().unwrap().insert(id, to_service);
     let mut out = req.into_writer();
-    let head = "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-cache\r\nX-Accel-Buffering: no\r\nTransfer-Encoding: chunked\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+    let cors = if NO_AUTH.load(Ordering::Relaxed) { "" } else { "Access-Control-Allow-Origin: *\r\n" };
+    let head = &format!("HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-cache\r\nX-Accel-Buffering: no\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n{cors}\r\n");
     let chunk = |out: &mut Box<dyn Write + Send>, line: &str| -> bool {
         out.write_all(format!("{:x}\r\n{line}\r\n", line.len()).as_bytes()).is_ok() && out.flush().is_ok()
     };
@@ -305,9 +344,25 @@ fn main() {
         }
     };
     eprintln!("zo-server: listening on {addr}{}", if no_auth { " (no login: testing only)" } else if token_only { " (token-only: no Firebase login, no Firestore)" } else { "" });
+    NO_AUTH.store(no_auth, Ordering::Relaxed);
     let app = Arc::new(App { project, allowed, no_auth, access_token, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1) });
     for req in server.incoming_requests() {
         let app = app.clone();
         std::thread::spawn(move || route(app, req));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_this_computer_counts_as_local() {
+        for h in ["127.0.0.1", "127.0.0.1:8787", "localhost:8787", "[::1]:8787", "[::1]"] {
+            assert!(host_is_local(h), "{h}");
+        }
+        for h in ["", "evil.example", "127.0.0.1.evil.example", "localhost.evil.example:80", "[::1]x", "0.0.0.0:8787", "attacker.test:8787"] {
+            assert!(!host_is_local(h), "{h}");
+        }
     }
 }

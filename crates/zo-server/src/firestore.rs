@@ -46,21 +46,65 @@ pub fn split(text: &str, max: usize) -> Vec<&str> {
     out
 }
 
+/// Marks the first part of a saved text: how many parts there are and a fingerprint of the whole text. A reader that finds
+/// parts from two different saves (a write was cut short) sees that the fingerprint does not fit, instead of reading a mix.
+const MARK: char = '\u{1}';
+
+fn fingerprint(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes())[..8].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The documents a text is saved as: the parts, the first one with its mark in front.
+pub fn encode_parts(text: &str) -> Vec<String> {
+    let parts = split(text, PART);
+    let head = format!("{MARK}zo1:{}:{}{MARK}", parts.len(), fingerprint(text));
+    parts.iter().enumerate().map(|(n, p)| if n == 0 { format!("{head}{p}") } else { p.to_string() }).collect()
+}
+
+/// One saved text read back.
+#[derive(Debug, PartialEq)]
+pub struct Joined {
+    pub text: String,
+    /// How many documents it takes now (stale ones included, so that they are cleaned up).
+    pub parts: usize,
+    /// False when the first part is missing, parts are missing, or the fingerprint does not fit: the text must not be used.
+    pub ok: bool,
+}
+
 /// Puts the parts of each text back together: `{"a": .., "a__1": ..}` becomes `{"a": whole}`.
-pub fn join(docs: BTreeMap<String, String>) -> BTreeMap<String, String> {
-    let mut whole: BTreeMap<String, Vec<(usize, String)>> = BTreeMap::new();
+pub fn join(docs: BTreeMap<String, String>) -> BTreeMap<String, Joined> {
+    let mut whole: BTreeMap<String, BTreeMap<usize, String>> = BTreeMap::new();
     for (id, text) in docs {
         let (name, n) = match id.rsplit_once("__") {
             Some((name, n)) if n.parse::<usize>().is_ok() => (name.to_string(), n.parse().unwrap()),
             _ => (id, 0),
         };
-        whole.entry(name).or_default().push((n, text));
+        whole.entry(name).or_default().insert(n, text);
     }
     whole
         .into_iter()
-        .map(|(name, mut parts)| {
-            parts.sort_by_key(|p| p.0);
-            (name, parts.into_iter().map(|p| p.1).collect::<String>())
+        .map(|(name, parts)| {
+            let total = parts.len();
+            // the parts that follow each other from 0
+            let run: Vec<&String> = (0..).map_while(|n| parts.get(&n)).collect();
+            let joined = match run.first().and_then(|h| h.strip_prefix(MARK)) {
+                Some(rest) => {
+                    // `zo1:<parts>:<fingerprint>` MARK first-part-text
+                    let parsed = rest.split_once(MARK).and_then(|(h, first)| {
+                        let mut f = h.strip_prefix("zo1:")?.splitn(2, ':');
+                        let (n, fp): (usize, &str) = (f.next()?.parse().ok()?, f.next()?);
+                        (n >= 1 && run.len() >= n).then(|| (n, fp.to_string(), first))
+                    });
+                    parsed.and_then(|(n, fp, first)| {
+                        let text: String = std::iter::once(first).chain(run[1..n].iter().map(|s| s.as_str())).collect();
+                        (fingerprint(&text) == fp).then_some(text)
+                    })
+                }
+                // saved before the mark existed: the parts as they are
+                None => (!run.is_empty() && run.len() == total).then(|| run.iter().map(|s| s.as_str()).collect::<String>()),
+            };
+            (name, Joined { ok: joined.is_some(), text: joined.unwrap_or_default(), parts: total })
         })
         .collect()
 }
@@ -126,12 +170,14 @@ impl Firestore {
         }
     }
 
-    /// Saves one text under a name. `old_parts` is how many documents it took last time (extra ones are removed).
+    /// Saves one text under a name. `old_parts` is how many documents it may take up now (extra ones are removed). The later
+    /// parts are written first and the first part, which carries the mark, last: a reader that finds the new first part finds
+    /// all the parts it belongs to.
     pub fn put(&self, collection: &str, name: &str, text: &str, old_parts: usize) -> Result<usize, String> {
-        let parts = split(text, PART);
-        for (n, p) in parts.iter().enumerate() {
+        let parts = encode_parts(text);
+        for n in (0..parts.len()).rev() {
             let id = if n == 0 { name.to_string() } else { format!("{name}__{n}") };
-            self.put_one(collection, &id, p)?;
+            self.put_one(collection, &id, &parts[n])?;
         }
         for n in parts.len()..old_parts {
             self.delete_one(collection, &format!("{name}__{n}"))?;
@@ -147,8 +193,8 @@ impl Firestore {
         Ok(())
     }
 
-    /// Everything in one collection: name -> (text, how many documents it takes).
-    pub fn all(&self, collection: &str) -> Result<BTreeMap<String, (String, usize)>, String> {
+    /// Everything in one collection: name -> the text, how many documents it takes, and whether it can be trusted.
+    pub fn all(&self, collection: &str) -> Result<BTreeMap<String, Joined>, String> {
         let mut docs = BTreeMap::new();
         let mut page = String::new();
         loop {
@@ -171,15 +217,7 @@ impl Firestore {
                 break;
             }
         }
-        let mut count: BTreeMap<String, usize> = BTreeMap::new();
-        for id in docs.keys() {
-            let name = match id.rsplit_once("__") {
-                Some((name, n)) if n.parse::<usize>().is_ok() => name,
-                _ => id.as_str(),
-            };
-            *count.entry(name.to_string()).or_default() += 1;
-        }
-        Ok(join(docs).into_iter().map(|(name, text)| { let n = count.get(&name).copied().unwrap_or(1); (name, (text, n)) }).collect())
+        Ok(join(docs))
     }
 }
 
@@ -187,20 +225,66 @@ impl Firestore {
 mod tests {
     use super::*;
 
+    fn stored(texts: &[(&str, &str)]) -> BTreeMap<String, String> {
+        let mut docs = BTreeMap::new();
+        for (name, text) in texts {
+            for (n, p) in encode_parts(text).into_iter().enumerate() {
+                docs.insert(if n == 0 { name.to_string() } else { format!("{name}__{n}") }, p);
+            }
+        }
+        docs
+    }
+
     #[test]
     fn long_texts_are_cut_and_joined_again() {
         let text = "aé".repeat(1000);
         let parts = split(&text, 301);
         assert!(parts.len() > 1 && parts.iter().all(|p| p.len() <= 301));
-        let mut docs = BTreeMap::new();
-        for (n, p) in parts.iter().enumerate() {
-            docs.insert(if n == 0 { "c1".to_string() } else { format!("c1__{n}") }, p.to_string());
-        }
-        docs.insert("other".into(), "x".into());
+        let big = "xé".repeat(PART);
+        assert!(encode_parts(&big).len() > 1);
+        let docs = stored(&[("c1", &big), ("other", "x")]);
         let whole = join(docs);
-        assert_eq!(whole["c1"], text);
-        assert_eq!(whole["other"], "x");
+        assert_eq!(whole["c1"].text, big);
+        assert!(whole["c1"].ok && whole["c1"].parts == encode_parts(&big).len());
+        assert_eq!((whole["other"].text.as_str(), whole["other"].ok, whole["other"].parts), ("x", true, 1));
         assert_eq!(whole.len(), 2);
+    }
+
+    #[test]
+    fn a_text_saved_by_an_older_version_is_still_read() {
+        let mut docs = BTreeMap::new();
+        docs.insert("c1".to_string(), "{\"a\":".to_string());
+        docs.insert("c1__1".to_string(), "1}".to_string());
+        docs.insert("c2".to_string(), "{}".to_string());
+        let j = join(docs);
+        assert_eq!((j["c1"].text.as_str(), j["c1"].ok), ("{\"a\":1}", true));
+        assert_eq!((j["c2"].text.as_str(), j["c2"].ok), ("{}", true));
+    }
+
+    #[test]
+    fn a_cut_short_or_mixed_save_is_noticed_not_read() {
+        let big = "y".repeat(PART + 10);
+        let small = "z".repeat(5);
+        // the later part of a new save was written, but the old first part is still there
+        let mut docs = stored(&[("c", &small)]);
+        docs.insert("c__1".into(), "tail".into());
+        let j = join(docs);
+        assert!(j["c"].ok, "a stray part after a one-part save is ignored, not mixed in");
+        assert_eq!((j["c"].text.as_str(), j["c"].parts), (small.as_str(), 2), "and it is counted, so the next save removes it");
+        // old first part (1 part) replaced by a bigger save's tail only: first part says 2 parts, tail is from another save
+        let mut docs = stored(&[("c", &big)]);
+        docs.insert("c__1".into(), "another save".into());
+        assert!(!join(docs)["c"].ok);
+        // the first part is missing
+        let mut docs = stored(&[("c", &big)]);
+        docs.remove("c");
+        let j = join(docs);
+        assert!(!j["c"].ok && j["c"].text.is_empty());
+        // a part is missing in the middle
+        let huge = "q".repeat(PART * 2 + 1);
+        let mut docs = stored(&[("c", &huge)]);
+        docs.remove("c__1");
+        assert!(!join(docs)["c"].ok);
     }
 
     #[test]

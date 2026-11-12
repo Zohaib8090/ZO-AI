@@ -53,6 +53,11 @@ Full steps, free-plan facts and the Claude Code token: `docs/DEPLOY.md`. Short v
 
     ZO_SERVER_NO_AUTH=1 PORT=8799 cargo run -p zo-server      # no login, 127.0.0.1 only, no Firestore
 
+In this mode there is no CORS, a request needs the header `X-ZO-Local: 1` (the web page sends it) and a `Host` of this computer, and a
+request with another `Origin` is refused, so a web page from another site cannot use the server through your browser.
+Programs the AI starts (shell, ssh, terminals, other MCP servers) do not get `FIREBASE_SERVICE_ACCOUNT`, `ZO_SERVER_SECRET`,
+`ZO_ACCESS_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` or `ZOAI_KEY_*`, and the file tools refuse the config folder, `~/.ssh` and `/proc/*/environ`.
+
 Use a separate `XDG_RUNTIME_DIR`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME` if the desktop app is running, or it will refuse to start
 (the app already owns the socket) and would share the app's data.
 

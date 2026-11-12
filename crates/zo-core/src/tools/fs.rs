@@ -6,6 +6,7 @@ const MAX_READ: u64 = 1_000_000;
 
 pub fn read(path: &str) -> Result<String, String> {
     let p = expand(path);
+    super::guard_read(&p)?;
     let meta = fs::metadata(&p).map_err(|e| format!("{path}: {e}"))?;
     if meta.is_dir() {
         return Err(format!("{path} is a folder; use zohara_fs_list"));
@@ -47,6 +48,7 @@ fn walk(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<String>, limit
 
 pub fn list(path: &str, recursive: bool) -> Result<String, String> {
     let p = expand(path);
+    super::guard_read(&p)?;
     if !p.is_dir() {
         return Err(format!("{path} is not a folder"));
     }
@@ -80,6 +82,7 @@ fn matches(name: &str, pattern: &str) -> bool {
 
 pub fn search(pattern: &str, path: &str) -> Result<String, String> {
     let root = expand(path);
+    super::guard_read(&root)?;
     let mut found = Vec::new();
     let mut stack = vec![root];
     let mut visited = 0usize;
@@ -153,6 +156,23 @@ mod tests {
         assert!(rm(d.join("sub").to_str().unwrap(), false).is_err(), "a folder needs recursive");
         rm(d.join("sub").to_str().unwrap(), true).unwrap();
         assert!(!f.exists());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn secret_files_are_refused() {
+        assert!(read("/proc/self/environ").is_err());
+        assert!(read("/proc/1/environ").is_err());
+        assert!(read("~/.ssh/id_rsa").is_err());
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = temp("guard");
+        std::env::set_var("XDG_CONFIG_HOME", &d);
+        let keys = d.join("zo-ai/keys.json");
+        fs::create_dir_all(keys.parent().unwrap()).unwrap();
+        fs::write(&keys, "{}").unwrap();
+        assert!(read(keys.to_str().unwrap()).is_err());
+        assert!(list(keys.parent().unwrap().to_str().unwrap(), false).is_err());
+        std::env::remove_var("XDG_CONFIG_HOME");
         let _ = fs::remove_dir_all(&d);
     }
 

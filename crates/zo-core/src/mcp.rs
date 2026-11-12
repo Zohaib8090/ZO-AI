@@ -109,6 +109,11 @@ pub fn handle(msg: &Value, mode: Mode, approver: &dyn Approver) -> Option<Value>
     })
 }
 
+/// The mode for a call: the one the question was asked with (`ZO_MCP_MODE`, set by Claude Code mode), else the saved one.
+fn current_mode() -> Mode {
+    std::env::var("ZO_MCP_MODE").ok().and_then(|m| Mode::parse_known(&m)).unwrap_or_else(Mode::load)
+}
+
 /// Read requests from `input` until it closes. The mode is re-read for each call, so changing it in the app applies at once.
 pub fn serve(input: impl BufRead, mut output: impl Write, approver: &dyn Approver) {
     for line in input.lines().map_while(Result::ok) {
@@ -116,7 +121,7 @@ pub fn serve(input: impl BufRead, mut output: impl Write, approver: &dyn Approve
             continue;
         }
         let answer = match serde_json::from_str::<Value>(&line) {
-            Ok(msg) => handle(&msg, Mode::load(), approver),
+            Ok(msg) => handle(&msg, current_mode(), approver),
             Err(_) => Some(failure(&Value::Null, -32700, "parse error")),
         };
         if let Some(a) = answer {

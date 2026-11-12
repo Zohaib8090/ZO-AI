@@ -250,12 +250,12 @@ applyTheme(); matchMedia("(prefers-color-scheme: light)").addEventListener("chan
 async function token() { return NOAUTH ? "" : await auth.currentUser.getIdToken(); }
 async function api(path, body) {
   let r;
-  try { r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + await token() }, body: JSON.stringify(body) }); }
+  try { r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify(body) }); }
   catch { netBanner("offline"); throw new Error("Cannot reach the server."); }
   let j = {}; try { j = await r.json(); } catch {}
-  if (r.status === 401) { netBanner("unauthorized"); throw new Error(j.error || "Sign in again."); }
+  if (r.status === 401) { netBanner("unauthorized"); const e = new Error(j.error || "Sign in again."); e.status = 401; throw e; }
   netBanner(null);
-  if (!r.ok || j.ok === false) throw new Error(j.error || ("Error " + r.status));
+  if (!r.ok || j.ok === false) { const e = new Error(j.error || ("Error " + r.status)); e.status = r.status; throw e; }
   return j;
 }
 /* a small bar at the top: shown while calls fail with a network error or 401, hidden again after the next good call */
@@ -394,7 +394,7 @@ async function send() {
   addUser(text); setBusy(true);
   let ai = null, acc = "", group = null;
   try {
-    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId }) });
+    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId }) });
     if (!r.ok || !r.body) { let j = {}; try { j = await r.json(); } catch {} throw new Error(j.error || "Error " + r.status); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
     for (;;) {
@@ -678,9 +678,9 @@ async function pageSync(b) {
 }
 async function pageData(b) {
   const r = await op("chats"); b.innerHTML = "";
-  const open = btn("View chats", "", showChats); const del = btn("Delete all chats", "danger", () => confirmBox("Delete all saved chats?", "This cannot be undone. Projects and scheduled tasks stay.", "Delete", async () => { for (const c of r.chats) await op("delete_chat", { id: c.id }); refreshChats(); settingsPage("data"); }));
+  const open = btn("View chats", "", showChats); const del = btn("Delete all chats", "danger", () => confirmBox("Delete all saved chats?", "Every saved chat is deleted. This cannot be undone. If your computer or phone syncs with this server, they are deleted there too. Projects and scheduled tasks stay.", "Delete", async () => { await op("delete_all_chats"); refreshChats(); settingsPage("data"); }));
   b.appendChild(head("Data"));
-  b.appendChild(cardOf(row("Saved chats, projects and tasks", r.chats.length + " saved chats, kept on the server.", open), row("Delete all chats", "Removes the saved conversations.", del)));
+  b.appendChild(cardOf(row("Saved chats, projects and tasks", r.chats.length + " saved chats, kept on the server.", open), row("Delete all chats", "Removes the saved conversations here, and on every computer that syncs with this server.", del)));
 }
 async function pageAbout(b) { const s = await op("status"); b.innerHTML = ""; b.appendChild(head("About")); b.appendChild(cardOf(row("ZO-AI", "Version " + (s.version || "") + " · the AI built into Zohara OS, on the web"))); }
 
@@ -706,7 +706,8 @@ async function start(u) {
   const name = u ? (u.displayName || u.email || "") : "test"; $("uname").textContent = name; $("avatar").textContent = (name[0] || "Z").toUpperCase();
   if (innerWidth <= 860) $("side").classList.remove("open");
   paint(); 
-  try { await op("status"); } catch (e) { if (!NOAUTH) { $("app").classList.add("hide"); $("login").classList.remove("hide"); $("err").textContent = e.message; signOut(auth); return; } }
+  /* only a refusal (401) signs the person out: a network error or a 5xx while the server restarts keeps the page, and the banner says Offline */
+  try { await op("status"); } catch (e) { if (!NOAUTH && e.status === 401) { $("app").classList.add("hide"); $("login").classList.remove("hide"); $("err").textContent = e.message; signOut(auth); return; } }
   showHome(); refreshChats();
   /* chats made on the computer appear here: refresh when the tab comes back, and once a minute */
   if (started) return; started = true;

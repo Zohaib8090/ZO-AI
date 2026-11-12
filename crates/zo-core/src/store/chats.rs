@@ -86,6 +86,63 @@ fn write(all: &[Chat]) {
     }
 }
 
+/// What a chat looked like when it was opened for an answer: `upsert_checked` uses it to tell whether the stored chat changed
+/// while the answer was being made (a sync, or another device, added messages).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Base {
+    pub updated: u64,
+    pub entries: usize,
+    pub history: usize,
+}
+
+impl Base {
+    pub fn of(c: &Chat) -> Base {
+        Base { updated: c.updated, entries: c.entries.len(), history: c.history.len() }
+    }
+}
+
+/// Like `upsert`, for a chat that was opened as `base` and has been answered since. When the stored chat is newer than `base` and
+/// only grew, what was added meanwhile is kept and the new messages go after it. When it changed in some other way (an edit,
+/// a retry) the answer is saved as a separate copy rather than overwriting the newer chat. Returns the id it was saved under.
+pub fn upsert_checked(mut chat: Chat, base: Base) -> String {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut all = load();
+    let stored = all.iter().find(|c| c.id == chat.id).filter(|s| s.updated > base.updated).cloned();
+    if let Some(s) = stored {
+        let same = |a: &[Entry], b: &[Entry]| a.iter().zip(b).all(|(x, y)| x.kind == y.kind && x.text == y.text);
+        let grew = chat.entries.len() >= base.entries
+            && s.entries.len() >= base.entries
+            && chat.history.len() >= base.history
+            && s.history.len() >= base.history
+            && same(&chat.entries[..base.entries], &s.entries[..base.entries]);
+        if grew {
+            let mut m = s.clone();
+            m.entries.extend(chat.entries[base.entries..].iter().cloned());
+            m.history.extend(chat.history[base.history..].iter().cloned());
+            m.session = chat.session.clone().or(m.session);
+            m.branches = m.snapshot_branches();
+            m.updated = chat.updated.max(s.updated.saturating_add(1));
+            chat = m;
+        } else {
+            chat.id = format!("{}-{}", chat.id, chat.updated);
+            chat.title = format!("{} (copy)", chat.title);
+            chat.pinned = false;
+            let id = chat.id.clone();
+            all.insert(0, chat);
+            all.truncate(KEEP);
+            write(&all);
+            return id;
+        }
+    }
+    let id = chat.id.clone();
+    chat.pinned = all.iter().find(|c| c.id == chat.id).is_some_and(|c| c.pinned);
+    all.retain(|c| c.id != chat.id);
+    all.insert(0, chat);
+    all.truncate(KEEP);
+    write(&all);
+    id
+}
+
 /// Adds the chat, or replaces the one with the same id.
 pub fn upsert(mut chat: Chat) {
     let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -110,8 +167,9 @@ pub fn set_pinned(id: &str, on: bool) {
 
 /// Deletes a chat and remembers that it was deleted, so that the sync removes it on the other side too.
 pub fn delete(id: &str) {
+    let updated = load().iter().find(|c| c.id == id).map_or(0, |c| c.updated);
     delete_quiet(id);
-    crate::sync::tombstone("chats", id);
+    crate::sync::tombstone("chats", id, updated);
 }
 
 /// Deletes a chat without a tombstone (the sync uses this when the deletion came from the other side).
@@ -126,6 +184,29 @@ pub fn delete_quiet(id: &str) {
 pub fn fits(updated: u64) -> bool {
     let all = load();
     all.len() < KEEP || all.iter().any(|c| c.updated < updated)
+}
+
+/// `import`, but only when no chat with that id is stored that is as new or newer, and the chat still fits: the check and the
+/// write are one step. Returns whether it was taken in.
+pub fn import_if_newer(mut chat: Chat) -> bool {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut all = load();
+    if all.iter().any(|c| c.id == chat.id && c.updated >= chat.updated) {
+        return false;
+    }
+    let others = all.iter().filter(|c| c.id != chat.id);
+    if others.clone().count() >= KEEP && !others.clone().any(|c| c.updated < chat.updated) {
+        return false;
+    }
+    if let Some(old) = all.iter().find(|c| c.id == chat.id) {
+        chat.pinned = old.pinned;
+    }
+    all.retain(|c| c.id != chat.id);
+    all.push(chat);
+    all.sort_by(|a, b| b.updated.cmp(&a.updated));
+    all.truncate(KEEP);
+    write(&all);
+    true
 }
 
 /// Takes in a chat that came from the other side, as it is (its time stays; the local pin stays if the chat is here already).
