@@ -15,6 +15,7 @@ Each place can also **stop** things that can be stopped.
 | `command` | a long shell command or an SSH command started by the model; the title is the command, cut to one line | yes: the process is killed | `tools/system.rs`, `tools/ssh.rs` |
 | `terminal` | an open terminal | yes: Stop closes it | read from `term::list` when the list is asked for |
 | `sync` | the sync, with its last status; only while signed in | no, display only | read from the sync status when asked for |
+| `answer` / `claude_code`, source `web-link` | a web session that runs on this computer through the desktop link (title "Web session: ..."); Stop ends it | yes | service `send` with `client: web-link` (`zo-core/src/link.rs`, docs/LINK.md) |
 | `client` | a phone, web or CLI client with an open connection to the service | no, display only | service connection handling |
 
 Every item has `id`, `kind`, `title`, `detail`, `source` (`desktop`, `phone`, `web`, `cli`, `scheduler`, `background`), `chat_id` (when

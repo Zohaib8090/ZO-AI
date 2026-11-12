@@ -874,6 +874,8 @@ fn account_page(ui: &Rc<Ui>, content: &gtk::Box) {
                 });
             }
             content.append(&sec);
+
+            link_sections(ui, content);
         }
         None => signed_out_cards(ui, content, &notice),
     }
@@ -1770,3 +1772,284 @@ mod account_tests {
         assert!(!browser_url_ok("javascript:alert(1)"));
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// link:begin  Control this computer from the web, and Claude Code on the server (docs/LINK.md). Code: zo_core::link.
+
+fn quote_sh(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn link_sections(ui: &Rc<Ui>, content: &gtk::Box) {
+    use zo_core::link;
+    let cfg = link::config();
+
+    // ---- Control this computer from the web
+    let (sec, card) = section("Control this computer from the web");
+    let on = gtk::Switch::new();
+    on.set_active(cfg.enabled);
+    card.append(&row(
+        "Let my web sessions run on this computer",
+        "When this is on, ZO-AI keeps one connection to the server, so the web app can offer \"My computer\" and use your tools, files and models here. The app has to be running (it can sit in the tray). When it is off, nothing is contacted for this.",
+        Some(&on),
+    ));
+    let warn = lbl("Anyone who can sign in to your account on the web can run tools on this computer. Keep Ask-first on.", "pc-name");
+    warn.set_wrap(true);
+    warn.set_margin_start(16);
+    warn.set_margin_end(16);
+    warn.set_margin_bottom(8);
+    card.append(&warn);
+    let how = wrapped("Web sessions never get more than Auto mode, and anything that needs approval is asked here, on this computer, as a dialog.");
+    how.set_margin_start(16);
+    how.set_margin_end(16);
+    how.set_margin_bottom(8);
+    card.append(&how);
+    let status = wrapped("");
+    status.set_margin_start(16);
+    status.set_margin_end(16);
+    status.set_margin_bottom(12);
+    card.append(&status);
+    let line = || {
+        let c = link::config();
+        let s = link::state();
+        if !c.enabled {
+            "Off.".to_string()
+        } else if s.active.is_some() {
+            "A web session is running on this computer.".to_string()
+        } else if s.connected {
+            "On. This computer is reachable from the web.".to_string()
+        } else if s.last_error.is_empty() {
+            "On. Connecting to the server…".to_string()
+        } else {
+            format!("On, but not connected: {}", s.last_error)
+        }
+    };
+    status.set_text(&line());
+    {
+        let status = status.clone();
+        on.connect_state_set(move |_, state| {
+            if let Err(e) = link::set_enabled(state) {
+                status.set_text(&e);
+            } else {
+                status.set_text(&line());
+            }
+            gtk::glib::Propagation::Proceed
+        });
+    }
+    {
+        let status = status.clone();
+        gtk::glib::timeout_add_local(std::time::Duration::from_secs(2), move || {
+            if status.root().is_none() {
+                return gtk::glib::ControlFlow::Break;
+            }
+            status.set_text(&line());
+            gtk::glib::ControlFlow::Continue
+        });
+    }
+    let ex = gtk::Expander::new(Some("Advanced"));
+    let inner = padded_box();
+    let name = gtk::Entry::new();
+    name.add_css_class("field-input");
+    name.set_hexpand(true);
+    name.set_placeholder_text(Some(&link::device_name()));
+    name.set_text(&cfg.name);
+    inner.append(&crate::field("Name shown in the web app", &name));
+    let save = secondary("Save name");
+    save.set_halign(gtk::Align::Start);
+    inner.append(&save);
+    let nst = wrapped("");
+    inner.append(&nst);
+    {
+        let nst = nst.clone();
+        save.connect_clicked(move |_| {
+            nst.set_text(&match link::update_config(|c| c.name = name.text().to_string()) {
+                Ok(()) => "Saved.".to_string(),
+                Err(e) => e,
+            });
+        });
+    }
+    let appr = gtk::Switch::new();
+    appr.set_active(cfg.approvals_from_web);
+    inner.append(&row("Answer approvals from the web too", "Off (recommended): a question \"Allow?\" appears only on this computer. On: the web page can answer it, so anyone signed in to your account can approve.", Some(&appr)));
+    appr.connect_state_set(|_, state| {
+        let _ = link::update_config(|c| c.approvals_from_web = state);
+        gtk::glib::Propagation::Proceed
+    });
+    let byp = gtk::Switch::new();
+    byp.set_active(cfg.allow_bypass);
+    inner.append(&row("Allow Bypass mode from the web", "Off (recommended): a web session that asks for Bypass runs in Auto. On: it may run without asking.", Some(&byp)));
+    byp.connect_state_set(|_, state| {
+        let _ = link::update_config(|c| c.allow_bypass = state);
+        gtk::glib::Propagation::Proceed
+    });
+    ex.set_child(Some(&inner));
+    ex.set_margin_top(6);
+    ex.set_margin_bottom(10);
+    ex.set_margin_start(16);
+    ex.set_margin_end(16);
+    card.append(&ex);
+    content.append(&sec);
+
+    // ---- Claude subscription on the web (owner only)
+    let (sec, card) = section("Use my Claude subscription on the web (owner only)");
+    card.append(&row(
+        "",
+        "Claude Code can run on the ZO-AI server with your own Claude subscription, so you can use it from the web even when this computer is off. What is sent: one long-lived sign-in token made by \"claude setup-token\" (valid about a year). The server keeps it encrypted, only your account can use it, and you can remove it here at any time. Only the owner account of the server can do this; everybody else uses Claude Code on their own computer through the switch above.",
+        no_control(),
+    ));
+    let secret: Rc<std::cell::RefCell<Option<link::Secret>>> = Rc::new(std::cell::RefCell::new(None));
+    let cstatus = wrapped("");
+    cstatus.set_margin_start(16);
+    cstatus.set_margin_end(16);
+    cstatus.set_margin_bottom(10);
+    let sent = |at: u64| {
+        if at == 0 {
+            "Nothing sent yet.".to_string()
+        } else {
+            format!("Sent {} ago. The token lasts about a year; send a new one when Claude stops accepting it.", {
+                let ms = zo_core::activity::now_ms().saturating_sub(at);
+                if ms >= 48 * 3_600_000 { format!("{} days", ms / 86_400_000) } else { crate::tray::elapsed(ms) }
+            })
+        }
+    };
+    cstatus.set_text(&sent(cfg.claude_sent_at));
+    let get = secondary("Get sign-in");
+    let send = secondary("Send to my server");
+    send.set_sensitive(false);
+    let remove = secondary("Remove from server");
+    let paste = gtk::PasswordEntry::new();
+    paste.set_show_peek_icon(false);
+    paste.set_hexpand(true);
+    paste.add_css_class("field-input");
+    let usepaste = secondary("Use pasted token");
+    let bar = hbox(8);
+    bar.set_margin_start(16);
+    bar.set_margin_end(16);
+    bar.set_margin_bottom(8);
+    bar.append(&get);
+    bar.append(&send);
+    bar.append(&remove);
+    card.append(&bar);
+    let pbar = hbox(8);
+    pbar.set_margin_start(16);
+    pbar.set_margin_end(16);
+    pbar.set_margin_bottom(8);
+    pbar.append(&paste);
+    pbar.append(&usepaste);
+    let pbox = vbox(4);
+    pbox.set_margin_start(0);
+    pbox.append(&lbl("   Or paste the token yourself (it is hidden and never shown again):", "field-hint"));
+    pbox.append(&pbar);
+    card.append(&pbox);
+    card.append(&cstatus);
+
+    {
+        let (cstatus, secret, send, ui) = (cstatus.clone(), secret.clone(), send.clone(), ui.clone());
+        get.connect_clicked(move |b| {
+            let Some(bin) = claude_code::binary() else {
+                cstatus.set_text("Claude Code is not installed on this computer. Install it, then try again (or paste a token below).");
+                return;
+            };
+            let term = match zo_core::term::open("Claude sign-in", None, Some(&format!("{} setup-token", quote_sh(&bin.display().to_string()))), false) {
+                Ok(t) => t,
+                Err(e) => {
+                    cstatus.set_text(&e);
+                    return;
+                }
+            };
+            b.set_sensitive(false);
+            ui.dock.show("terminal");
+            cstatus.set_text("Follow the steps in the Terminal panel. The token is picked up here automatically; it is not shown.");
+            let (cstatus, secret, send, b) = (cstatus.clone(), secret.clone(), send.clone(), b.clone());
+            let started = std::time::Instant::now();
+            let ended_once = std::cell::Cell::new(false);
+            gtk::glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
+                let leave = |msg: &str| {
+                    term.close();
+                    cstatus.set_text(msg);
+                    b.set_sensitive(true);
+                    gtk::glib::ControlFlow::Break
+                };
+                if cstatus.root().is_none() {
+                    term.close();
+                    return gtk::glib::ControlFlow::Break;
+                }
+                if let Some(tok) = link::extract_token(&term.screen_text()) {
+                    *secret.borrow_mut() = Some(tok);
+                    send.set_sensitive(true);
+                    return leave("Sign-in captured (hidden). Press \"Send to my server\".");
+                }
+                if !term.alive() {
+                    // one more look after it ended: the last text may still be arriving
+                    if ended_once.replace(true) {
+                        return leave("The sign-in ended without a token. Try again, or paste the token below.");
+                    }
+                } else if started.elapsed() > std::time::Duration::from_secs(600) {
+                    return leave("That took too long. Try again.");
+                }
+                gtk::glib::ControlFlow::Continue
+            });
+        });
+    }
+    {
+        let (cstatus, secret, send, paste) = (cstatus.clone(), secret.clone(), send.clone(), paste.clone());
+        usepaste.connect_clicked(move |_| {
+            let text = paste.text().to_string();
+            paste.set_text("");
+            match link::extract_token(&text) {
+                Some(t) => {
+                    *secret.borrow_mut() = Some(t);
+                    send.set_sensitive(true);
+                    cstatus.set_text("Token taken (hidden). Press \"Send to my server\".");
+                }
+                None => cstatus.set_text("That does not look like a Claude token (it starts with sk-ant-oat)."),
+            }
+        });
+    }
+    {
+        let (cstatus, secret) = (cstatus.clone(), secret.clone());
+        send.connect_clicked(move |b| {
+            let Some(tok) = secret.borrow_mut().take() else { return };
+            b.set_sensitive(false);
+            cstatus.set_text("Sending…");
+            let (b, cstatus, secret) = (b.clone(), cstatus.clone(), secret.clone());
+            background(
+                move || {
+                    let r = link::send_claude_token(&tok);
+                    (r, tok)
+                },
+                move |(r, tok)| match r {
+                    Ok(()) => {
+                        // sent: the token is wiped (dropped) here
+                        drop(tok);
+                        cstatus.set_text("Sent. Claude Code (your subscription) now shows in the model list on the web.");
+                    }
+                    Err(e) => {
+                        *secret.borrow_mut() = Some(tok);
+                        b.set_sensitive(true);
+                        cstatus.set_text(&e);
+                    }
+                },
+            );
+        });
+    }
+    {
+        let (cstatus, secret, send) = (cstatus.clone(), secret.clone(), send.clone());
+        remove.connect_clicked(move |b| {
+            b.set_sensitive(false);
+            *secret.borrow_mut() = None;
+            send.set_sensitive(false);
+            cstatus.set_text("Removing…");
+            let (b, cstatus) = (b.clone(), cstatus.clone());
+            background(link::remove_claude_token, move |r| {
+                b.set_sensitive(true);
+                cstatus.set_text(&match r {
+                    Ok(()) => "Removed from the server.".to_string(),
+                    Err(e) => e,
+                });
+            });
+        });
+    }
+    content.append(&sec);
+}
+// link:end

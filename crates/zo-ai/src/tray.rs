@@ -5,7 +5,7 @@
 //! or later, or again after the panel restarts) the icon registers itself; when there is none, nothing happens and nothing is
 //! retried.
 //!
-//! The menu: Open ZO-AI, what is running now (a submenu with Stop for everything that can be stopped), Activity..., Quit.
+//! The menu: Open ZO-AI, what is running now (a submenu with Stop for everything that can be stopped), Activity..., Web control (on/off), Quit.
 //! A left click on the icon shows or hides the window. The tooltip says how many things are running, and the icon asks for
 //! attention while an approval is waiting.
 
@@ -114,6 +114,7 @@ const ID_SEP2: i32 = 7;
 const ID_ACTIVITY: i32 = 8;
 const ID_SEP3: i32 = 9;
 const ID_QUIT: i32 = 10;
+const ID_WEB: i32 = 11;
 /// ids of the lines that come and go start here
 const FIRST_DYNAMIC: i32 = 100;
 
@@ -338,6 +339,12 @@ fn build(st: &mut State, items: &[activity::Item], waiting: bool) -> Node {
     }
     kids.push(Node::sep(ID_SEP2));
     kids.push(Node::item(ID_ACTIVITY, "Activity…", true));
+    // "Control this computer from the web": a click turns it on or off (only for a signed-in computer)
+    if zo_core::login::signed_in_quick().is_some() {
+        kids.push(Node::item(ID_WEB, if zo_core::link::config().enabled { "Web control: on" } else { "Web control: off" }, true));
+    } else {
+        kids.push(Node::item(ID_WEB, "Web control: off (sign in first)", false));
+    }
     kids.push(Node::sep(ID_SEP3));
     kids.push(Node::item(ID_QUIT, "Quit ZO-AI", true));
     Node { id: ID_ROOT, label: String::new(), sep: false, enabled: true, kids }
@@ -525,6 +532,15 @@ fn on_event(id: i32, event: &str) {
         }
         ID_QUIT => {
             glib::idle_add_local_once(crate::request_quit);
+        }
+        ID_WEB => {
+            let on = zo_core::link::config().enabled;
+            if let Err(e) = zo_core::link::set_enabled(!on) {
+                eprintln!("zo-ai: tray: web control: {e}");
+            }
+            glib::timeout_add_local_once(std::time::Duration::from_millis(200), || {
+                refresh(false);
+            });
         }
         _ => {
             let target = ST.with(|s| s.borrow().stops.get(&id).copied());

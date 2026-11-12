@@ -8,7 +8,7 @@ use zo_core::tenant::{self, Tenant};
 
 /// The names under /api/account/.
 /// There is no call that makes a device credential here: they only come from the device login and `/api/auth/exchange`.
-pub const CALLS: [&str; 10] = ["whoami", "devices_list", "device_revoke", "export", "delete", "accept_terms", "push_config", "push_subscribe", "push_unsubscribe", "push_list"];
+pub const CALLS: [&str; 11] = ["whoami", "devices_list", "device_revoke", "export", "delete", "accept_terms", "push_config", "push_subscribe", "push_unsubscribe", "push_list", "claude_status"];
 
 fn text<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(Value::as_str).unwrap_or("")
@@ -55,6 +55,39 @@ pub fn export(t: &Tenant) -> Value {
     json!({"ok": true, "format": "zo-ai-export-1", "exported_at": now_secs(), "chats": chats, "memory": memory, "memory_settings": memory_settings, "personalities": personalities})
 }
 
+/// Whether the person has a Claude sign-in on the server (never the token itself).
+pub fn claude_status(who: &Who, me: &Tenant) -> Value {
+    let (source, set_at) = tenant::scope(me, || (zo_core::ai::claude_code::token_source(), zo_core::ai::claude_code::token_set_at()));
+    json!({"ok": true, "present": source != "none", "source": source, "set_at": set_at, "admin": who.admin})
+}
+
+/// /api/sync/claude_token (a desktop's credential): the owner's desktop sends the long-lived token of `claude setup-token`, or
+/// removes it. Only an admin account may keep one; it is stored encrypted in that person's own key store and nowhere else. Body:
+/// `{"token": "..."}` (or `{"action": "set", "token": "..."}`), `{"delete": true}` (or `{"action": "delete"}`), `{"action": "status"}`.
+pub fn claude_token(v: &Value, who: &Who, me: &Tenant) -> (u16, Value) {
+    let err = |status: u16, e: &str| (status, json!({"ok": false, "error": e}));
+    if !who.admin {
+        return err(403, "Only the owner's account can keep a Claude sign-in on the server. Everybody else signs in to Claude Code on their own computer and uses it from the web through My computer.");
+    }
+    let action = match (text(v, "action"), v.get("delete").and_then(Value::as_bool), v.get("token").is_some()) {
+        ("", Some(true), _) => "delete",
+        ("", _, true) => "set",
+        (a, _, _) => a,
+    };
+    match action {
+        "set" => match tenant::scope(me, || zo_core::ai::claude_code::store_token(text(v, "token"))) {
+            Ok(at) => (200, json!({"ok": true, "set_at": at})),
+            Err(e) => err(400, &e),
+        },
+        "delete" => match tenant::scope(me, zo_core::ai::claude_code::clear_token) {
+            Ok(()) => (200, json!({"ok": true})),
+            Err(e) => err(503, &e),
+        },
+        "status" => (200, claude_status(who, me)),
+        _ => err(400, "Send action set, delete or status."),
+    }
+}
+
 pub fn handle(app: &App, name: &str, v: &Value, who: &Who, lease: &Lease) -> (u16, Value) {
     let err = |status: u16, e: &str| (status, json!({"ok": false, "error": e}));
     let id = &who.tenant;
@@ -92,13 +125,17 @@ pub fn handle(app: &App, name: &str, v: &Value, who: &Who, lease: &Lease) -> (u1
         "device_revoke" => {
             let Some(d) = &app.devices else { return err(404, "There is no such device.") };
             match d.revoke(id, text(v, "id")) {
-                Ok(true) => (200, json!({"ok": true})),
+                Ok(true) => {
+                    app.link.purge_device(id, text(v, "id"));
+                    (200, json!({"ok": true}))
+                }
                 Ok(false) => err(404, "There is no such device."),
                 Err(e) => err(503, &e),
             }
         }
         // notifications when the browser is closed (push.rs): always the caller's own tenant
         "push_config" | "push_subscribe" | "push_unsubscribe" | "push_list" => app.push.account_call(name, v, id),
+        "claude_status" => (200, claude_status(who, &me)),
         "export" => (200, export(&me)),
         "delete" => {
             if text(v, "confirm") != "DELETE" {

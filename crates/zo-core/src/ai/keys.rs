@@ -46,7 +46,19 @@ pub fn decrypt_map(secret: &str, tenant_id: &str, raw: &[u8]) -> Result<KeyMap, 
     serde_json::from_slice(&plain).map_err(|_| "The key file is damaged.".to_string())
 }
 
+/// The server's secret, kept here once the server has read it at start and taken it out of its own environment (so no program it
+/// starts, and no `/proc/<pid>/environ`, can show it). Tests and older set-ups still use the variable.
+static SERVER_SECRET: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Remembers the secret for this process (the server calls this before it removes `ZO_SERVER_SECRET` from its environment).
+pub fn set_server_secret(secret: &str) {
+    *SERVER_SECRET.lock().unwrap_or_else(|e| e.into_inner()) = Some(secret.to_string()).filter(|s| !s.is_empty());
+}
+
 fn secret() -> Result<String, String> {
+    if let Some(s) = SERVER_SECRET.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return Ok(s);
+    }
     std::env::var("ZO_SERVER_SECRET").ok().filter(|s| !s.is_empty()).ok_or_else(|| "The server has no secret set, so keys cannot be stored safely.".to_string())
 }
 

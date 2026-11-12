@@ -7,6 +7,7 @@ pub mod approval;
 pub mod attach;
 pub mod audit;
 pub mod exec;
+pub mod link;
 pub mod login;
 pub mod mcp;
 pub mod mcp_client;

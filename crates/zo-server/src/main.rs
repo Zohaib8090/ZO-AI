@@ -5,6 +5,7 @@
 //! Settings (environment):
 //!   PORT                       where to listen (Render sets it)
 //!   FIREBASE_SERVICE_ACCOUNT   the service account key file's contents (JSON): turns on the login check and Firestore (required)
+//!                              (this, ZO_SERVER_SECRET and CLAUDE_CODE_OAUTH_TOKEN are read at start and removed from the environment)
 //!   ZO_ADMIN_EMAILS            the owner's address(es), separated by commas: admins (unrestricted tools, Claude Code, SSH, Bypass)
 //!   ZO_BLOCKED_EMAILS          addresses that are refused (optional)
 //!   ZO_MAX_USERS               how many people may register (default 200)
@@ -27,6 +28,8 @@ mod db;
 mod devicelogin;
 mod devices;
 mod firestore;
+mod hardening;
+mod link;
 mod loginapi;
 mod pages;
 mod push;
@@ -79,6 +82,12 @@ pub enum Route {
     Auth,
     /// /api/auth/signout: a device (or a person) signing out.
     Signout,
+    /// /api/link/poll and /api/link/events: the desktop app's side of the desktop link (a desktop credential only).
+    LinkDevice,
+    /// /api/link/status: the linked computers (a person signed in; a desktop may ask too).
+    LinkStatus,
+    /// /api/sync/claude_token: the owner's desktop sends (or removes) the Claude sign-in (a desktop credential only).
+    ClaudeToken,
 }
 
 /// How a caller proved who they are.
@@ -97,13 +106,15 @@ pub struct Who {
     pub admin: bool,
 }
 
-/// Which routes a credential may call. A signed-in person: all. A `full` device: the API, the sync and signing out. A `sync` device:
-/// the sync and signing out. Approving a device and the account page are for a person signed in with Firebase only.
+/// Which routes a credential may call. A signed-in person: all but the desktop's own. A `full` device: the API, the sync and signing out.
+/// A `sync` device (the desktop app): the sync, signing out, the desktop link and the Claude token. Approving a device and the account page are for a person signed in with Firebase only.
 pub fn permits(cred: &Cred, route: Route) -> bool {
     match cred {
-        Cred::Account { .. } => true,
-        Cred::Device { scope: Scope::Full, .. } => !matches!(route, Route::Account | Route::Auth),
-        Cred::Device { scope: Scope::Sync, .. } => matches!(route, Route::Sync | Route::Signout),
+        // a web session is never a linked computer and never hands over a secret: the poll, the posting of events and the Claude
+        // token are for the desktop app's own credential
+        Cred::Account { .. } => !matches!(route, Route::LinkDevice | Route::ClaudeToken),
+        Cred::Device { scope: Scope::Full, .. } => !matches!(route, Route::Account | Route::Auth | Route::LinkDevice | Route::ClaudeToken),
+        Cred::Device { scope: Scope::Sync, .. } => matches!(route, Route::Sync | Route::Signout | Route::LinkDevice | Route::LinkStatus | Route::ClaudeToken),
     }
 }
 
@@ -119,6 +130,9 @@ pub fn route_of(method: &Method, path: &str) -> Option<Route> {
         "/api/auth/device_start" => Some(Route::DeviceStart),
         "/api/auth/device_poll" => Some(Route::DevicePoll),
         "/api/auth/signout" => Some(Route::Signout),
+        "/api/link/poll" | "/api/link/events" => Some(Route::LinkDevice),
+        "/api/link/status" => Some(Route::LinkStatus),
+        "/api/sync/claude_token" => Some(Route::ClaudeToken),
         p if p.strip_prefix("/api/auth/").is_some_and(|n| loginapi::PERSON_CALLS.contains(&n)) => Some(Route::Auth),
         p => p.strip_prefix("/api/account/").filter(|n| account::CALLS.contains(n)).map(|_| Route::Account),
     }
@@ -166,6 +180,8 @@ pub struct App {
     pub accepted: Mutex<std::collections::HashSet<String>>,
     /// Notifications when the browser is closed (`push.rs`).
     pub push: Arc<push::Hub>,
+    /// The desktop link: which computers are online, the jobs on their way to them (`link.rs`).
+    pub link: link::Link,
 }
 
 impl App {
@@ -186,6 +202,7 @@ impl App {
     }
 
     pub fn close_streams(&self, tenant: &str) {
+        self.link.purge_tenant(tenant);
         for (_, (t, s)) in self.streams.lock().unwrap().iter() {
             if t == tenant {
                 let _ = s.shutdown(std::net::Shutdown::Both);
@@ -262,6 +279,7 @@ fn html(app: &App, req: Request, body: String, csp: &str) {
 }
 
 /// Why a request is not served.
+#[derive(Debug)]
 pub struct Fail {
     pub status: u16,
     pub error: String,
@@ -589,6 +607,23 @@ fn route(app: Arc<App>, mut req: Request) {
     if !permits(&who.cred, r) {
         return fail(&app, req, Fail::new(403, "This device token may not do that."));
     }
+    // the desktop app's long poll and its event posts: they have their own limits (link.rs) and hold no place of the person's, which
+    // would otherwise be taken up for as long as a poll waits
+    if r == Route::LinkDevice {
+        let Cred::Device { id, .. } = &who.cred else { return fail(&app, req, Fail::new(403, "Only the desktop app's own credential may do that.")) };
+        let is_poll = path == "/api/link/poll";
+        let v = match body(&mut req, if is_poll { link::POLL_BODY_LIMIT } else { BODY_LIMIT }, BODY_SECS) {
+            Ok(v) => v,
+            Err(f) => return fail(&app, req, f),
+        };
+        let res = if is_poll { link::poll_http(&app, &who, id, &v) } else { link::events_http(&app, &who, id, &v) };
+        return match res {
+            Ok(r) => reply(&app, req, 200, r),
+            // a job that is not (or no longer) this computer's: it must stop working on it
+            Err(f) if !is_poll && f.status == 404 => reply(&app, req, 404, json!({"ok": false, "error": "unknown_job", "cancel": true})),
+            Err(f) => fail(&app, req, f),
+        };
+    }
     let lease = match app.tenants.acquire(&who.tenant, who.admin, Instant::now()) {
         Ok(l) => l,
         Err(e) => return fail(&app, req, e.into()),
@@ -623,7 +658,7 @@ fn route(app: Arc<App>, mut req: Request) {
     let limit = match r {
         Route::Sync => SYNC_BODY_LIMIT,
         Route::Send => SEND_BODY_LIMIT,
-        Route::Auth | Route::Signout => SMALL_BODY_LIMIT,
+        Route::Auth | Route::Signout | Route::LinkStatus | Route::ClaudeToken => SMALL_BODY_LIMIT,
         _ => BODY_LIMIT,
     };
     let secs = match r {
@@ -656,6 +691,11 @@ fn route(app: Arc<App>, mut req: Request) {
         }
     }
     match r {
+        // "target": "desktop": the message runs on the person's own computer through the desktop link
+        Route::Send if v.get("target").and_then(Value::as_str) == Some("desktop") => {
+            drop(lease); // the relay may take an hour: it keeps no place of the person's, deleting the account ends it
+            link::send_http(&app, req, v, &who)
+        }
         Route::Send => send(&app, req, v, lease, tenant),
         Route::Sync => match sync_api::handle(&path, &v, &tenant) {
             Ok(r) => reply(&app, req, 200, r),
@@ -668,17 +708,32 @@ fn route(app: Arc<App>, mut req: Request) {
             if let Some(o) = v.as_object_mut() {
                 o.remove("tenant");
             }
-            let sent = match app.streams.lock().unwrap().get_mut(&id) {
-                Some((t, s)) if *t == tenant.id => s.write_all(format!("{v}\n").as_bytes()).is_ok(),
-                _ => false,
+            let local = match app.streams.lock().unwrap().get_mut(&id) {
+                Some((t, s)) if *t == tenant.id => Some(s.write_all(format!("{v}\n").as_bytes()).is_ok()),
+                _ => None,
             };
-            reply(&app, req, if sent { 200 } else { 404 }, json!({"ok": sent}))
+            match local {
+                Some(sent) => reply(&app, req, if sent { 200 } else { 404 }, json!({"ok": sent})),
+                // not an answer made on the server: one running on the person's computer (stop, or an approval)
+                None => {
+                    let (status, out) = link::reply_http(&app, &who, id, &v);
+                    reply(&app, req, status, out)
+                }
+            }
         }
         Route::Auth | Route::Signout => match loginapi::handle(&app, path.strip_prefix("/api/auth/").unwrap_or(""), &v, &who, &ip) {
             Ok(r) => reply(&app, req, 200, r),
             Err(f) => fail(&app, req, f),
         },
-        Route::DeviceStart | Route::DevicePoll => fail(&app, req, Fail::new(500, "not here")),
+        Route::DeviceStart | Route::DevicePoll | Route::LinkDevice => fail(&app, req, Fail::new(500, "not here")),
+        Route::LinkStatus => match link::status_http(&app, &who) {
+            Ok(r) => reply(&app, req, 200, r),
+            Err(f) => fail(&app, req, f),
+        },
+        Route::ClaudeToken => {
+            let (status, out) = account::claude_token(&v, &who, &tenant);
+            reply(&app, req, status, out)
+        }
         Route::Account => {
             let name = path.strip_prefix("/api/account/").unwrap_or("");
             let (status, out) = account::handle(&app, name, &v, &who, &lease);
@@ -687,6 +742,12 @@ fn route(app: Arc<App>, mut req: Request) {
         Route::Op => {
             if v.get("op").and_then(Value::as_str) == Some("send") {
                 return reply(&app, req, 400, json!({"ok": false, "error": "Use /api/send to send a message."}));
+            }
+            // a settings question for the person's own computer (whitelisted, see link.rs); it waits for the answer, so no place is held
+            if v.get("op").and_then(Value::as_str) == Some("desktop_op") {
+                drop(lease);
+                let (status, out) = link::op_http(&app, &who, &v);
+                return reply(&app, req, status, out);
             }
             // these ask a model (up to minutes): they count as a running answer, like /api/send
             let _run = if v.get("op").and_then(Value::as_str).is_some_and(op_uses_model) {
@@ -738,8 +799,12 @@ fn clean_root(root: &std::path::Path) {
 }
 
 fn main() {
+    // first of all, before any thread exists: the secrets are read and taken out of the environment (see hardening.rs)
+    let secrets = hardening::take_secrets();
+    zo_core::ai::keys::set_server_secret(secrets.server_secret.as_deref().unwrap_or(""));
+    zo_core::ai::claude_code::set_global_token(secrets.claude_token.clone());
     let no_auth = env("ZO_SERVER_NO_AUTH").as_deref() == Some("1");
-    let account = env("FIREBASE_SERVICE_ACCOUNT");
+    let account = secrets.firebase.clone();
     if !no_auth && account.is_none() {
         eprintln!("zo-server: set FIREBASE_SERVICE_ACCOUNT (and ZO_ADMIN_EMAILS), or ZO_SERVER_NO_AUTH=1 to try it on your own computer.");
         std::process::exit(2);
@@ -786,7 +851,7 @@ fn main() {
     }
     std::env::set_var("ZO_MULTI_TENANT", "1");
     std::env::set_var("ZO_TENANT_ROOT", &root);
-    let secret = env("ZO_SERVER_SECRET");
+    let secret = secrets.server_secret.clone();
     if secret.is_none() && !no_auth {
         eprintln!("zo-server: ZO_SERVER_SECRET is not set: nobody can save an API key here.");
     }
@@ -881,6 +946,7 @@ fn main() {
         require_terms: std::sync::atomic::AtomicBool::new(!no_auth),
         accepted: Mutex::new(Default::default()),
         push,
+        link: link::Link::default(),
     });
     {
         // requests that ran out are dropped, and a credential nobody collected is revoked
@@ -888,6 +954,7 @@ fn main() {
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_secs(30));
             loginapi::sweep(&a);
+            a.link.sweep();
         });
     }
     serve(app, server);
