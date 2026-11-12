@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 mod android;
 mod app;
 mod fs;
+pub mod ssh;
 mod system;
 mod terminals;
 mod web;
@@ -149,6 +150,13 @@ pub fn definitions() -> &'static [ToolDef] {
             params: &[("what", "string", "Words describing the note to forget", true)] },
         ToolDef { name: "zohara_ai_pin_chat", description: "Pin or unpin a saved chat in the sidebar.", risk: Change,
             params: &[("chat", "string", "Chat id or part of its title", true), ("pinned", "boolean", "true to pin (default), false to unpin", false)] },
+        ToolDef { name: "zohara_ssh_machines", description: "List the machines you can work on over SSH (name, user@host:port, note). The person adds them in Settings > Machines.", risk: Read, params: &[] },
+        ToolDef { name: "zohara_ssh_run", description: "Run a command on one of the machines over SSH (a remote shell; 10 minutes at most). Claude Code can be started there when the person asks: claude -p \"the task\".", risk: Shell,
+            params: &[("machine", "string", "The machine name from zohara_ssh_machines", true), ("command", "string", "The command, one string for the remote shell", true), ("timeout_s", "integer", "Seconds, default 120, at most 600", false)] },
+        ToolDef { name: "zohara_ssh_read_file", description: "Read a text file on one of the machines (the first 100 KB).", risk: Read,
+            params: &[("machine", "string", "The machine name", true), ("path", "string", "Path on the machine (~ is the home folder there)", true)] },
+        ToolDef { name: "zohara_ssh_write_file", description: "Write a text file on one of the machines, or append to it.", risk: Change,
+            params: &[("machine", "string", "The machine name", true), ("path", "string", "Path on the machine (~ is the home folder there)", true), ("content", "string", "Text to write", true), ("append", "boolean", "Add to the end instead of replacing", false)] },
         ToolDef { name: "zohara_waydroid_shell", description: "Run a command inside Waydroid (asks for your password).", risk: Change,
             params: &[("cmds", "string", "Command line", true)] },
     ]
@@ -232,6 +240,10 @@ fn call_inner(name: &str, a: &Value) -> Result<String, String> {
         "zohara_ai_list_mcp_servers" => app::list_mcp_servers(),
         "zohara_ai_mcp_status" => app::mcp_status(),
         "zohara_ai_add_mcp_config" => app::add_mcp_config(text(a, "config")?),
+        "zohara_ssh_machines" => ssh::list(),
+        "zohara_ssh_run" => ssh::run(a),
+        "zohara_ssh_read_file" => ssh::read_file(a),
+        "zohara_ssh_write_file" => ssh::write_file(a),
         "zohara_term_open" if crate::term::enabled() => terminals::open(a),
         "zohara_term_run" if crate::term::enabled() => terminals::run(a),
         "zohara_term_send" if crate::term::enabled() => terminals::send(a),

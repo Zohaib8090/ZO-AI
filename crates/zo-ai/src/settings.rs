@@ -90,6 +90,7 @@ pub fn show(ui: &Rc<Ui>) {
         ("general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."),
         ("apps", "Connected apps", "Other programs that use ZO-AI, and tools ZO-AI can use."),
         ("sync", "Web sync", "Keep chats, memory and personalities the same on your ZO-AI server and the web app."),
+        ("machines", "Machines", "Other computers ZO-AI can work on over SSH."),
         ("data", "Data", "Saved chats."),
         ("about", "About", "Version."),
     ];
@@ -361,6 +362,78 @@ pub fn show(ui: &Rc<Ui>) {
         card.append(&r);
     }
     content.append(&sec);
+    }
+
+    // ---- machines: other computers over SSH ----
+    if page == "machines" {
+        let (sec, card) = section("Machines");
+        let add = secondary("Add machine");
+        let ui2 = ui.clone();
+        add.connect_clicked(move |_| add_machine_sheet(&ui2));
+        card.append(&row(
+            "Let ZO-AI work on another computer",
+            "A cloud VM or a server you can reach with SSH. ZO-AI can run commands there and read and write files, asking you first unless the mode is Bypass. The private key is kept in the system keyring.",
+            Some(&add),
+        ));
+        for m in zo_core::store::machines::load() {
+            let r = hbox(12);
+            r.add_css_class("settings-row");
+            let col = vbox(3);
+            col.set_hexpand(true);
+            col.append(&lbl(&m.name, "pc-name"));
+            let mut meta = format!("{}@{}:{}", m.user, m.host, m.port);
+            if !m.note.is_empty() {
+                meta.push_str(&format!("  ·  {}", m.note));
+            }
+            if !m.has_key() {
+                meta.push_str("  ·  no key saved");
+            }
+            let meta = lbl(&meta, "pc-meta");
+            meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            col.append(&meta);
+            let status = lbl("", "field-hint");
+            status.set_wrap(true);
+            status.set_xalign(0.0);
+            status.set_max_width_chars(60);
+            col.append(&status);
+            r.append(&col);
+            let test = secondary("Test");
+            {
+                let (name, status) = (m.name.clone(), status.clone());
+                test.connect_clicked(move |b| {
+                    b.set_sensitive(false);
+                    status.set_text("Connecting…");
+                    let (tx, rx) = mpsc::channel();
+                    let n = name.clone();
+                    std::thread::spawn(move || {
+                        let _ = tx.send(zo_core::tools::ssh::test(&n));
+                    });
+                    let (b, status) = (b.clone(), status.clone());
+                    gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || match rx.try_recv() {
+                        Ok(r) => {
+                            status.set_text(&r.unwrap_or_else(|e| e));
+                            b.set_sensitive(true);
+                            gtk::glib::ControlFlow::Break
+                        }
+                        Err(mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
+                        Err(_) => gtk::glib::ControlFlow::Break,
+                    });
+                });
+            }
+            r.append(&test);
+            let del = crate::icon_button("edit-delete-symbolic", "Remove this machine", "icon-btn");
+            let (ui2, name) = (ui.clone(), m.name.clone());
+            del.connect_clicked(move |_| {
+                let (ui3, name3) = (ui2.clone(), name.clone());
+                crate::confirm_delete(&ui2, &format!("Remove \"{name}\"?"), "ZO-AI forgets this machine and its private key. Nothing changes on the machine itself.", move || {
+                    let _ = zo_core::store::machines::remove(&name3);
+                    show(&ui3);
+                });
+            });
+            r.append(&del);
+            card.append(&r);
+        }
+        content.append(&sec);
     }
 
     // ---- personality: how ZO-AI talks ----
@@ -1207,4 +1280,91 @@ fn memory_chat_sheet(ui: &Rc<Ui>) {
     entry.connect_activate(move |_| run());
     win.present();
     entry.grab_focus();
+}
+
+/// "Add machine": where it is, who to log in as, and the private key (pasted; it goes to the keyring, not to the list).
+fn add_machine_sheet(ui: &Rc<Ui>) {
+    let (win, body, foot) = crate::sheet(ui, "Add a machine", 560);
+    let entry = |hint: &str| {
+        let e = gtk::Entry::new();
+        e.set_placeholder_text(Some(hint));
+        e.add_css_class("field-input");
+        e
+    };
+    let (name, host, user, port, note) = (entry("cloud-vm"), entry("203.0.113.7  or  vm.example.com"), entry("ubuntu"), entry("22"), entry("what it is for (optional)"));
+    body.append(&crate::field("Name (letters, digits, . _ -)", &name));
+    body.append(&crate::field("Address", &host));
+    body.append(&crate::field("User", &user));
+    body.append(&crate::field("Port", &port));
+    body.append(&crate::field("Note", &note));
+    let key = gtk::TextView::new();
+    key.set_monospace(true);
+    key.set_wrap_mode(gtk::WrapMode::Char);
+    key.set_top_margin(8);
+    key.set_bottom_margin(8);
+    key.set_left_margin(10);
+    key.set_right_margin(10);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_child(Some(&key));
+    scroll.set_min_content_height(120);
+    scroll.add_css_class("field-input");
+    let paste = secondary("Paste key");
+    {
+        let key = key.clone();
+        paste.connect_clicked(move |b| {
+            let key = key.clone();
+            b.clipboard().read_text_async(None::<&gtk::gio::Cancellable>, move |t| {
+                if let Ok(Some(t)) = t {
+                    key.buffer().set_text(&t);
+                }
+            });
+        });
+    }
+    let key_head = hbox(8);
+    key_head.append(&lbl("Private key", "field-label"));
+    paste.set_halign(gtk::Align::End);
+    paste.set_hexpand(true);
+    key_head.append(&paste);
+    body.append(&key_head);
+    body.append(&scroll);
+    body.append(&lbl("The text of the private key file, from -----BEGIN to -----END. It needs no passphrase. It is stored in the system keyring and is never shown again.", "field-hint"));
+    let status = lbl("", "field-hint");
+    status.set_wrap(true);
+    status.set_xalign(0.0);
+    body.append(&status);
+    let cancel = secondary("Cancel");
+    let add = crate::primary("Add machine");
+    foot.append(&cancel);
+    foot.append(&add);
+    {
+        let w = win.clone();
+        cancel.connect_clicked(move |_| w.close());
+    }
+    {
+        let (w, ui2, name) = (win.clone(), ui.clone(), name.clone());
+        add.connect_clicked(move |_| {
+            let buf = key.buffer();
+            let key_text = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
+            let result = zo_core::store::machines::parse_port(&port.text()).and_then(|p| {
+                let m = zo_core::store::machines::Machine {
+                    name: name.text().trim().into(),
+                    host: host.text().trim().into(),
+                    user: user.text().trim().into(),
+                    port: p,
+                    note: note.text().trim().into(),
+                };
+                zo_core::store::machines::add(m, Some(&key_text))
+            });
+            match result {
+                Ok(()) => {
+                    buf.set_text("");
+                    w.close();
+                    show(&ui2);
+                }
+                Err(e) => status.set_text(&e),
+            }
+        });
+    }
+    win.present();
+    name.grab_focus();
 }
