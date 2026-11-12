@@ -42,7 +42,7 @@ const MAX_ATTACH_BYTES: usize = 8 * 1024 * 1024;
 const APPROVAL_WAIT: Duration = Duration::from_secs(180);
 
 /// The operations the web may ask of this computer (the model pill and the profile menu), and nothing else.
-pub const OPS: &[&str] = &["status", "providers", "profiles", "profile_use", "models", "select", "mode", "terminal_run"];
+pub const OPS: &[&str] = &["status", "providers", "profiles", "profile_use", "models", "select", "mode"];
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // settings (~/.config/zo-ai/link.json)

@@ -133,6 +133,16 @@ fn finish(mut child: std::process::Child, wait: std::time::Duration) -> Result<s
     }
 }
 
+/// The keyring program. Only tests may point it somewhere else (to simulate a computer without one): changing PATH for that
+/// would break every other test that starts a program at the same moment.
+fn secret_tool() -> std::ffi::OsString {
+    #[cfg(test)]
+    if let Some(v) = std::env::var_os("ZO_TEST_SECRET_TOOL").filter(|v| !v.is_empty()) {
+        return v;
+    }
+    "secret-tool".into()
+}
+
 pub fn available() -> bool {
     if let Some(t) = tenant_keys() {
         return t.is_some() && secret().is_ok();
@@ -140,7 +150,7 @@ pub fn available() -> bool {
     if file().is_some() {
         return true;
     }
-    Command::new("secret-tool").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok()
+    Command::new(secret_tool()).arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok()
 }
 
 pub fn get(id: &str) -> Option<String> {
@@ -157,7 +167,7 @@ pub fn get(id: &str) -> Option<String> {
     if let Some(p) = file() {
         return file_load(&p).get(id).and_then(|v| v.as_str()).filter(|k| !k.is_empty()).map(str::to_string);
     }
-    let child = Command::new("secret-tool").args(["lookup", "service", "zo-ai", "provider", id]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let child = Command::new(secret_tool()).args(["lookup", "service", "zo-ai", "provider", id]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
     let out = finish(child, KEYRING_WAIT).ok()?;
     let key = String::from_utf8(out.stdout).ok()?.trim().to_string();
     (out.status.success() && !key.is_empty()).then_some(key)
@@ -176,7 +186,7 @@ pub fn set(id: &str, key: &str) -> Result<(), String> {
         return file_save(&p, &m);
     }
     let label = format!("ZO-AI key for {id}");
-    let mut child = Command::new("secret-tool")
+    let mut child = Command::new(secret_tool())
         .args(["store", "--label", &label, "service", "zo-ai", "provider", id])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -208,7 +218,7 @@ pub fn clear(id: &str) {
         let _ = file_save(&p, &m);
         return;
     }
-    if let Ok(child) = Command::new("secret-tool").args(["clear", "service", "zo-ai", "provider", id]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+    if let Ok(child) = Command::new(secret_tool()).args(["clear", "service", "zo-ai", "provider", id]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
         let _ = finish(child, KEYRING_WAIT);
     }
 }

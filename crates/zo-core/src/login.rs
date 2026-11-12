@@ -1197,8 +1197,7 @@ mod tests {
         let d = sandbox("nokeyring");
         env_on(&d);
         std::env::remove_var("ZO_AI_KEYS_FILE");
-        let path = std::env::var_os("PATH");
-        std::env::set_var("PATH", d.join("nothing")); // no secret-tool
+        std::env::set_var("ZO_TEST_SECRET_TOOL", d.join("nothing")); // no secret-tool (PATH stays untouched: other tests start programs)
         let l = login();
         let r = save_login_as(Client::Cli, &l);
         let got = credential_of(Client::Cli);
@@ -1206,9 +1205,7 @@ mod tests {
         let mode = std::fs::metadata(&f).map(|m| m.permissions().mode() & 0o777);
         clear_login_as(Client::Cli);
         let gone = credential_of(Client::Cli).is_none() && !f.exists();
-        if let Some(p) = path {
-            std::env::set_var("PATH", p);
-        }
+        std::env::remove_var("ZO_TEST_SECRET_TOOL");
         env_off();
         r.unwrap();
         assert_eq!(got.as_deref(), Some(l.credential.as_str()));

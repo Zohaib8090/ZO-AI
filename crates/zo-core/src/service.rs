@@ -255,7 +255,7 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
                 return Err("No command provided.".into());
             }
             if tenant::is_restricted() {
-                return Err("Terminal command execution on the cloud server requires an admin account. Switch to your linked computer under the chat box to run commands there.".into());
+                return Err("Terminal command execution on the cloud server requires an admin account. The web terminal is only for the cloud server of an admin account. To work on your own computer, choose \"My computer\" under the chat box and ask in the chat: your desktop asks you to approve every change.".into());
             }
             let out = match crate::tools::call("zohara_shell", &json!({"cmd": cmd, "timeout": 60})) {
                 Ok(s) => s,

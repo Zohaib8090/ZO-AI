@@ -1671,7 +1671,7 @@ async function runDockTerminalCmd() {
   try {
     let r;
     if (onDesktop()) {
-      r = await dop("terminal_run", { cmd });
+      throw new Error("Commands on your own computer need your approval there: choose My computer under the chat box and ask in the chat (the desktop app asks you first).");
     } else {
       r = await op("terminal_run", { cmd });
     }
@@ -1779,7 +1779,7 @@ async function showActivity() {
       try {
         let r;
         if (onDesktop()) {
-          r = await dop("terminal_run", { cmd });
+          throw new Error("Commands on your own computer need your approval there: choose My computer under the chat box and ask in the chat (the desktop app asks you first).");
         } else {
           r = await op("terminal_run", { cmd });
         }

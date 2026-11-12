@@ -27,7 +27,7 @@ jobs:
           echo "Building against Arch as of $D"
           echo "Server = https://archive.archlinux.org/repos/$D/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
           pacman -Syuu --noconfirm
-          pacman -S --noconfirm --needed base-devel git rust gtk4 libadwaita libsecret pkgconf sudo
+          pacman -S --noconfirm --needed base-devel git rust gtk4 libadwaita libsecret webkitgtk-6.0 pkgconf sudo
           useradd -m -G wheel builder || true
           echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
 
