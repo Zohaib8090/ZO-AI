@@ -119,11 +119,21 @@ pub fn active() -> Vec<&'static ToolDef> {
         return definitions().iter().filter(|d| allowed_for_restricted(d.name)).collect();
     }
     let mut v: Vec<&'static ToolDef> = definitions().iter().collect();
+    // an admin on the cloud server: the desktop-only tools would act on (or fail inside) the server's container while the
+    // model believes it is the person's computer, so they are not offered at all
+    if crate::tenant::multi_tenant() {
+        v.retain(|d| !server_has_no(d.name));
+    }
     if crate::term::enabled() {
         // terminals work without a window; the browser needs the window that shows it
         v.extend(app_definitions().iter().filter(|d| !d.name.starts_with("zohara_browser_") || crate::uibridge::available()));
     }
     v
+}
+
+/// Tools about a desktop, a phone or the Zohara OS machine: meaningless on the cloud server.
+pub fn server_has_no(name: &str) -> bool {
+    ["zohara_adb_", "zohara_waydroid_", "zohara_browser_", "zohara_term_", "zohara_zohara_"].iter().any(|p| name.starts_with(p)) || ["zohara_ss", "zohara_view_image"].contains(&name)
 }
 
 pub fn find(name: &str) -> Option<&'static ToolDef> {
@@ -366,5 +376,21 @@ mod flow_tests {
         assert!(check_flow("zohara_web_search", &json!({"query": "x"})).is_err());
         begin_answer();
         assert!(check_flow("zohara_web_fetch", &json!({"url": format!("https://a.example/{}", "x".repeat(600))})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod server_tests {
+    use super::*;
+
+    #[test]
+    fn the_server_offers_no_desktop_tools_and_tells_the_admin_where_it_runs() {
+        for n in ["zohara_adb_shell", "zohara_waydroid_start", "zohara_browser_open", "zohara_term_run", "zohara_ss", "zohara_zohara_status", "zohara_view_image"] {
+            assert!(server_has_no(n), "{n}");
+        }
+        for n in ["zohara_shell", "zohara_fs_read", "zohara_web_search", "zohara_ssh_run", "zohara_system"] {
+            assert!(!server_has_no(n), "{n}");
+        }
+        assert!(crate::ai::agent::SERVER_ADMIN_PREFIX.contains("NOT on the person's laptop"));
     }
 }

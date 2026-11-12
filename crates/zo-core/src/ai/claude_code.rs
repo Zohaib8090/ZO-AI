@@ -133,7 +133,8 @@ fn tools_env(tenant: Option<&crate::tenant::Tenant>, mode: Option<crate::policy:
 
 #[allow(clippy::too_many_arguments)]
 fn run_once(mode: Option<crate::policy::Mode>, model: &str, effort: Option<&str>, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
-    let system = if system_extra.trim().is_empty() { SYSTEM_PROMPT.to_string() } else { format!("{SYSTEM_PROMPT}\n\n{system_extra}") };
+    let base = super::agent::system_prompt();
+    let system = if system_extra.trim().is_empty() { base.to_string() } else { format!("{base}\n\n{system_extra}") };
     // Claude can look at what the tools return as pictures (a screenshot comes back as an image)
     let system = format!("{system}\n\n{}", super::agent::VISION_YES);
     let bin = binary().ok_or("Claude Code is not installed. Install it (npm install -g @anthropic-ai/claude-code), then sign in with: claude auth login (on a server, set CLAUDE_CODE_OAUTH_TOKEN instead: run `claude setup-token` on your own computer)")?;
