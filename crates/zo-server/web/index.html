@@ -68,9 +68,19 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .tokbox{font-family:ui-monospace,"DejaVu Sans Mono",monospace;font-size:12.5px;word-break:break-all}
 .warn{border:1px solid var(--danger);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--text2);margin:6px 0 4px}
 /* layout */
-#app{height:100%;display:flex}
-.sidebar{width:268px;flex:none;background:var(--bg);border-right:1px solid var(--line);padding:10px 8px 8px 8px;display:flex;flex-direction:column;gap:2px;transition:margin-left .18s}
-.sidebar.closed{margin-left:-268px}
+#app{height:100%;display:flex;position:relative;overflow:hidden}
+/* The sidebar behaves like the desktop app: pinned = open beside the chat (the chat is pushed aside by .space); not pinned = closed,
+   and the pointer on the corner button slides it out OVER the chat, and it slides back when the pointer leaves (180 ms). */
+.sidebar{position:absolute;left:0;top:0;bottom:0;width:268px;z-index:12;background:var(--bg);border-right:1px solid var(--line);padding:10px 8px 8px 8px;display:flex;flex-direction:column;gap:2px;transform:translateX(-100%);transition:transform .18s cubic-bezier(.22,.8,.3,1),box-shadow .18s,border-radius .18s;will-change:transform}
+#app.pinned .sidebar,#app.peek .sidebar{transform:none}
+#app.peek:not(.pinned) .sidebar{box-shadow:0 12px 40px rgba(0,0,0,.45);border-radius:0 14px 14px 0}
+.space{width:0;flex:none;transition:width .18s cubic-bezier(.22,.8,.3,1)}
+#app.pinned .space{width:268px}
+#showSide{position:fixed;left:8px;top:7px;z-index:11;opacity:0;pointer-events:none;transition:opacity .14s}
+#app:not(.pinned):not(.peek) #showSide{opacity:1;pointer-events:auto}
+#app:not(.pinned) .top-title{padding-left:44px}
+.top-title{transition:padding-left .18s cubic-bezier(.22,.8,.3,1)}
+@media(prefers-reduced-motion:reduce){.sidebar,.space,.top-title,#showSide{transition:none}}
 .brand{display:flex;align-items:center;gap:10px;padding:0 0 0 8px}
 .wordmark{flex:1;font-size:21px;padding:6px 4px 14px 0;color:var(--text);margin-top:4px}
 .mark{width:26px;height:26px;color:var(--accent);margin-bottom:6px}
@@ -103,7 +113,6 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;position:relative}
 .topbar{min-height:48px;padding:0 10px;display:flex;align-items:center;gap:6px}
 .top-title{flex:1;font-size:14px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:4px}
-#showSide{display:none}.sidebar.closed~.main #showSide{display:inline-flex}
 
 .page{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column}
 .thread{width:calc(100% - 48px);max-width:760px;margin:0 auto;padding:24px 0 8px;display:flex;flex-direction:column;gap:10px}
@@ -208,11 +217,11 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--pop);border:1px solid var(--line2);border-radius:999px;padding:8px 16px;font-size:13px;z-index:40;box-shadow:0 8px 24px rgba(0,0,0,.4)}
 
 .side-scrim{display:none}
+@media(hover:none),(max-width:860px){#app.peek:not(.pinned) .side-scrim{display:block;position:fixed;inset:0;z-index:9;background:var(--scrim);animation:scrimin .18s ease-out}}
+@keyframes scrimin{from{opacity:0}to{opacity:1}}
 @media(max-width:860px){
-  .sidebar,.sidebar.closed{position:fixed;inset:0 auto 0 0;z-index:10;width:268px;max-width:86vw;margin-left:0;transform:translateX(-100%);transition:transform .18s}
-  .sidebar.open{transform:none;box-shadow:0 0 40px rgba(0,0,0,.4)}
-  .sidebar.open+.side-scrim{display:block;position:fixed;inset:0;z-index:9;background:var(--scrim)}
-  #showSide{display:inline-flex!important}.msg-user-wrap{margin-left:40px}
+  .sidebar{max-width:86vw}
+  .msg-user-wrap{margin-left:40px}
   .pagebox,.pagebox.narrow{padding-left:16px;padding-right:16px}.page-head{margin-top:16px;flex-wrap:wrap}.page-title{font-size:26px}
   .composer-wrap{padding:0 12px}.thread{width:calc(100% - 32px)}.settings-row{flex-wrap:wrap}.settings-row .col{flex:1 1 200px}.pc-meta2{max-width:none}
 }
@@ -289,8 +298,10 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
     <div class="side-foot"><button class="user-btn" id="userBtn" title="Running now, settings and sign out" aria-haspopup="menu"><span class="av-wrap"><span class="avatar" id="avatar">Z</span><span class="av-badge hide" id="avBadge"></span></span><span class="side-user" id="uname"></span></button><button class="icon-btn" id="gear" title="Settings" data-i="gear"></button></div>
   </aside>
   <div class="side-scrim" id="sideScrim"></div>
+  <button class="icon-btn" id="showSide" title="Show the sidebar" data-i="sidebar"></button>
+  <div class="space" id="space"></div>
   <section class="main">
-    <div class="topbar"><button class="icon-btn" id="showSide" title="Show the sidebar" data-i="sidebar"></button><div class="top-title" id="title"></div><button class="icon-btn" id="out" title="Sign out" data-i="out"></button></div>
+    <div class="topbar"><div class="top-title" id="title"></div><button class="icon-btn" id="out" title="Sign out" data-i="out"></button></div>
     <div id="view" class="page"></div>
   </section>
 </div>
@@ -470,7 +481,7 @@ function endGroup(g) { if (!g) return; g.classList.remove("active"); g.querySele
 
 async function openChat(id) {
   if (!id) return showHome();
-  chatId = id; showThread(""); $("side").classList.remove("open");
+  chatId = id; showThread(""); sideClose();
   try {
     const c = await op("chat", { id }); setTitle(c.title || "Chat");
     let g = null;
@@ -827,11 +838,11 @@ async function pageAbout(b) { const s = await op("status"); b.innerHTML = ""; b.
 
 /* ---------- start ---------- */
 function go(n) {
-  $("side").classList.remove("open");
+  sideClose();
   ({ new: showHome, chats: showChats, search: showSearch, projects: showProjects, artifacts: showArtifacts, scheduled: showScheduled })[n]();
 }
 document.querySelectorAll(".nav-item").forEach(b => b.onclick = () => go(b.dataset.nav));
-$("sideScrim").onclick = () => $("side").classList.remove("open");
+$("sideScrim").onclick = () => setPeek(false);
 /* ---------- running now: the menu in the sidebar footer ---------- */
 const ACT_KIND = { answer: "Chat", claude_code: "Claude Code", command: "Command", memory_job: "Memory", scheduled: "Scheduled", client: "Connected", sync: "Sync", terminal: "Terminal" };
 function actAgo(ms) { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? s + " s" : s < 3600 ? Math.floor(s / 60) + " min" : Math.floor(s / 3600) + " h " + Math.floor(s % 3600 / 60) + " min"; }
@@ -859,7 +870,7 @@ function actPaint() {
     try { await op("activity_stop", { id: Number(b.dataset.stop) }); toast("Stopped."); } catch (e) { toast(e.message); }
     await actFetch(); actPaint();
   });
-  actPop.querySelector("[data-go=settings]").onclick = () => { actPop.remove(); $("side").classList.remove("open"); settingsHome(); };
+  actPop.querySelector("[data-go=settings]").onclick = () => { actPop.remove(); sideClose(); settingsHome(); };
   actPop.querySelector("[data-go=out]").onclick = () => { actPop.remove(); NOAUTH ? toast("No sign-in in test mode") : signOut(auth); };
 }
 async function actOpen() {
@@ -876,9 +887,30 @@ async function actOpen() {
 }
 $("userBtn").onclick = () => { if (actPop && document.body.contains(actPop)) { actPop.remove(); actPop = null; } else actOpen(); };
 setInterval(() => { if (!document.hidden && !$("app").classList.contains("hide") && !(actPop && document.body.contains(actPop))) actFetch(); }, 15000);
-$("gear").onclick = () => { $("side").classList.remove("open"); settingsHome(); };
-$("hideSide").onclick = () => { if (innerWidth <= 860) $("side").classList.remove("open"); else $("side").classList.add("closed"); };
-$("showSide").onclick = () => { if (innerWidth <= 860) $("side").classList.toggle("open"); else $("side").classList.remove("closed"); };
+$("gear").onclick = () => { sideClose(); settingsHome(); };
+/* sidebar behaviour (same rules as the desktop app) */
+const appEl = $("app"), sideEl = $("side");
+let sidePinned = innerWidth >= 900, sideAuto = false, sideInside = false;
+const canHover = matchMedia("(hover:hover) and (pointer:fine)").matches;
+function applySide() { appEl.classList.toggle("pinned", sidePinned); if (sidePinned) appEl.classList.remove("peek"); }
+function setPeek(v) { if (v && sidePinned) return; appEl.classList.toggle("peek", v); }
+function sideClose() { if (!sidePinned) appEl.classList.remove("peek"); }
+function sideSizeRules() {
+  const w = innerWidth;
+  if (w < 860 && sidePinned) { sidePinned = false; sideAuto = true; }
+  else if (w >= 900 && sideAuto) { sideAuto = false; sidePinned = true; }
+  applySide();
+}
+applySide(); sideSizeRules();
+addEventListener("resize", sideSizeRules);
+$("hideSide").onclick = () => { if (sidePinned) { sideAuto = false; sidePinned = false; applySide(); } else setPeek(false); };
+$("showSide").onclick = () => { if (innerWidth >= 900) { sideAuto = false; sidePinned = !sidePinned; applySide(); } else setPeek(!appEl.classList.contains("peek")); };
+if (canHover) {
+  $("showSide").addEventListener("mouseenter", () => { if (sidePinned) return; setPeek(true); setTimeout(() => { if (!sidePinned && !sideInside) setPeek(false); }, 900); });
+  sideEl.addEventListener("mouseenter", () => { sideInside = true; });
+  sideEl.addEventListener("mouseleave", () => { sideInside = false; setTimeout(() => { if (!sidePinned && !sideInside) setPeek(false); }, 220); });
+}
+addEventListener("keydown", e => { if (e.key === "Escape") sideClose(); });
 $("netin").onclick = () => NOAUTH ? location.reload() : signOut(auth);
 $("out").onclick = () => NOAUTH ? toast("No sign-in in test mode") : signOut(auth);
 /* ---------- sign-in: Google, or e-mail and password (Firebase) ---------- */
@@ -1025,7 +1057,7 @@ async function start(u, agreed) {
   if (isDevicePath()) return showDevice();
   $("device").classList.add("hide"); $("app").classList.remove("hide");
   const name = u ? (u.displayName || u.email || "") : "test"; $("uname").textContent = name; $("avatar").textContent = (name[0] || "Z").toUpperCase();
-  if (innerWidth <= 860) $("side").classList.remove("open");
+  if (innerWidth <= 860) sideClose();
   paint(); 
   /* only a refusal (401) signs the person out: a network error or a 5xx while the server restarts keeps the page, and the banner says Offline */
   try { acct = await acctOp("whoami"); } catch (e) { acct = null; }
