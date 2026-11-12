@@ -166,6 +166,8 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .pop-row{display:flex;width:100%;justify-content:flex-start;text-align:left;border-radius:8px;padding:8px 10px;align-items:center;gap:10px}.pop-row:hover{background:var(--hov)}
 .pop-row .c{flex:1;min-width:0}.pop-title{font-size:14px;color:var(--text)}.pop-sub{font-size:12px;color:var(--dim)}.pop-check{color:var(--check);width:16px}
 .chat-line{display:flex;gap:10px;align-items:baseline;margin:8px 0}.chat-line.you{justify-content:flex-end}
+.netbar{position:fixed;top:54px;white-space:nowrap;left:50%;transform:translateX(-50%);z-index:45;display:flex;align-items:center;gap:10px;background:var(--pop);border:1px solid var(--line2);border-radius:999px;padding:5px 6px 5px 14px;font-size:12.5px;box-shadow:0 6px 18px rgba(0,0,0,.3);max-width:calc(100vw - 24px)}
+.netbar .btn{padding:3px 10px;font-size:12px;white-space:nowrap}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--pop);border:1px solid var(--line2);border-radius:999px;padding:8px 16px;font-size:13px;z-index:40;box-shadow:0 8px 24px rgba(0,0,0,.4)}
 
 .side-scrim{display:none}
@@ -187,6 +189,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
   <div id="err"></div>
 </div>
 
+<div id="net" class="netbar hide" role="status"><span id="netmsg"></span><button class="btn" id="netin">Sign in again</button></div>
 <div id="app" class="hide">
   <aside class="sidebar" id="side">
     <div class="brand"><svg class="mark" viewBox="0 0 120 120" data-mark></svg><div class="wordmark">ZO-AI</div><button class="icon-btn" id="hideSide" title="Hide the sidebar" data-i="sidebar"></button></div>
@@ -246,10 +249,21 @@ applyTheme(); matchMedia("(prefers-color-scheme: light)").addEventListener("chan
 /* ---------- server calls ---------- */
 async function token() { return NOAUTH ? "" : await auth.currentUser.getIdToken(); }
 async function api(path, body) {
-  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + await token() }, body: JSON.stringify(body) });
+  let r;
+  try { r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + await token() }, body: JSON.stringify(body) }); }
+  catch { netBanner("offline"); throw new Error("Cannot reach the server."); }
   let j = {}; try { j = await r.json(); } catch {}
+  if (r.status === 401) { netBanner("unauthorized"); throw new Error(j.error || "Sign in again."); }
+  netBanner(null);
   if (!r.ok || j.ok === false) throw new Error(j.error || ("Error " + r.status));
   return j;
+}
+/* a small bar at the top: shown while calls fail with a network error or 401, hidden again after the next good call */
+function netBanner(kind) {
+  const b = $("net"); if (!b) return;
+  if (!kind) { b.classList.add("hide"); return; }
+  $("netmsg").textContent = kind === "offline" ? "Offline. Retrying." : "Signed out or not allowed.";
+  b.classList.remove("hide");
 }
 const op = (o, extra = {}) => api("/api/op", { op: o, ...extra });
 function toast(t) { const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2600); }
@@ -538,7 +552,7 @@ async function showScheduled() {
 }
 
 /* ---------- settings: a list of pages, each with a Back button ---------- */
-const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How ZO-AI talks to you."], ["memory", "Memory", "What ZO-AI remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."], ["apps", "Connected apps", "Tools ZO-AI can use (MCP servers)."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
+const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How ZO-AI talks to you."], ["memory", "Memory", "What ZO-AI remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."], ["apps", "Connected apps", "Tools ZO-AI can use (MCP servers)."], ["machines", "Machines", "Computers ZO-AI can reach over SSH."], ["sync", "Web sync", "How the desktop app and this page share chats and memory."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
 function row(title, sub, control) { const r = document.createElement("div"); r.className = "settings-row"; r.innerHTML = `<div class="col"><div class="pc-name2"></div>${sub ? '<div class="pc-meta2"></div>' : ""}</div>`; r.querySelector(".pc-name2").textContent = title; if (sub) r.querySelector(".pc-meta2").textContent = sub; if (control) r.appendChild(control); return r; }
 function cardOf(...rows) { const c = document.createElement("div"); c.className = "settings-card"; rows.forEach(r => c.appendChild(r)); return c; }
 function head(t) { const h = document.createElement("div"); h.className = "settings-head"; h.textContent = t; return h; }
@@ -554,7 +568,7 @@ async function settingsPage(id) {
   view().style.overflow = ""; view().innerHTML = `<div class="pagebox narrow"><div class="page-head" id="ph" style="gap:10px"></div><div id="pbody"></div></div>`;
   $("ph").appendChild(bk); $("ph").insertAdjacentHTML("beforeend", '<div class="page-title"></div>'); $("ph").querySelector(".page-title").textContent = name;
   const b = $("pbody"); b.innerHTML = '<div class="pc-meta">Loading…</div>';
-  try { await ({ model: pageModel, personality: pagePersonality, memory: pageMemory, general: pageGeneral, apps: pageApps, data: pageData, about: pageAbout })[id](b); } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
+  try { await ({ model: pageModel, personality: pagePersonality, memory: pageMemory, general: pageGeneral, apps: pageApps, machines: pageMachines, sync: pageSync, data: pageData, about: pageAbout })[id](b); } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
 }
 async function pageModel(b) {
   const [s, prof] = await Promise.all([op("status"), op("profiles")]); b.innerHTML = "";
@@ -626,6 +640,42 @@ async function pageApps(b) {
   if (!r.servers.length) return b.appendChild(cardOf(row("No servers yet", "Add MCP servers on the computer; they sync here.")));
   b.appendChild(cardOf(...r.servers.map(s => { const sw = document.createElement("input"); sw.type = "checkbox"; sw.className = "switch"; sw.checked = s.enabled; sw.onchange = () => op("mcp_toggle", { name: s.name, enabled: sw.checked }); return row(s.name, s.command, sw); })));
 }
+async function pageMachines(b) {
+  const r = await op("machines"); b.innerHTML = "";
+  const add = btn("Add machine…", "primary", () => machineSheet(b));
+  b.appendChild(head("Machines"));
+  const rows = r.machines.map(m => {
+    const c = document.createElement("div"); c.style.cssText = "display:flex;gap:6px";
+    const t = btn("Test", "", async () => { t.disabled = true; t.textContent = "Testing…"; try { toast((await op("machine_test", { name: m.name })).message); } catch (e) { toast(e.message); } t.disabled = false; t.textContent = "Test"; });
+    const d = btn("Remove", "danger", () => confirmBox("Remove " + m.name + "?", "ZO-AI forgets this machine and its saved key.", "Remove", async () => { try { await op("machine_remove", { name: m.name }); } catch (e) { toast(e.message); } pageMachines(b); }));
+    c.append(t, d);
+    return row(m.name, `${m.user ? m.user + "@" : ""}${m.host}:${m.port}${m.has_key ? " · key saved" : " · no key"}${m.note ? " · " + m.note : ""}`, c);
+  });
+  b.appendChild(cardOf(...rows, row("Add a machine", "ZO-AI connects with SSH to run commands there. The private key is stored on the server and never shown again. Use a key made for ZO-AI.", add)));
+}
+function machineSheet(b) {
+  const w = document.createElement("div");
+  w.innerHTML = '<div class="field-label">Name</div><input class="field-input" id="mn" placeholder="home-server"><div class="field-label">Host</div><input class="field-input" id="mh" placeholder="192.168.1.20 or example.com"><div class="field-label">User</div><input class="field-input" id="mu"><div class="field-label">Port</div><input class="field-input" id="mp" value="22" inputmode="numeric"><div class="field-label">Note (optional)</div><input class="field-input" id="mo"><div class="field-label">Private key (optional)</div><textarea class="field-input" id="mk" rows="5" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea><div class="field-hint" id="me"></div>';
+  const v = id => w.querySelector("#" + id).value;
+  const save = btn("Add", "primary", async () => {
+    save.disabled = true; w.querySelector("#me").textContent = "";
+    try { await op("machine_add", { name: v("mn"), host: v("mh"), user: v("mu"), port: v("mp"), note: v("mo"), key: v("mk") || undefined }); sh.close(); pageMachines(b); }
+    catch (e) { w.querySelector("#me").textContent = e.message; save.disabled = false; }
+  });
+  const sh = sheet("Add a machine", w, [btn("Cancel", "", () => sh.close()), save]);
+}
+const ago = ms => { if (!ms) return "never"; const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 2880 ? Math.round(m / 60) + " h ago" : new Date(ms).toLocaleDateString(); };
+async function pageSync(b) {
+  const [m, st] = await Promise.all([api("/api/sync/manifest", {}), op("sync_status").catch(() => null)]); b.innerHTML = "";
+  const n = k => Object.keys(m[k] || {}).length;
+  const newest = Math.max(0, ...["chats", "memory", "personalities"].flatMap(k => Object.values(m[k] || {}).map(Number)));
+  b.appendChild(head("Web sync"));
+  b.appendChild(cardOf(
+    row("This server holds", `${n("chats")} chat${n("chats") == 1 ? "" : "s"}, ${n("memory")} memory item${n("memory") == 1 ? "" : "s"} and ${n("personalities")} personalit${n("personalities") == 1 ? "y" : "ies"}. Last change: ${ago(newest)}.`),
+    row("Turn it on in the desktop app", "In the desktop app open Settings > Web sync, paste this server's address and the access token, and turn sync on. It keeps chats, memory and personalities the same here and on the computer, and chats made on the computer show up in this page's list within a minute."),
+  ));
+  if (st && st.enabled) b.appendChild(cardOf(row("This server also syncs out", `To ${st.url}. Last good sync: ${ago(st.last_ok)}.${st.error ? " Problem: " + st.error : ""}`)));
+}
 async function pageData(b) {
   const r = await op("chats"); b.innerHTML = "";
   const open = btn("View chats", "", showChats); const del = btn("Delete all chats", "danger", () => confirmBox("Delete all saved chats?", "This cannot be undone. Projects and scheduled tasks stay.", "Delete", async () => { for (const c of r.chats) await op("delete_chat", { id: c.id }); refreshChats(); settingsPage("data"); }));
@@ -644,11 +694,13 @@ $("sideScrim").onclick = () => $("side").classList.remove("open");
 $("gear").onclick = () => { $("side").classList.remove("open"); settingsHome(); };
 $("hideSide").onclick = () => { if (innerWidth <= 860) $("side").classList.remove("open"); else $("side").classList.add("closed"); };
 $("showSide").onclick = () => { if (innerWidth <= 860) $("side").classList.toggle("open"); else $("side").classList.remove("closed"); };
+$("netin").onclick = () => NOAUTH ? location.reload() : signOut(auth);
 $("out").onclick = () => NOAUTH ? toast("No sign-in in test mode") : signOut(auth);
 $("signin").onclick = async () => {
   $("err").textContent = "";
   try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { $("err").textContent = e.code === "auth/unauthorized-domain" ? "This web address is not allowed in Firebase yet (Authentication > Settings > Authorized domains)." : e.message; }
 };
+let started = false;
 async function start(u) {
   $("login").classList.add("hide"); $("app").classList.remove("hide");
   const name = u ? (u.displayName || u.email || "") : "test"; $("uname").textContent = name; $("avatar").textContent = (name[0] || "Z").toUpperCase();
@@ -656,6 +708,10 @@ async function start(u) {
   paint(); 
   try { await op("status"); } catch (e) { if (!NOAUTH) { $("app").classList.add("hide"); $("login").classList.remove("hide"); $("err").textContent = e.message; signOut(auth); return; } }
   showHome(); refreshChats();
+  /* chats made on the computer appear here: refresh when the tab comes back, and once a minute */
+  if (started) return; started = true;
+  const tick = () => { if (!document.hidden) refreshChats(); };
+  document.addEventListener("visibilitychange", tick); addEventListener("focus", tick); setInterval(tick, 60000);
 }
 paint();
 if (NOAUTH) start(null);
