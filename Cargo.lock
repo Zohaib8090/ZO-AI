@@ -1844,6 +1844,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "zo-cli"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ureq",
+ "zo-core",
+]
+
+[[package]]
 name = "zo-core"
 version = "0.1.0"
 dependencies = [

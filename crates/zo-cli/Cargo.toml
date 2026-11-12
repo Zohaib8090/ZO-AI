@@ -1,0 +1,16 @@
+[package]
+name = "zo-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "zo: ZO-AI in the terminal"
+
+[[bin]]
+name = "zo"
+path = "src/main.rs"
+
+[dependencies]
+zo-core = { path = "../zo-core" }
+serde.workspace = true
+serde_json.workspace = true
+ureq = { version = "2.12", features = ["json"] }

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/zo-core", "crates/zo-mcp", "crates/zo-ai", "crates/zo-server"]
+members = ["crates/zo-core", "crates/zo-mcp", "crates/zo-ai", "crates/zo-server", "crates/zo-cli"]
 
 [workspace.package]
 version = "0.1.0"
