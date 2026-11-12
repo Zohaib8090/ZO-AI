@@ -20,6 +20,7 @@ package() {
   local d=crates/zo-ai/data
   install -Dm755 target/release/zo-ai  "$pkgdir/usr/bin/zo-ai"
   install -Dm755 target/release/zo-mcp "$pkgdir/usr/bin/zo-mcp"
+  install -Dm755 target/release/zo "$pkgdir/usr/bin/zo"
   install -Dm644 $d/org.zohara.ZoAi.desktop    "$pkgdir/usr/share/applications/org.zohara.ZoAi.desktop"
   install -Dm644 $d/zo-ai-quick.desktop      "$pkgdir/usr/share/applications/zo-ai-quick.desktop"
   install -Dm644 $d/zo-ai-background.desktop "$pkgdir/etc/xdg/autostart/zo-ai-background.desktop"
