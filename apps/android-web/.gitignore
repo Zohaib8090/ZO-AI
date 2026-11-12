@@ -1,0 +1,16 @@
+node_modules/
+android/build/
+android/app/build/
+android/.gradle/
+android/capacitor-cordova-android-plugins/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/local.properties
+android/gradle.properties.local
+*.keystore
+*.jks
+keystore.properties
+# google-services.json is NOT secret (it ships inside the APK) but it is the
+# owner's Firebase project identity: kept out of git by default, see docs/ANDROID.md.
+android/app/google-services.json
