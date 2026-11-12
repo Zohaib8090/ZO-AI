@@ -56,6 +56,17 @@ claude mcp add zohara -- ~/.local/bin/zo-mcp   # let Claude Code control this co
 
 Any MCP client that can start a stdio server works the same way.
 
+## In the terminal: `zo`
+
+```bash
+zo "how much disk is left?"        # one answer, streamed; tool steps appear dimmed on stderr
+zo chat                            # an interactive chat (/new /chats /open N /model /mode /memory /stop /quit)
+zo memory; zo remember "I use fish"; zo status
+zo --remote https://your-server --token-file ~/.config/zo-ai/token "question"   # a zo-server instead of the local app
+```
+
+It uses the same chats, memory and model choice as the app. See [docs/CLI.md](docs/CLI.md).
+
 ## Develop
 
 ```bash
@@ -69,6 +80,7 @@ cargo run -p zo-core --example mock-model   # a fake model server, to try the ch
 ## Documentation
 
 * [docs/ZO-AI.md](docs/ZO-AI.md): how the app, the model layer, context and compaction, profiles and storage work.
+* [docs/CLI.md](docs/CLI.md): the `zo` terminal client.
 * [docs/MCP.md](docs/MCP.md): MCP servers, sign-in and the redirect address.
 
 ## License

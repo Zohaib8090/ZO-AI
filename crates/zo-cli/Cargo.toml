@@ -14,3 +14,4 @@ zo-core = { path = "../zo-core" }
 serde.workspace = true
 serde_json.workspace = true
 ureq = { version = "2.12", features = ["json"] }
+libc = "0.2"

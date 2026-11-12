@@ -37,10 +37,10 @@ jobs:
       - name: Test
         run: |
           chown -R builder:builder .
-          sudo -u builder env CARGO_TARGET_DIR=/home/builder/target cargo test --locked -p zo-core
+          sudo -u builder env CARGO_TARGET_DIR=/home/builder/target cargo test --locked -p zo-core -p zo-cli
 
       - name: Build release binaries
-        run: sudo -u builder env CARGO_TARGET_DIR=/home/builder/target cargo build --release --locked -p zo-ai -p zo-mcp
+        run: sudo -u builder env CARGO_TARGET_DIR=/home/builder/target cargo build --release --locked -p zo-ai -p zo-mcp -p zo-cli
 
       - name: Compute version
         id: version
