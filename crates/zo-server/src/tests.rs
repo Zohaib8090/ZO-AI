@@ -1665,6 +1665,7 @@ fn a_restricted_person_never_gets_claude_code_on_the_server_whatever_they_try() 
 
 #[test]
 fn claude_code_runs_for_the_owner_on_the_server_with_the_owners_token_in_a_minimal_environment() {
+    let _env = CLAUDE_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let uo = uniq("run-owner");
     let r = rig(&[("tok-o", &uo, "owner@x.test")], "owner@x.test", 200, 600);
     let (od, _) = make_device(&r, "tok-o", "run-desk", "desktop");
@@ -1691,5 +1692,318 @@ fn claude_code_runs_for_the_owner_on_the_server_with_the_owners_token_in_a_minim
     assert!(env.contains(&format!("HOME={}", tenant_dir(&uo).join("config").join("claude-home").display())));
     let args = std::fs::read_to_string(dir.join("args")).unwrap();
     assert!(args.contains("--tools\n\n"), "Claude's built-in tools are off: {args}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ===========================================================================================================================
+// link:e2e:begin the real desktop link code (zo-core's `link::run_loop`, in the `linkdesk` example, with the real ZO-AI service and a fake
+// model) against this server over HTTP; and the owner's Claude token sent with the desktop's own code, run through a fake `claude`.
+
+/// Tests that set ZOAI_CLAUDE_BIN / FIREBASE_SERVICE_ACCOUNT take this (the environment is shared by all tests).
+static CLAUDE_ENV: Mutex<()> = Mutex::new(());
+
+/// target/debug, found from the test binary itself.
+fn debug_dir() -> std::path::PathBuf {
+    std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().to_path_buf()
+}
+
+fn build_examples() -> (std::path::PathBuf, std::path::PathBuf) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let st = std::process::Command::new(cargo).args(["build", "-q", "-p", "zo-core", "--example", "linkdesk", "--example", "mock-model"]).status().expect("cargo");
+        assert!(st.success(), "the examples build");
+    });
+    (debug_dir().join("examples").join("linkdesk"), debug_dir().join("examples").join("mock-model"))
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+}
+
+/// A child process that is killed when this goes out of scope.
+struct Child(std::process::Child);
+impl Drop for Child {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// The desktop: its own sandbox (home, config, data, runtime), the real service, the real link loop. Waits until it says READY.
+fn start_desktop(r: &Rig, sandbox: &std::path::Path, cred: &str, model: &str, answers: &str) -> Child {
+    use std::io::BufRead;
+    let (bin, _) = build_examples();
+    for d in ["home", "c", "d", "run"] {
+        std::fs::create_dir_all(sandbox.join(d)).unwrap();
+    }
+    let mut c = std::process::Command::new(bin)
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("HOME", sandbox.join("home"))
+        .env("XDG_CONFIG_HOME", sandbox.join("c"))
+        .env("XDG_DATA_HOME", sandbox.join("d"))
+        .env("XDG_RUNTIME_DIR", sandbox.join("run"))
+        .env("LINK_BASE", &r.base)
+        .env("LINK_CRED", cred)
+        .env("LINK_MODEL", model)
+        .env("LINK_ANSWERS", answers)
+        .env("LINK_LOG", sandbox.join("asks.log"))
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("linkdesk starts");
+    let mut line = String::new();
+    std::io::BufReader::new(c.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(line.trim(), "READY");
+    Child(c)
+}
+
+/// The mock model server (the zo-core example), on a free port.
+fn start_model() -> (Child, String) {
+    let (_, bin) = build_examples();
+    let port = free_port();
+    let c = std::process::Command::new(bin).arg(port.to_string()).stderr(std::process::Stdio::null()).spawn().expect("mock-model starts");
+    let url = format!("http://127.0.0.1:{port}/v1");
+    let t0 = Instant::now();
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+        assert!(t0.elapsed() < Duration::from_secs(10), "the model server did not start");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    (Child(c), url)
+}
+
+fn computers(r: &Rig, token: &str) -> Vec<Value> {
+    call(r, token, "/api/link/status", json!({})).body["devices"].as_array().cloned().unwrap_or_default()
+}
+
+fn wait_online(r: &Rig, token: &str, want: bool) {
+    let t0 = Instant::now();
+    while computers(r, token).first().map(|d| d["online"] == want) != Some(true) {
+        assert!(t0.elapsed() < Duration::from_secs(15), "the computer never became {}", if want { "online" } else { "offline" });
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// A streaming answer read line by line as it arrives (pings left out): the lines come through the channel; None when the stream ended.
+fn stream_live(r: &Rig, token: &str, body: Value) -> std::sync::mpsc::Receiver<Option<Value>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (base, token) = (r.base.clone(), token.to_string());
+    std::thread::spawn(move || {
+        let res = match ureq::post(&format!("{base}/api/send")).set("Authorization", &format!("Bearer {token}")).timeout(Duration::from_secs(60)).send_string(&body.to_string()) {
+            Ok(r) => r,
+            Err(ureq::Error::Status(_, r)) => r,
+            Err(e) => panic!("{e}"),
+        };
+        use std::io::BufRead;
+        for l in std::io::BufReader::new(res.into_reader()).lines().map_while(Result::ok) {
+            if let Ok(v) = serde_json::from_str::<Value>(&l) {
+                if v["event"] != "ping" && tx.send(Some(v)).is_err() {
+                    return;
+                }
+            }
+        }
+        let _ = tx.send(None);
+    });
+    rx
+}
+
+/// Everything until the stream ends (or the time is up).
+fn drain(rx: &std::sync::mpsc::Receiver<Option<Value>>, secs: u64) -> Vec<Value> {
+    let mut out = vec![];
+    let t0 = Instant::now();
+    while let Ok(m) = rx.recv_timeout(Duration::from_secs(secs).saturating_sub(t0.elapsed())) {
+        match m {
+            Some(v) => out.push(v),
+            None => return out,
+        }
+    }
+    panic!("the stream did not end in {secs}s: {out:?}");
+}
+
+fn all_text(lines: &[Value]) -> String {
+    lines.iter().filter(|l| l["event"] == "text" || l["event"] == "delta").filter_map(|l| l["text"].as_str()).collect::<Vec<_>>().join("")
+}
+
+fn asks(sandbox: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(sandbox.join("asks.log")).unwrap_or_default().lines().map(String::from).collect()
+}
+
+#[test]
+fn the_real_desktop_link_end_to_end_online_send_approvals_on_the_computer_stop_offline_other_people_and_expiry() {
+    let (ua, ub) = (uniq("e2e-a"), uniq("e2e-b"));
+    let r = rig(&[("tok-a", &ua, "a@x.test"), ("tok-b", &ub, "b@x.test")], "", 200, 6000);
+    let sandbox = std::path::PathBuf::from(format!("/tmp/claude-1000/zl-e2e-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    let (_model, model_url) = start_model();
+    let (cred_a, dev_a) = make_device(&r, "tok-a", "Desk-A", "desktop");
+    let (_cred_b, _dev_b) = make_device(&r, "tok-b", "Desk-B", "desktop");
+
+    // 1. A's desktop is signed in but not running: the web says offline, and a send fails at once and clearly
+    assert_eq!(computers(&r, "tok-a")[0]["online"], false);
+    let t0 = Instant::now();
+    let lines = drain(&stream_live(&r, "tok-a", json!({"target": "desktop", "text": "hello"})), 5);
+    assert!(t0.elapsed() < Duration::from_secs(1));
+    assert_eq!(lines.iter().map(|l| l["event"].as_str().unwrap_or("")).collect::<Vec<_>>(), ["error", "done"], "{lines:?}");
+    assert_eq!(lines[0]["error"], "desktop_offline");
+    assert!(lines[0]["message"].as_str().unwrap().len() > 20);
+
+    // 2. the desktop starts (answers to its approval dialogs: yes, then no): the web sees it online, with its capabilities
+    let desk = start_desktop(&r, &sandbox, &cred_a, &model_url, "y,n");
+    wait_online(&r, "tok-a", true);
+    let d = computers(&r, "tok-a")[0].clone();
+    assert_eq!((d["id"].as_str(), d["online"].clone()), (Some(dev_a.as_str()), json!(true)), "{d}");
+    assert_eq!(d["caps"]["approvals_from_web"], false, "{d}");
+    assert!(d["caps"]["os"].is_string() && d["caps"]["version"].is_string(), "{d}");
+    // person B sees nothing of it, cannot address it by id and cannot reach it
+    assert!(computers(&r, "tok-b").iter().all(|d| d["id"] != dev_a.as_str() && d["online"] == false), "{:?}", computers(&r, "tok-b"));
+    let lines = drain(&stream_live(&r, "tok-b", json!({"target": "desktop", "device": dev_a, "text": "I am B"})), 5);
+    assert_eq!(lines[0]["error"], "desktop_offline", "{lines:?}");
+    let o = call(&r, "tok-b", "/api/op", json!({"op": "desktop_op", "device": dev_a, "inner": {"op": "status"}}));
+    assert_eq!(o.status, 503, "{:?}", o.body);
+    assert!(asks(&sandbox).is_empty());
+
+    // 3. A sends; the desktop runs it through its service; the tool is approved ON THE DESKTOP (yes); the events arrive in order
+    let lines = drain(&stream_live(&r, "tok-a", json!({"target": "desktop", "text": "run a check", "mode": "manual"})), 40);
+    let kinds: Vec<&str> = lines.iter().map(|l| l["event"].as_str().unwrap_or("")).collect();
+    assert_eq!(kinds[0], "stream", "{lines:?}");
+    assert_eq!((lines[0]["target"].as_str(), lines[0]["device"].as_str()), (Some("desktop"), Some(hostname_or_name(&lines[0]).as_str())));
+    assert_eq!(*kinds.last().unwrap(), "done", "{lines:?}");
+    let ap = kinds.iter().position(|k| *k == "approval").unwrap_or_else(|| panic!("no approval event: {lines:?}"));
+    assert_eq!(lines[ap]["local"], true, "{:?}", lines[ap]);
+    assert!(lines[ap]["summary"].as_str().is_some_and(|s| s.contains("echo hello-from-zoai")), "{:?}", lines[ap]);
+    let text = all_text(&lines);
+    assert!(text.contains("hello-from-zoai"), "approved on the computer, so the command ran: {lines:?}");
+    assert!(kinds.iter().position(|k| *k == "text" || *k == "delta").unwrap() > 0);
+    assert_eq!(asks(&sandbox).len(), 1, "one dialog on the desktop");
+    assert!(asks(&sandbox)[0].contains("echo hello-from-zoai"));
+    // the web may not answer for the computer
+    let stream_id = lines[0]["id"].as_u64().unwrap();
+    let a = call(&r, "tok-a", "/api/reply", json!({"stream": stream_id, "op": "approve", "id": 1, "yes": true}));
+    assert!(a.status == 409 || a.status == 404 || a.status == 410, "{} {:?}", a.status, a.body);
+
+    // 4. a second send: this time the person on the computer says no; the command does not run
+    let lines = drain(&stream_live(&r, "tok-a", json!({"target": "desktop", "text": "run a check again", "mode": "manual"})), 40);
+    assert!(lines.iter().any(|l| l["event"] == "approval" && l["local"] == true), "{lines:?}");
+    assert!(!all_text(&lines).contains("hello-from-zoai\n") && lines.last().unwrap()["event"] == "done", "{lines:?}");
+    assert_eq!(asks(&sandbox).len(), 2);
+    // the chats were saved on the desktop, with the web's own text
+    let saved: String = walk(&sandbox.join("d")).iter().filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    assert!(saved.contains("run a check again"), "the desktop saved the chat");
+
+    // 5. Stop in the middle of an answer ends the desktop's answer
+    let rx = stream_live(&r, "tok-a", json!({"target": "desktop", "text": "stream please", "mode": "manual"}));
+    let first = rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+    assert_eq!(first["event"], "stream");
+    let sid = first["id"].as_u64().unwrap();
+    let mut got = vec![];
+    loop {
+        let v = rx.recv_timeout(Duration::from_secs(20)).expect("an event").expect("not over yet");
+        let is_text = v["event"] == "text" || v["event"] == "delta";
+        got.push(v);
+        if is_text {
+            break;
+        }
+    }
+    let stop_at = Instant::now();
+    assert_eq!(call(&r, "tok-a", "/api/reply", json!({"stream": sid, "op": "stop"})).status, 200);
+    let rest = drain(&rx, 15);
+    assert!(stop_at.elapsed() < Duration::from_secs(8), "stopped in {:?}", stop_at.elapsed());
+    got.extend(rest);
+    assert!(!all_text(&got).contains("- third"), "the answer was cut: {got:?}");
+    assert!(got.iter().any(|l| l["event"] == "stopped" || l["event"] == "done"), "{got:?}");
+    // the desktop is free again afterwards
+    let lines = drain(&stream_live(&r, "tok-a", json!({"target": "desktop", "text": "markdown please", "mode": "auto"})), 30);
+    assert!(all_text(&lines).contains("A heading"), "{lines:?}");
+
+    // 6. the desktop goes away: it is offline within the presence window, and the next send fails within a second
+    drop(desk);
+    wait_online(&r, "tok-a", false);
+    let t0 = Instant::now();
+    let lines = drain(&stream_live(&r, "tok-a", json!({"target": "desktop", "text": "anyone there?"})), 5);
+    assert!(t0.elapsed() < Duration::from_secs(1), "{:?}", t0.elapsed());
+    assert_eq!(lines[0]["error"], "desktop_offline", "{lines:?}");
+
+    // 7. a job nobody picks up expires and is never run later: the person is online (a poll by hand), the job waits, the desktop comes
+    //    only after it expired
+    assert!(dpoll(&r, &cred_a, "Desk-A", caps(false)).is_empty());
+    let lines = drain(&stream_live(&r, "tok-a", json!({"target": "desktop", "text": "EXPIRED-JOB-TEXT"})), 10);
+    assert!(lines.iter().any(|l| l["error"] == "desktop_timeout"), "{lines:?}");
+    let desk = start_desktop(&r, &sandbox, &cred_a, &model_url, "y,y");
+    wait_online(&r, "tok-a", true);
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(r.app.link.counts().1, 0, "no job is left");
+    let saved: String = walk(&sandbox.join("d")).iter().filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    assert!(!saved.contains("EXPIRED-JOB-TEXT"), "the expired job was not run");
+    assert_eq!(asks(&sandbox).len(), 2, "no new dialog");
+    drop(desk);
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+/// The name the desktop gave itself (the server prints it in the first line).
+fn hostname_or_name(first: &Value) -> String {
+    first["device"].as_str().unwrap_or("").to_string()
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = vec![];
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(walk(&p));
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn the_owners_claude_token_is_sent_with_the_desktops_own_code_and_runs_through_a_fake_claude_for_the_owner_only() {
+    let _env = CLAUDE_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let (uo, ub) = (uniq("e2e-co"), uniq("e2e-cb"));
+    let r = rig(&[("tok-o", &uo, "owner@x.test"), ("tok-b", &ub, "guest@x.test")], "owner@x.test", 200, 6000);
+    let (od, _) = make_device(&r, "tok-o", "o-desk", "desktop");
+    let (bd, _) = make_device(&r, "tok-b", "b-desk", "desktop");
+    // the desktop's own code (zo_core::link) sends the token: the admin's is accepted, the other person's is refused with a reason
+    let sec = zo_core::link::Secret::new(OWNER_TOKEN.to_string());
+    zo_core::link::send_claude_token_at(&r.base, &od, &sec).expect("the owner's token is accepted");
+    let e = zo_core::link::send_claude_token_at(&r.base, &bd, &sec).expect_err("a guest's is refused");
+    assert!(e.to_lowercase().contains("owner") || e.to_lowercase().contains("not"), "{e}");
+    assert!(!e.contains("sk-ant"));
+    assert_eq!(call(&r, "tok-o", "/api/account/claude_status", json!({})).body["present"], true);
+    assert_eq!(call(&r, "tok-b", "/api/account/claude_status", json!({})).body["present"], false);
+    // a fake claude, started by the server for the owner's web chat, with a minimal environment
+    let dir = std::path::PathBuf::from(format!("/tmp/claude-1000/zsrv-fake2-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("claude");
+    std::fs::write(&script, format!("#!/bin/sh\nenv > {d}/env\npwd > {d}/pwd\nprintf '%s\\n' \"$@\" > {d}/args\necho '{{\"type\":\"system\",\"session_id\":\"s-7\"}}'\necho '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"the owner subscription answers\"}}]}}}}'\necho '{{\"type\":\"result\",\"result\":\"ok\"}}'\n", d = dir.display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::env::set_var("ZOAI_CLAUDE_BIN", &script);
+    std::env::set_var("FIREBASE_SERVICE_ACCOUNT", "must-not-leak-firebase");
+    let sel = call(&r, "tok-o", "/api/op", json!({"op": "select", "provider": "claude-code", "model": "sonnet"}));
+    assert_eq!(sel.status, 200, "{:?}", sel.body);
+    let owner_lines = drain(&stream_live(&r, "tok-o", json!({"text": "say hello"})), 20);
+    let env = std::fs::read_to_string(dir.join("env")).unwrap_or_default();
+    let args = std::fs::read_to_string(dir.join("args")).unwrap_or_default();
+    let cwd = std::fs::read_to_string(dir.join("pwd")).unwrap_or_default();
+    // the guest: Claude Code is not available, and the fake claude is never started for them
+    let _ = std::fs::remove_file(dir.join("env"));
+    let gsel = call(&r, "tok-b", "/api/op", json!({"op": "select", "provider": "claude-code", "model": "sonnet"}));
+    let guest_lines = drain(&stream_live(&r, "tok-b", json!({"text": "say hello", "provider": "claude-code"})), 20);
+    let guest_env_exists = dir.join("env").exists();
+    std::env::remove_var("ZOAI_CLAUDE_BIN");
+    std::env::remove_var("FIREBASE_SERVICE_ACCOUNT");
+    assert!(all_text(&owner_lines).contains("the owner subscription answers"), "{owner_lines:?}");
+    assert_eq!(gsel.body["ok"], false, "{:?}", gsel.body);
+    assert!(gsel.body["error"].as_str().unwrap_or("").contains("not available"), "{:?}", gsel.body);
+    assert!(!guest_env_exists && !all_text(&guest_lines).contains("subscription"), "{guest_lines:?}");
+    assert!(env.contains(&format!("CLAUDE_CODE_OAUTH_TOKEN={OWNER_TOKEN}")), "the owner's own token is passed");
+    assert!(!env.contains("must-not-leak-firebase") && !env.contains(testenv::SECRET), "{env}");
+    assert!(env.contains(&format!("HOME={}", tenant_dir(&uo).join("config").join("claude-home").display())));
+    assert!(args.contains("--tools\n\n"), "built-in tools are off: {args}");
+    assert!(cwd.trim().starts_with(tenant_dir(&uo).to_str().unwrap()), "runs in the owner's own folder: {cwd}");
     let _ = std::fs::remove_dir_all(&dir);
 }

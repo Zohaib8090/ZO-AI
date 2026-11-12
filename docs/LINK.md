@@ -98,3 +98,12 @@ The link does not use the person's request allowance (the poll would eat it), ha
 
 Tested (`cargo test -p zo-server -p zo-core`, fake verifier, in-memory Firestore, a fake `claude` script): presence, job lifecycle (send, ordered relay, done, Stop and the 20 s grace, expiry, one job per device, lost device), tenant isolation, scope rules, the offline error, approvals routing, the op whitelist, size/rate/cap limits, account deletion and revocation, the Claude token (admin only, restricted refused, ciphertext only, not in export/sync/provider output, spawn environment and flags, error scrubbing), the environment hardening in a real child process.
 Not tested: a real desktop app talking to this server, real Firebase/Firestore/Render (long polls through Render's proxy: the 25 s poll and the 15 s `ping` lines were chosen to stay under typical proxy idle limits), a real `claude setup-token` token or a real Claude login.
+
+## End-to-end test (integration, 2026-11-12)
+
+`crates/zo-server/src/tests.rs` (block `link:e2e`) runs zo-core's real link loop (`examples/linkdesk.rs`: the real ZO-AI service on a socket in its own sandbox,
+a scripted "person on the computer" who answers approval dialogs yes then no) against the real server over HTTP, with the `mock-model` example as the model.
+Covered: offline error within 1 s, online with caps, B cannot see or reach A's computer, a send with an approval asked on the computer (yes: the tool ran; no: it
+did not), the web's approve answered 409, Stop in the middle of an answer, the computer disappears and the next send fails within 1 s, an expired job is never run
+later; and the owner's token sent with `zo_core::link::send_claude_token_at` (a guest is refused), run through a fake `claude` with the minimal environment.
+Not covered: the GTK app itself, a real `claude`, real Render/Firebase.
