@@ -11,9 +11,12 @@ memory, model choice and permission mode with the app and the phone. Small on pu
 * **Remote**: `--remote https://server` (or `ZO_REMOTE_URL`; `--local` ignores it). Calls `POST /api/op`, `POST /api/send`
   (one JSON object per line; first line `{"event":"stream","id":N}`) and `POST /api/reply` (approve, stop), with
   `Authorization: Bearer <token>`.
-* **The token** is read from `--token-file PATH`, else from the environment variable named by `--token-env` (default
-  `ZO_ACCESS_TOKEN`). It is **never accepted as an argument value** (`--token abc` is refused: it would show in the process
-  list). A server running without login (`ZO_SERVER_NO_AUTH=1`) needs none; a 401 says which file or variable to check.
+* **The token** is a **device token with scope `full`**, made on the web app's Account page (shown once, revocable; it only reaches your own
+  data). It is read from `--token-file PATH`, else from the environment variable named by `--token-env` (default `ZO_DEVICE_TOKEN`).
+  It is **never accepted as an argument value** (`--token abc` is refused: it would show in the process list). The old global
+  `ZO_ACCESS_TOKEN` no longer exists. A server running without login (`ZO_SERVER_NO_AUTH=1`) needs none; a 401 says which file or variable to check.
+  On a public server you are **restricted** unless your address is an admin: the assistant has web search, page fetch and memory only, and
+  needs your own API key (set it in the web app's Settings). Computer tools run only against your own local app (`zo` without `--remote`).
 
 ## Commands
 
@@ -58,4 +61,4 @@ fake OpenAI-compatible streaming model: no model chosen (clean error, exit 1), a
 call with the approval answered y and n on a pseudo-terminal (the file was only created after y), denied without a terminal,
 Ctrl-C once (stopped) and twice (exit 130), the interactive chat with its slash commands, memory, models, mode, error paths.
 Not tested: a real Firebase/Render server with a real token (the server's token check is another agent's work; this client
-sends `Authorization: Bearer <token>` as specified), real models, Claude Code mode, Windows/macOS.
+sends `Authorization: Bearer <device token>` as specified), real models, Claude Code mode, Windows/macOS.

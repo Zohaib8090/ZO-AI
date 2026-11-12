@@ -1,20 +1,34 @@
-# Render blueprint for the ZO-AI server. The secrets are typed into Render by the owner; they are never in this repository.
+# Render blueprint for the ZO-AI server (public, multi-user). The secrets are typed into Render by the owner; they are never in this repository.
+#
+# Plan: "starter" is Render's cheapest always-on paid instance (about 7 USD/month, 512 MB RAM, 0.5 CPU).
+# The free plan is NOT suitable for a public service (spins down after 15 minutes, wipes the disk at every restart,
+# 512 MB RAM, may be suspended for heavy outbound traffic; see docs/PUBLIC.md). For real traffic prefer "standard"
+# (about 25 USD/month, 1 CPU, 2 GB RAM). For a private test only, the owner can switch to "free".
+# Region: frankfurt keeps the server near the EU Firestore database (eur3).
 services:
   - type: web
     name: zo-ai-server
     runtime: docker
-    plan: free
+    plan: starter
+    region: frankfurt
     dockerfilePath: ./Dockerfile
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
       - key: FIREBASE_SERVICE_ACCOUNT   # the whole service account key file (JSON), pasted as one value
         sync: false
-      - key: ZO_ALLOWED_EMAILS          # the Google account(s) that may sign in, separated by commas
+      - key: ZO_ADMIN_EMAILS            # YOUR Google address(es), comma separated: admins get every tool, everybody else is restricted
         sync: false
-      - key: ZO_SERVER_SECRET           # API keys are encrypted with this before they go to Firestore
+      - key: ZO_SERVER_SECRET           # per-user API keys are encrypted with a key derived from this; keep a private copy
         generateValue: true
-      - key: ZO_ACCESS_TOKEN            # your own-devices key: paste the same value in the desktop app (Settings > Web sync)
-        generateValue: true
-      - key: CLAUDE_CODE_OAUTH_TOKEN    # optional: from `claude setup-token`, for Claude Code mode on the server
+      - key: ZO_MAX_USERS               # registrations allowed (Spark-sized; raise it only after moving Firebase to Blaze)
+        value: '200'
+      - key: ZO_MAX_RUNS                # answers running at the same time. 8 is the default; on 512 MB (starter) lower it to 2 to 4
+        value: '8'
+      - key: ZO_TENANT_ROOT             # per-user working folders (a cache: Firestore is the source of truth)
+        value: /home/zo/tenants
+      - key: CLAUDE_CODE_OAUTH_TOKEN    # optional, admin only: from `claude setup-token`, for Claude Code mode for the owner
         sync: false
+    # Optional, not set here: ZO_BLOCKED_EMAILS (comma list of addresses refused at sign-in).
+    # The server's self-ping (every 8 minutes) only matters on the free plan; a paid instance does not sleep.
+    # ZO_ACCESS_TOKEN no longer exists: devices use per-user device tokens made on the Account page.

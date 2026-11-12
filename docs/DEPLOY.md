@@ -1,6 +1,6 @@
 # Putting the ZO-AI server on Render (owner steps)
 
-Written 2026-11-12. What was checked, and what was not, is listed at the end.
+Written 2026-11-12, updated for the public multi-user service the same day: see `PUBLIC.md` (design, threat model, limits, cost, checklist). Anyone may now sign in with Google; only the addresses in `ZO_ADMIN_EMAILS` are admins, everybody else is restricted. What was checked, and what was not, is listed at the end.
 
 ## What is in the image
 
@@ -22,24 +22,29 @@ Render's `PORT` is read by the server. `zo-mcp` must sit next to `zo-server` (Cl
    | Field | What to put | Secret? |
    |---|---|---|
    | `FIREBASE_SERVICE_ACCOUNT` | the whole content of the JSON key file, as one value | yes |
-   | `ZO_ALLOWED_EMAILS` | your Google address (several: separated by commas) | no |
+   | `ZO_ADMIN_EMAILS` | your Google address (several: separated by commas). Admins get every tool; everyone else is restricted | no |
    | `CLAUDE_CODE_OAUTH_TOKEN` | optional, see "Claude Code" below. Leave empty if you do not use Claude Code mode | yes |
 
-   `ZO_SERVER_SECRET` and `ZO_ACCESS_TOKEN` are created by Render (`generateValue: true`): you type nothing.
+   `ZO_SERVER_SECRET` is created by Render (`generateValue: true`). `ZO_MAX_USERS` (200), `ZO_MAX_RUNS` (8) and `ZO_TENANT_ROOT` are set in `render.yaml`;
+   optional `ZO_BLOCKED_EMAILS` (comma list refused at sign-in) you add yourself. There is no `ZO_ACCESS_TOKEN` any more: devices use per-user device tokens (Account page).
 3. Press Apply. The first build compiles Rust inside Docker: expect roughly 5 to 15 minutes (Render's build command limit is 120 minutes,
    so that is no problem; I could not find a documented memory or image size limit for builds).
 4. Note the address Render gives (for example `https://zo-ai-server.onrender.com`).
 5. Firebase console > Authentication > Settings > **Authorized domains** > Add domain: `zo-ai-server.onrender.com` (the address without
    `https://`). Without this the Google pop-up refuses to open.
-6. Reading the generated values: Render > the service > Environment. `ZO_SERVER_SECRET` and `ZO_ACCESS_TOKEN` are shown there (click the eye icon).
-   Copy `ZO_ACCESS_TOKEN` into the phone or `zo` client when those use it. Do not paste either into chat, a file in the repository or an issue.
-   **Keep a private copy of `ZO_SERVER_SECRET`**: API keys saved in Firestore are encrypted with it; a new secret means entering the API keys again.
+6. Reading the generated value: Render > the service > Environment > `ZO_SERVER_SECRET` (click the eye icon). Do not paste it into chat, a file in the repository or an issue.
+   **Keep a private copy**: every user's API key in Firestore is encrypted with a key derived from it; a new secret means everybody enters their API keys again.
+   Then work through the operator checklist in `PUBLIC.md` (Firebase billing alert, Firestore rules, privacy and terms placeholders, a test with a second non-admin account).
 7. Verify:
    * Open `https://<address>/healthz`: it says `ok`. (The first call after sleep takes about a minute.)
-   * Open `https://<address>/`, sign in with Google. A different Google account must be refused.
+   * Open `https://<address>/`, sign in with Google (your address is admin). Sign in with a second Google account: it must work and be restricted (web search, page fetch and memory only; no machines, MCP, Claude Code or Bypass). `/privacy` and `/terms` must open.
    * Render > Logs should show `zo-server: fetched N chats and N memory notes from Firestore` and `listening on 0.0.0.0:...`.
-   * Settings > pick a provider and enter its API key; send a message. In Firestore, `zoai/owner/chats` gets a document within a few seconds.
+   * Settings > pick a provider and enter its API key; send a message. In Firestore, `users/<tenant id>/chats` gets a document within a few seconds.
    * Redeploy once (Manual Deploy) and check that the chat is still there: that proves the Firestore sync.
+
+## Which Render plan
+
+For a public service use a **paid always-on instance**: `render.yaml` says `starter` (about 7 USD/month, 512 MB, tight) and recommends `standard` (about 25 USD/month, 1 CPU, 2 GB) for real traffic, region Frankfurt. The free plan below is only for a private test (switch `plan: free` in the blueprint); reasons and costs are in `PUBLIC.md`.
 
 ## Render free plan: what is true
 
@@ -63,12 +68,14 @@ The server calls its own `/healthz` every 8 minutes through `RENDER_EXTERNAL_URL
 this one arrives through Render's public address like any other, so it **should** keep the service awake. But Render's pages do not say
 whether such a request counts, and nothing promises it, so I treat it as **not reliable until you have watched it**: after deploying,
 leave the page alone for 30 minutes, then open it; if the first load takes about a minute, the ping did not work.
-Better and independent of how Render counts: let an **outside pinger** call `https://<address>/healthz` every 5 to 10 minutes
+This section matters only on the free plan; a paid instance does not sleep. Better and independent of how Render counts: let an **outside pinger** call `https://<address>/healthz` every 5 to 10 minutes
 (UptimeRobot or cron-job.org, both have a free plan; they only need the address, never a secret). Keep the self-ping too, it costs nothing.
 Even with a pinger Render can restart the service now and then; the server then comes back with its data from Firestore.
 If you would rather not keep it awake, do nothing: it sleeps and wakes with the first visit (a minute's wait), and uses fewer hours.
 
-## Claude Code on the server
+## Claude Code on the server (admin only)
+
+Only admins (`ZO_ADMIN_EMAILS`) can use Claude Code mode; restricted users are refused. Never accept or store other people's Claude logins or subscription tokens: Anthropic does not allow it.
 
 ZO-AI's Claude Code mode runs the real `claude` program (found on the PATH, `/usr/local/bin`) and connects it to `zo-mcp`.
 On your computer you sign in with a browser; a server has none, so it needs a token from outside.

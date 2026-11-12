@@ -1,24 +1,28 @@
 # The ZO-AI server (`crates/zo-server`)
 
 The same brain as the desktop app, on a server that is always on, behind a Firebase login. First step of
-`PLAN-WEB-CLI-SYNC.md`. Built 2026-11-12.
+`PLAN-WEB-CLI-SYNC.md`. Built 2026-11-12. It is a **public, multi-user service**: any Google account may sign in, each person has their own isolated data and their own API key, and only the owner's addresses are admins. Design, threat model, limits and cost: `PUBLIC.md`. Privacy and terms: `PRIVACY.md`, `TERMS.md`.
 
 ## What it does
 
 * Starts zo-core's own service (the one the phone talks to) and puts HTTPS in front of it.
-* **Access token**: `ZO_ACCESS_TOKEN` (at least 32 characters; shorter is ignored with a warning) is the owner's own-devices key.
-  `Authorization: Bearer <it>` is accepted on every `/api` call, next to the Firebase ID token. It is compared in constant time and never logged.
-  Render makes one (`generateValue`); read it in Render's Environment tab and paste it in the desktop app (Settings > Web sync).
-  With `ZO_ACCESS_TOKEN` and no `FIREBASE_SERVICE_ACCOUNT` the server runs **token-only**: no Firebase login, no Firestore (its disk is then the only store),
-  listening on 127.0.0.1 unless `PORT` and `ZO_BIND` (for example `0.0.0.0`) are both set.
-* **Login**: every call needs a Firebase ID token (`Authorization: Bearer ...`). The token is checked against Google's keys, must
-  be for this Firebase project, and must belong to an address in `ZO_ALLOWED_EMAILS`.
+* **Device tokens** (replace the old global `ZO_ACCESS_TOKEN`, which no longer exists): a signed-in user makes one on the Account page
+  (`/api/account/device_create`, scope `sync` or `full`); it is `zd_` plus 32 random bytes (base64url), shown once; only its sha256 is stored
+  (Firestore `users/<tenant>/meta/devices` and the index `deviceidx/<sha256>`). Scope `sync` may call only `/api/sync/*`; `full` also `/api/op`,
+  `/api/send`, `/api/reply` (the `zo` client). A token is tied to its own tenant, can be revoked, and is never logged.
+* **Login**: every call needs a Firebase ID token or a device token (`Authorization: Bearer ...`). The Firebase token is checked against
+  Google's keys, must be for this Firebase project and a verified Google account. Any such account may register, except addresses in
+  `ZO_BLOCKED_EMAILS` and once `ZO_MAX_USERS` (200) is reached. Addresses in `ZO_ADMIN_EMAILS` are **admins** (all tools, Claude Code, SSH
+  machines, Bypass); everybody else is **restricted** (web search, page fetch and memory tools only, no MCP servers, provider addresses must be public https, quotas).
+* **Tenant**: first 32 hex characters of `sha256("zo-tenant:" + uid)`. Disk `$ZO_TENANT_ROOT/<tenant>/{config,data}`; no raw uid or e-mail in any path.
+* **Limits**: 60 requests/minute and 2 concurrent `/api/send` per user, `ZO_MAX_RUNS` (8) answers at once, bodies 1 MB (`/api/op`, `/api/send`) and 20 MB (`/api/sync/*`); over the limit: 429 with `Retry-After`.
 * **Firestore**: Render's disk is lost on every redeploy, so at start everything is fetched from Firestore and every change is
-  sent back within about 3 seconds. Layout under `zoai/owner`: `chats/{id}`, `memory/{id}`, `files/{name}` (model choice,
+  sent back within about 3 seconds. One sync manager per tenant (pulled on its first request, idle ones are evicted from disk after 30 minutes with nothing unsynced). Layout under `users/<tenant>`: `chats/{id}`, `memory/{id}`, `files/{name}` (model choice,
   profiles, personalities, projects, ...). A text over 700 KB is cut into several documents.
-* **API keys**: a server has no keyring, so keys live in a private file (`ZO_AI_KEYS_FILE`) and go to Firestore encrypted with
-  `ZO_SERVER_SECRET` (AES-256-GCM). Without that secret, keys are lost at every restart.
-* **Self-ping**: calls its own `/healthz` every 8 minutes (address from `RENDER_EXTERNAL_URL`) so the free instance is not put to sleep.
+* **API keys**: bring your own. Each user's keys live in `<their config>/keys.enc`, AES-256-GCM, key = `sha256("zo-keys" || ZO_SERVER_SECRET || tenant)`, and the ciphertext goes to Firestore. There is no shared model key. Without the secret, keys are lost at every restart. The operator holds the secret and so can technically decrypt (the privacy notice says so).
+* **Self-ping**: calls its own `/healthz` every 8 minutes (address from `RENDER_EXTERNAL_URL`); only useful on the free plan, which is not suitable for a public service (`PUBLIC.md`).
+* **Account page** (web app) and `/api/account/*`: `whoami`, `devices_list`, `device_create`, `device_revoke`, `export` (chats, memory, personalities as JSON, never keys), `delete` (`{"confirm":"DELETE"}`, removes everything of the user, irreversible). `/privacy` and `/terms` are served as pages; the web app asks for agreement on first use and hides admin-only settings from restricted users. It says plainly that the web version has no access to a person's computer: computer-control tools run only in the person's own desktop app, which syncs their chats.
+* `ZO_SERVER_NO_AUTH=1` (local test only, loopback) uses one fixed tenant.
 * If Firestore cannot be read at start, the server stops instead of starting empty (it would otherwise overwrite what is saved).
 
 ## The web app
@@ -44,8 +48,8 @@ Render address (for example `zo-ai-server.onrender.com`), or the Google pop-up r
 Full steps, free-plan facts and the Claude Code token: `docs/DEPLOY.md`. Short version:
 
 1. Render > New > Blueprint > this repository (`render.yaml`).
-2. Fill in `FIREBASE_SERVICE_ACCOUNT` (paste the whole JSON key file) and `ZO_ALLOWED_EMAILS` (your Google address).
-   `ZO_SERVER_SECRET` is made by Render. `CLAUDE_CODE_OAUTH_TOKEN` is optional (from `claude setup-token`).
+2. Fill in `FIREBASE_SERVICE_ACCOUNT` (paste the whole JSON key file) and `ZO_ADMIN_EMAILS` (your Google address).
+   `ZO_SERVER_SECRET` is made by Render; `ZO_MAX_USERS`, `ZO_MAX_RUNS`, `ZO_TENANT_ROOT` are in the blueprint. `CLAUDE_CODE_OAUTH_TOKEN` is optional (from `claude setup-token`).
 3. In Firebase: Authentication > Google sign-in on; Firestore created. The server uses the service account, so Firestore's
    rules can stay closed to everyone else (`allow read, write: if false;`).
 
@@ -56,7 +60,7 @@ Full steps, free-plan facts and the Claude Code token: `docs/DEPLOY.md`. Short v
 In this mode there is no CORS, a request needs the header `X-ZO-Local: 1` (the web page sends it) and a `Host` of this computer, and a
 request with another `Origin` is refused, so a web page from another site cannot use the server through your browser.
 Programs the AI starts (shell, ssh, terminals, other MCP servers) do not get `FIREBASE_SERVICE_ACCOUNT`, `ZO_SERVER_SECRET`,
-`ZO_ACCESS_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` or `ZOAI_KEY_*`, and the file tools refuse the config folder, `~/.ssh` and `/proc/*/environ`.
+`CLAUDE_CODE_OAUTH_TOKEN` or `ZOAI_KEY_*`, and the file tools refuse the config folder, `~/.ssh` and `/proc/*/environ`.
 
 Use a separate `XDG_RUNTIME_DIR`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME` if the desktop app is running, or it will refuse to start
 (the app already owns the socket) and would share the app's data.

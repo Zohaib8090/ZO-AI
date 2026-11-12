@@ -2,6 +2,13 @@
 
 Written 2026-11-12 from the owner's request. Status 2026-11-12: the web app, the `zo` terminal client (docs/CLI.md), laptop sync (docs/SYNC.md) and SSH machines (docs/SSH.md) are built and merged on main. Still not built: phone sync, `zo ssh`, and the real Render, Firebase and Firestore set-up has not been tested. The text below is the original brief.
 
+> **Update 2026-11-12 (later): the server is public.** The owner decided that every person who uses Zohara OS / ZO-AI may sign in with
+> Google and use the service. The single-owner assumptions in this plan (one allowed account, one shared data folder, one global
+> `ZO_ACCESS_TOKEN`, shell and file tools on the server) are **replaced** by a multi-tenant, bring-your-own-key design: per-user tenants and
+> encrypted keys, restricted tools for everyone except the admin addresses in `ZO_ADMIN_EMAILS`, per-user device tokens, limits, an Account
+> page with export and delete, `/privacy` and `/terms`. See `PUBLIC.md`. Where the text below says "one allowed account" or "owner only",
+> read it as the admin; Render's free plan is no longer a fit for the public service (see `PUBLIC.md`).
+
 ## What the owner asked for
 
 1. A **web version** of ZO-AI, a full clone of the desktop app, with a **login** (Firebase Authentication), usable from anywhere.
@@ -37,8 +44,8 @@ A locked laptop still runs its agent, so tools keep working while it is locked. 
   behind HTTPS + WebSocket instead of a Unix socket. No second implementation of the agent loop.
 * **Cloud server**: `zo-server` (new crate, Rust, axum). Host: Render (the owner already has the admin site there) or an Oracle VM
   (free, always on, and can also be the SSH target). Recommendation: the Oracle VM, because Render's free tier sleeps.
-* **Login**: Firebase Authentication (Google sign-in). The server verifies the Firebase ID token on every request. One allowed
-  account at first (the owner's), so nobody else can use the keys.
+* **Login**: Firebase Authentication (Google sign-in). The server verifies the Firebase ID token on every request. (Original plan: one allowed
+  account. Now: any Google account, isolated per tenant; the owner's addresses are admins.)
 * **Sync**: Firestore, one document tree per user: `chats/`, `memory/`, `personalities/`, `projects/`, `settings`. The desktop app
   keeps its local files and syncs both ways (local first, so it works offline). Conflicts: newest edit wins per chat and per note.
 * **API keys**: stored on the server encrypted (a key held in the server's environment, never in Firestore in plain text). The
@@ -81,11 +88,13 @@ A locked laptop still runs its agent, so tools keep working while it is locked. 
 
 ## Decisions from the owner (2026-11-12)
 
+* **Public service (later the same day)**: any Google account, bring your own API key, restricted tools for non-admins, device tokens instead of a global token. `PUBLIC.md`.
+
 * **Server: Render**, with a self-ping so the free instance does not sleep. Render's free tier has no disk that survives a
   redeploy, so everything that must last lives in Firestore, never on the server's disk.
 * **Firebase project exists.** Needed from the owner: the web app config (public), the service account key (secret: goes into
   Render's environment by the owner, never into the repo or a chat), Google sign-in turned on, Firestore created.
-* **Claude Code mode on the server and on VMs**: the server (and any VM added over SSH) runs `claude` itself, signed in with a
+* **Claude Code mode on the server and on VMs** (admin only, never for other users): the server (and any VM added over SSH) runs `claude` itself, signed in with a
   long-lived token the owner makes once with `claude setup-token` and stores as the secret `CLAUDE_CODE_OAUTH_TOKEN`. So
   Claude Code mode works from the web with the laptop off. For the owner's own use only.
 * **SSH machines**: the owner adds a host, user and key; ZO-AI's shell and file tools, and Claude Code, can then run there.

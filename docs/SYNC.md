@@ -6,8 +6,8 @@ client), `crates/zo-server/src/sync_api.rs` (the server's side), Settings > Web 
 
 ## Setup (owner)
 
-1. On Render, `ZO_ACCESS_TOKEN` is made for you by `render.yaml` (a long random value). Open the service > Environment and copy it.
-2. In ZO-AI on the desktop: Settings > Web sync. Server address = `https://<your service>.onrender.com`, Access token = the value, switch
+1. Sign in to the web app with your Google account, open the Account page > Devices > New device, name it, scope **sync**. The token (`zd_...`) is shown **once**: copy it. Only its hash is stored; revoke it on the same page any time. (The old global `ZO_ACCESS_TOKEN` no longer exists. Every person has their own tokens and their own data.)
+2. In ZO-AI on the desktop: Settings > Web sync. Server address = `https://<server address>`, Device token = the value, switch
    "Keep in step" on, Save. "Sync now" runs one round at once; the line under the buttons says when it last worked or why it failed.
    The token goes into the system keyring (key id `sync-token`), never into a file, and is not shown again. The address and the switch
    are in `~/.config/zo-ai/sync.json`.
@@ -45,7 +45,7 @@ client), `crates/zo-server/src/sync_api.rs` (the server's side), Settings > Web 
   way (an edit), the answer is saved as a separate "(copy)" chat. The window of the desktop app is not covered yet: it saves its own chat
   as it holds it.
 
-## Server API (all need `Authorization: Bearer <ZO_ACCESS_TOKEN or Firebase ID token>`; bodies up to 20 MB)
+## Server API (all need `Authorization: Bearer <device token or Firebase ID token>`; bodies up to 20 MB; they act only on the caller's own tenant)
 
 | Call | Body | Answer |
 |---|---|---|
@@ -56,10 +56,9 @@ client), `crates/zo-server/src/sync_api.rs` (the server's side), Settings > Web 
 
 The service also answers `{"op":"sync_status"}` (enabled, url, last_ok, error, pulled, pushed, deleted, running; never the token), for the phone.
 
-## Token-only server (testing, or a server without Firebase)
+## Local test server (no Firebase)
 
-    ZO_ACCESS_TOKEN=<32+ characters> PORT=8799 zo-server      # 127.0.0.1 only, no login, no Firestore
-    ZO_BIND=0.0.0.0 ... (with PORT)                            # to listen on other addresses on purpose
+    ZO_SERVER_NO_AUTH=1 PORT=8799 zo-server                    # 127.0.0.1 only, no login, one fixed tenant, no Firestore
 
 Use a private HOME / XDG_* / XDG_RUNTIME_DIR for it (the server shares the app's data folders otherwise).
 `crates/zo-core/examples/syncctl.rs` is a small driver (add a chat or note, delete, list, one sync round with `ZOAI_KEY_SYNC_TOKEN`).
@@ -68,11 +67,11 @@ Use a private HOME / XDG_* / XDG_RUNTIME_DIR for it (the server shares the app's
 
 Tested: unit tests of the planner (copy, newest wins, ties, tombstones, resurrection by a later edit, empty server), of the tombstone
 hooks, `put`/`apply_delete`, manifests and address checks (zo-core), and of the four calls (zo-server). An integration run with a
-token-only server in one sandbox and `syncctl` in another, over HTTP on 127.0.0.1: chat and note created in B appear in A; an edit in A
+local test server in one sandbox and `syncctl` in another, over HTTP on 127.0.0.1: chat and note created in B appear in A; an edit in A
 reaches B; a delete in B removes it in A; a delete in A (service op) removes it in B; a forgotten note disappears in A; a conflicting
 edit resolves to the newest in both directions; a personality and a note added in A arrive in B; a wrong token or an unreachable server
 changes nothing in B; the token is not in the server log. The Settings page renders (headless, container `zs-ai-img`).
-Not tested: against Render or a real Firestore, with the Firebase token (the access token takes the same path in `who()`),
+Not tested: against Render or a real Firestore, with the Firebase token (a device token takes the same path in `who()`),
 the 30-second background loop and the switch in a running app (only `sync_with` was driven), the keyring storage of the token
 (`secret-tool`; tests used `ZOAI_KEY_SYNC_TOKEN`), big chats (megabytes), two computers syncing at once, the `ZO_BIND` listen address.
 The open chat list in the app is not refreshed live when a sync brings something: it shows after the list is rebuilt (new chat, switching view).

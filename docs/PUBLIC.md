@@ -1,0 +1,132 @@
+# ZO-AI as a public service
+
+Written 2026-11-12. The server is not a personal site: every person who uses Zohara OS / ZO-AI may sign in with Google and use it from
+the web, the desktop app (sync) and the terminal client `zo`. This page is the design, the threat model, the limits, the cost and the
+operator checklist. Privacy and terms texts: `PRIVACY.md`, `TERMS.md` (templates, not legal advice). Cost and quota figures come from
+the vendors' pages read on 2026-11-12 (sources at the end); the per-user usage numbers are my assumptions, not measurements.
+
+## Who is who
+
+* **Admin**: a Google address in `ZO_ADMIN_EMAILS` (the owner). Unrestricted tools, Claude Code mode, SSH machines, Bypass mode.
+* **Restricted user**: everybody else. Bring-your-own-key chat plus web search, page fetch and memory. Nothing that touches a computer.
+* `ZO_BLOCKED_EMAILS` refuses sign-in; `ZO_MAX_USERS` (default 200) caps registrations.
+
+## Architecture
+
+* **Tenant** = the first 32 hex characters of `sha256("zo-tenant:" + firebase_uid)`. Raw uids and e-mails never appear in paths.
+  Disk: `$ZO_TENANT_ROOT/<tenant>/{config,data}` (mode 0700). Firestore: `users/<tenant>/{chats,memory,files,meta}`.
+* **Isolation in zo-core** (`zo_core::tenant`): a thread-local tenant context. Every store, the audit log and every thread started for
+  a request, an agent or a memory job runs inside it (`tenant::spawn`). With `ZO_MULTI_TENANT=1` the service refuses any request that
+  has no valid `"tenant"` on its first line; it never falls back to the default folders. Without it (desktop app, phone) nothing changes.
+* **Server**: verifies the Firebase token, derives the tenant, applies limits, keeps one sync manager per tenant (pulled from
+  Firestore on first use, pushed by a loop, evicted from local disk after 30 minutes idle with nothing unsynced).
+* **Keys**: each user's own API key, in `<config>/keys.enc`, AES-256-GCM, key = `sha256("zo-keys" || ZO_SERVER_SECRET || tenant)`;
+  the ciphertext syncs to Firestore. There is no shared model key.
+* **Device tokens** replace the old global `ZO_ACCESS_TOKEN`: see "Account API".
+
+## What is restricted, and why
+
+| Restricted users cannot | Why |
+|---|---|
+| use any tool except `zohara_web_search`, `zohara_web_fetch`, `zohara_memory_search`, `zohara_memory_save`, `zohara_memory_forget` | shell, files, screenshots and SSH on the server would be remote code execution for strangers. The tools are removed from the list the model sees and refused again in `tools::call` |
+| use Claude Code mode | it runs a program with the owner's login on the server |
+| load MCP servers (stdio or remote) | stdio means running programs; remote means arbitrary outbound calls |
+| use custom or local provider addresses unless they are public `https` hosts | SSRF: `localhost`, private networks and the cloud metadata address must be unreachable (same host check as the fetch tool) |
+| add machines, schedules, projects with paths, or pick Bypass mode | server-side execution, background work and unattended approval |
+
+Quotas: message text up to 20,000 characters, tenant data folder up to 25 MB (writes beyond it are refused with a clear message),
+8 tool steps per answer, 120 seconds per answer.
+
+## Threat model
+
+| A signed-in malicious user could try | Defence | Remaining risk |
+|---|---|---|
+| reading or writing another user's chats, memory or keys | the tenant comes only from the verified token or device token; per-tenant folders and Firestore paths; the service refuses requests without a tenant | a bug in the tenant scoping: needs tests of the cross-tenant case and review of every new store |
+| SSRF through fetch, provider addresses or MCP | public-https-only host check; MCP and custom providers off for restricted users | DNS rebinding and redirects must be checked in the fetch code |
+| running a shell or reading server files | no such tool for restricted users, enforced twice | the tool list is the one line of defence; keep it a short allow-list, never a deny-list |
+| stealing keys (their own are theirs; others' or the operator's) | keys encrypted at rest with a per-tenant derived key; the secret exists only in Render's environment; processes the AI starts (admin only) do not inherit secrets | the operator holds `ZO_SERVER_SECRET` and can decrypt: said plainly in the privacy notice |
+| using up CPU, memory, disk, model or Firestore quota | 60 requests/minute per user, 2 concurrent `/api/send` per user, `ZO_MAX_RUNS` global, body limits (1 MB, 20 MB for sync), 25 MB per tenant, `ZO_MAX_USERS`, 100 new Firebase accounts/hour/IP | many real accounts still add up; watch the Firestore quota (see capacity) |
+| prompt injection: a fetched page tells the model to save false or hostile "memories", or to leak earlier chat text | restricted tools cannot reach anything but the user's own memory, so the harm stays inside that user's own data | a poisoned memory misleads later answers for that user; memory is visible and can be forgotten; a fetch result is data, not instructions (keep that wording in the prompt) |
+| abusing memory, export or delete | the export contains only the caller's chats, memory and personalities, never keys; delete needs `{"confirm":"DELETE"}` and a Firebase token (not a device token) | a stolen browser session can delete; there is no undo, which is stated in the UI |
+| stealing a device token | only the hash is stored; shown once; revocable; scope `sync` reaches only `/api/sync/*`; never logged | a leaked token works until revoked |
+| using the server as a free relay to attack the web | fetch is rate limited by the per-user bucket and runs only from the model's tool loop | a user can still make the server fetch public pages; the 8-step cap bounds it |
+
+## Limits (defaults)
+
+60 requests/minute per user, 2 concurrent answers per user, `ZO_MAX_RUNS` (8) answers at once overall, bodies 1 MB (`/api/op`, `/api/send`)
+and 20 MB (`/api/sync/*`), `429` with `Retry-After` when over. Restricted: see the quotas above.
+
+## Account API
+
+POST, Firebase-authenticated, under `/api/account/`: `whoami`, `devices_list`, `device_create {name, scope:"sync"|"full"}` (the token
+`zd_...` is shown once; only its sha256 is stored), `device_revoke {id}`, `export`, `delete {confirm:"DELETE"}`. Scope `sync` may call only
+`/api/sync/*`; `full` also `/api/op`, `/api/send`, `/api/reply` (for `zo`). Account deletion must also remove the user from Firebase
+Authentication (Firebase then purges it from backups within 180 days); confirm this in the code before launch.
+
+## Capacity and cost (honest numbers)
+
+Assumptions per active user per day (mine, to be checked against real traffic): about 40 Firestore writes, 150 reads and 4.5 MB of
+Firestore data read.
+
+* **Spark (no cost)**: 1 GiB stored, 50,000 reads/day, 20,000 writes/day, 20,000 deletes/day, 10 GiB/month outbound. By the numbers:
+  writes allow about 500 daily active users, reads about 330, egress about 75. **Expect roughly 50 to 150 daily active users**,
+  and a few hundred registered ones. Render is outside Google Cloud, so every Firestore read counts as internet egress. When a daily
+  quota is used up, calls fail until it resets around midnight Pacific (general knowledge, not re-checked). Firebase Authentication with
+  Identity Platform on Spark is limited to 3,000 daily active users.
+* **Blaze (pay as you go)**, eur3 list prices: writes 0.18 USD per 100,000, reads 0.06 USD per 100,000, egress 0.12 USD per GiB after
+  10 GiB free; the free quotas stay. At 1,000 daily active users with the same assumptions: about 18 to 20 USD a month, about 15 of it
+  egress. Larger chats raise it in proportion. **Budgets only send alerts; they do not stop spending**, so set a budget alert and watch it.
+* Cheaper at any size: load only a chat list on start and the chat body when opened, keep a tenant cached longer when nothing is unsynced, compress chat JSON.
+* **Render**: the **free plan is not suitable** for a public service. It spins down after 15 minutes idle (about a minute to wake), loses
+  its disk at every restart, redeploy and spin-down (unsynced data is lost), may be restarted at any time (running answers die),
+  has 512 MB RAM, may be suspended for unusual outbound traffic, and Render's docs say not to use it for production. The cheapest paid
+  always-on instance is **Starter, about 7 USD/month (512 MB, 0.5 CPU)**: the minimum, tight. **Standard, about 25 USD/month (1 CPU,
+  2 GB)** is the sensible launch size; start with `ZO_MAX_RUNS` 4 there, 2 on Starter. Region Frankfurt. A paid instance does not sleep,
+  so the self-ping and an outside pinger are not needed. Firestore stays the only source of truth.
+* Total honest budget to start: about 25 USD/month for Render Standard, Firebase free until the Spark quotas bite, then about 20 USD/month per 1,000 daily users.
+* Model costs are paid by each user's own key, not by the operator.
+
+## Operator checklist
+
+Firebase (project `zo-ai-144`):
+* Authentication > Sign-in method: Google on. Authentication > Settings > Authorized domains: the Render address and any custom domain.
+* Firestore created in **eur3**; rules closed (`allow read, write: if false;`), the server uses the service account.
+* Optional: App Check later. Do not load Google Analytics (the measurement id in the web config stays inert); if analytics is ever added, a consent banner becomes necessary.
+* Billing: choose Spark or Blaze knowingly (above), and **create a budget alert** in Google Cloud Billing. Check the Firestore usage page weekly at first.
+* Confirm the Firebase / Google Cloud data processing terms in the console and keep a record.
+
+Render env vars: `FIREBASE_SERVICE_ACCOUNT` (secret), `ZO_ADMIN_EMAILS` (secret not needed, but set), `ZO_SERVER_SECRET` (generated; keep a
+private copy: changing it makes every stored API key unreadable and users must enter them again), `ZO_MAX_USERS`, `ZO_MAX_RUNS`,
+`ZO_TENANT_ROOT`, optional `ZO_BLOCKED_EMAILS`, optional admin-only `CLAUDE_CODE_OAUTH_TOKEN`. `ZO_ACCESS_TOKEN` is gone.
+
+Before launch: fill the placeholders in `PRIVACY.md` and `TERMS.md` (contact e-mail, date, country), have them reviewed, check the pages are
+served at `/privacy` and `/terms`; sign in with a second, non-admin Google account and confirm it is restricted (no shell, no files, no MCP,
+no machines); try to read the first account's chats from it; check limits return 429; try an export and a delete.
+
+Incident handling: (1) stop the bleeding: set `ZO_BLOCKED_EMAILS`, or suspend the service in Render. (2) Rotate: new `FIREBASE_SERVICE_ACCOUNT` key
+(and delete the old one in Google Cloud), new `ZO_SERVER_SECRET` if keys may be exposed (users re-enter keys), ask users to revoke provider keys and device tokens.
+(3) Look at Render logs (they contain no message text, keys or tokens by design). (4) If personal data was exposed, tell the users and,
+where the law requires, the data protection authority within 72 hours. (5) Write down what happened and fix the cause.
+
+## Claude and other providers' terms
+
+Bring-your-own-key matches Anthropic's rule that each end user authenticates with their own API key and the operator does not resell or
+intermediate usage (Commercial Terms A.1 and D.4, code.claude.com/docs/en/legal-and-compliance). The service must never accept, store or
+route a Claude.ai login or subscription token for other people: Claude Code mode stays admin-only on the owner's own token. Anthropic asks
+that users are told outputs may be wrong (D.3): the Terms say it. OpenRouter requires users to be 18+ and makes the key holder responsible
+for charges (openrouter.ai/terms). OpenAI forbids sharing or reselling keys (3.1, 3.3(g)); a user pasting their own key is not clearly
+addressed, so the consent wording is "ZO-AI may use your key only for your own requests".
+
+## Not verified
+
+* Exact eur3 price of stored data and plain deletes (assumed near 0.18 USD/GiB-month and 0.02 USD per 100,000).
+* The per-user usage numbers above; what exactly happens on Spark when a daily quota is exceeded; whether Auth without Identity Platform has any daily cap.
+* Which Render plans include the GDPR data processing agreement; the free plan's suspension threshold.
+* Minimum ages by country; whether the "strictly necessary" exemption covers Firebase's browser storage in every EU country; legal sufficiency of the texts.
+* Whether pasting one's own OpenAI key into a third-party service conflicts with OpenAI's terms.
+* None of this was tested against a real Render, Firebase or Firestore; the code of the multi-tenant design is written by other agents and this page describes the agreed design, not verified behaviour.
+
+Sources (read 2026-11-12): firebase.google.com/docs/firestore/quotas, /pricing, firebase.google.com/pricing, /docs/auth/limits,
+/support/privacy; cloud.google.com/firestore/pricing, cloud.google.com/identity-platform/pricing; render.com/docs/free, /pricing,
+/docs/regions; gdpr-info.eu (Art. 8, 13); anthropic.com/legal/commercial-terms; code.claude.com/docs/en/legal-and-compliance;
+openai.com/policies/business-terms; openrouter.ai/terms; edpb.europa.eu Guidelines 2/2023.
