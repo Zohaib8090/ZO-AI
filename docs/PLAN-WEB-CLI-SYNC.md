@@ -1,6 +1,6 @@
 # Plan: ZO-AI everywhere (web, terminal, sync, remote machines)
 
-Written 2026-11-12 from the owner's request. Nothing here is built yet. It is the brief for the next work session.
+Written 2026-11-12 from the owner's request. Status 2026-11-12: the web app, the `zo` terminal client (docs/CLI.md), laptop sync (docs/SYNC.md) and SSH machines (docs/SSH.md) are built and merged on main. Still not built: phone sync, `zo ssh`, and the real Render, Firebase and Firestore set-up has not been tested. The text below is the original brief.
 
 ## What the owner asked for
 

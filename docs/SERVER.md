@@ -67,4 +67,10 @@ Render itself, Claude Code mode with a real token.
 
 ## Not built yet
 
-The desktop app and the phone do not sync with Firestore yet (the server is the only writer), editing a memory note's text in the web app, chat summaries from the web, the `zo` terminal client, SSH machines.
+- The phone does not sync with the server yet (the laptop does: see SYNC.md). Pins, projects, artifacts, schedules, the model choice and API keys are not synced.
+- Editing a memory note's text in the web app, chat summaries from the web, and a sync screen in the web app.
+- The web app lacks a few desktop features: project workspace page, pinned projects in the sidebar, Claude Code and API-key rows on the Model page, Add-MCP-server rows, mic, Context and copy-all.
+- `zo ssh` in the terminal client (machines work through the AI's tools and Settings > Machines, see SSH.md).
+- Not tested against the real Render, Firebase and Firestore: Google sign-in, Firestore storage and Claude Code with a real token.
+
+Built since: the `zo` terminal client (CLI.md), laptop-to-server sync with an access token (SYNC.md), SSH machines (SSH.md).

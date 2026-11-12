@@ -82,12 +82,30 @@ fn handle_line(v: &Value, session: &mut Option<String>, names: &mut Vec<(String,
     }
 }
 
-/// Send one message. `session` is remembered between calls so the conversation continues.
+/// Send one message. `session` is remembered between calls so the conversation continues. If the stored session is gone (on a
+/// server the session files are lost at a redeploy or sleep) and nothing came back, it is dropped and the message is sent again
+/// as a new session.
 pub fn run(model: &str, effort: Option<&str>, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+    let had_session = session.is_some();
+    let mut got_event = false;
+    let r = run_once(model, effort, session, prompt, system_extra, cancel, &mut |e| {
+        got_event = true;
+        on_event(e)
+    });
+    match r {
+        Err(ref e) if had_session && !got_event && e != super::agent::STOPPED && !cancel.load(Ordering::Relaxed) => {
+            *session = None;
+            run_once(model, effort, session, prompt, system_extra, cancel, on_event)
+        }
+        r => r,
+    }
+}
+
+fn run_once(model: &str, effort: Option<&str>, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     let system = if system_extra.trim().is_empty() { SYSTEM_PROMPT.to_string() } else { format!("{SYSTEM_PROMPT}\n\n{system_extra}") };
     // Claude can look at what the tools return as pictures (a screenshot comes back as an image)
     let system = format!("{system}\n\n{}", super::agent::VISION_YES);
-    let bin = binary().ok_or("Claude Code is not installed. Install it (npm install -g @anthropic-ai/claude-code), then sign in with: claude auth login")?;
+    let bin = binary().ok_or("Claude Code is not installed. Install it (npm install -g @anthropic-ai/claude-code), then sign in with: claude auth login (on a server, set CLAUDE_CODE_OAUTH_TOKEN instead: run `claude setup-token` on your own computer)")?;
     let config = json!({ "mcpServers": { "zohara": { "command": mcp_binary(), "env": { "ZO_MCP_EXTERNAL": "1" } } } }).to_string();
     let mut cmd = Command::new(bin);
     cmd.args(["-p", prompt, "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--strict-mcp-config", "--mcp-config", &config,
@@ -146,7 +164,7 @@ pub fn run(model: &str, effort: Option<&str>, session: &mut Option<String>, prom
         (None, true) => Ok(()),
         (None, false) => {
             let why: String = stderr.trim().chars().take(300).collect();
-            Err(format!("Claude Code stopped with an error{}. If you are not signed in, run: claude auth login", if why.is_empty() { String::new() } else { format!(": {why}") }))
+            Err(format!("Claude Code stopped with an error{}. If you are not signed in, run: claude auth login (on a server, set CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`)", if why.is_empty() { String::new() } else { format!(": {why}") }))
         }
     }
 }

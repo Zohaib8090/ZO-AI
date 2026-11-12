@@ -83,7 +83,7 @@ pub fn show(ui: &Rc<Ui>) {
     }
     content.set_spacing(0);
     let page = PAGE.with(|p| p.borrow().clone());
-    let pages: [(&str, &str, &str); 8] = [
+    let pages: [(&str, &str, &str); 9] = [
         ("model", "Model and profiles", "Which AI answers, its key, and saved presets."),
         ("personality", "Personality", "How ZO-AI talks to you."),
         ("memory", "Memory", "What ZO-AI remembers about you between chats."),
