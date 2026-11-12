@@ -169,6 +169,8 @@ fn client_source(req: &Value) -> &'static str {
         Some("phone") => "phone",
         Some("web") => "web",
         Some("cli") => "cli",
+        // a session from the web that runs on this computer through the desktop link (link.rs)
+        Some("web-link") => "web-link",
         _ if tenant::multi_tenant() => "web",
         _ => "phone",
     }
@@ -602,7 +604,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
     let approver = RemoteApprover { out: out.clone(), pending, next: AtomicU64::new(1) };
     let activity = crate::activity::start(
         if sel.provider == "claude-code" { crate::activity::Kind::ClaudeCode } else { crate::activity::Kind::Answer },
-        &chat.title,
+        &if client_source(req) == "web-link" { format!("Web session: {}", chat.title) } else { chat.title.clone() },
         &sel.model,
         client_source(req),
         Some(&chat.id),

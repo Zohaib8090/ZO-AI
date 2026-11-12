@@ -2897,6 +2897,8 @@ fn main() -> glib::ExitCode {
             });
             // chats, memory and personalities are kept in step with the server when the person turned that on
             zo_core::sync::start();
+            // "Control this computer from the web": the thread does nothing (no network) until that switch is on and someone is signed in
+            zo_core::link::start(std::sync::Arc::new(ask::LinkHost));
             scheduler::start(Rc::new(|| {
                 let f = TASKS_DONE.with(|t| t.borrow().clone());
                 if let Some(f) = f {

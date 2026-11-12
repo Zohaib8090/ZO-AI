@@ -115,6 +115,7 @@ fn source_word(s: &str) -> &str {
         "desktop" => "this app",
         "phone" => "the phone",
         "web" => "the web app",
+        "web-link" => "a web session",
         "cli" => "the command line",
         "scheduler" => "the scheduler",
         "background" => "in the background",
