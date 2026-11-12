@@ -89,7 +89,7 @@ pub fn show(ui: &Rc<Ui>) {
         ("memory", "Memory", "What ZO-AI remembers about you between chats."),
         ("general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."),
         ("apps", "Connected apps", "Other programs that use ZO-AI, and tools ZO-AI can use."),
-        ("sync", "Web sync", "Keep chats, memory and personalities the same on your ZO-AI server and the web app."),
+        ("sync", "Account and sync", "Optional: sign in to keep chats, memory and personalities in step with the web version."),
         ("machines", "Machines", "Other computers ZO-AI can work on over SSH."),
         ("data", "Data", "Saved chats."),
         ("about", "About", "Version."),
@@ -658,114 +658,9 @@ pub fn show(ui: &Rc<Ui>) {
     content.append(&sec);
     }
 
-    // ---- web sync ----
+    // ---- account and sync ----
     if page == "sync" {
-    use zo_core::sync;
-    let (sec, card) = section("Server");
-    let cfg = sync::config();
-    let url = gtk::Entry::new();
-    url.add_css_class("field-input");
-    url.set_placeholder_text(Some("https://..."));
-    url.set_text(&cfg.url);
-    url.set_hexpand(true);
-    let token = gtk::PasswordEntry::new();
-    token.set_show_peek_icon(true);
-    token.add_css_class("field-input");
-    token.set_hexpand(true);
-    token.set_placeholder_text(Some(if sync::token().is_some() { "Saved in the keyring. Type to replace it" } else { "Paste the device token (starts with zd_)" }));
-    let on = gtk::Switch::new();
-    on.set_active(cfg.enabled);
-    let status = lbl("", "field-hint");
-    status.set_wrap(true);
-    status.set_xalign(0.0);
-    let fields = vbox(12);
-    fields.set_margin_top(4);
-    fields.set_margin_bottom(14);
-    fields.set_margin_start(16);
-    fields.set_margin_end(16);
-    fields.append(&crate::field("Server address", &url));
-    fields.append(&crate::field("Device token", &token));
-    fields.append(&lbl("Get one in the web app: sign in with Google, then Settings > Account > Create device token > Sync a desktop app. It is shown once; it is kept in the system keyring here and is never shown again. You can revoke it any time on the same page.", "field-hint"));
-    let save = crate::primary("Save");
-    let now = secondary("Sync now");
-    let buttons = hbox(8);
-    buttons.append(&save);
-    buttons.append(&now);
-    fields.append(&buttons);
-    fields.append(&status);
-    card.append(&fields);
-    // saves the address, the token (when one was typed) and the switch; says what is wrong in the status line
-    let store: Rc<dyn Fn() -> Result<(), String>> = {
-        let (url, token, on) = (url.clone(), token.clone(), on.clone());
-        Rc::new(move || {
-            let typed = token.text().to_string();
-            if !typed.trim().is_empty() {
-                sync::set_token(&sync::check_device_token(&typed)?)?;
-                token.set_text("");
-                token.set_placeholder_text(Some("Saved in the keyring. Type to replace it"));
-            }
-            sync::save_config(&url.text(), on.is_active())
-        })
-    };
-    {
-        let (store, status) = (store.clone(), status.clone());
-        save.connect_clicked(move |_| match store() {
-            Ok(()) => status.set_text("Saved."),
-            Err(e) => status.set_text(&e),
-        });
-    }
-    {
-        let (store, status) = (store.clone(), status.clone());
-        now.connect_clicked(move |b| {
-            if let Err(e) = store() {
-                status.set_text(&e);
-                return;
-            }
-            b.set_sensitive(false);
-            status.set_text("Syncing…");
-            let (tx, rx) = mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = tx.send(sync::sync_now());
-            });
-            let (b, status) = (b.clone(), status.clone());
-            gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || match rx.try_recv() {
-                Ok(r) => {
-                    b.set_sensitive(true);
-                    status.set_text(&sync_line());
-                    let _ = r;
-                    gtk::glib::ControlFlow::Break
-                }
-                Err(mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
-                Err(_) => gtk::glib::ControlFlow::Break,
-            });
-        });
-    }
-    {
-        let (store, status) = (store.clone(), status.clone());
-        on.connect_state_set(move |_, _| {
-            if let Err(e) = store() {
-                status.set_text(&e);
-            }
-            gtk::glib::Propagation::Proceed
-        });
-    }
-    card.append(&row("Keep in step", "Every 30 seconds this computer and the server compare chats, memory notes and personalities. The newest change wins; a deleted chat or note is deleted on both. API keys are never sent.", Some(&on)));
-    status.set_text(&sync_line());
-    // the status line follows the background sync while this page is open
-    {
-        let status = status.clone();
-        gtk::glib::timeout_add_local(std::time::Duration::from_secs(2), move || {
-            if status.root().is_none() {
-                return gtk::glib::ControlFlow::Break;
-            }
-            let t = status.text();
-            if t.is_empty() || t.starts_with("Last") || t.starts_with("Not yet") || t.starts_with("The last try") {
-                status.set_text(&sync_line());
-            }
-            gtk::glib::ControlFlow::Continue
-        });
-    }
-    content.append(&sec);
+        account_page(ui, content);
     }
 
     // ---- about ----
@@ -781,7 +676,7 @@ pub fn show(ui: &Rc<Ui>) {
     ui.top_title.set_text("Settings");
 }
 
-/// The sync status as one line for the Web sync page.
+/// The sync status as one line for the Account and sync page.
 fn sync_line() -> String {
     let s = zo_core::sync::status();
     let when = |ms: u64| {
@@ -799,6 +694,446 @@ fn sync_line() -> String {
         (t, true) => format!("Last sync {} ({counts}).", when(t)),
         (t, false) => format!("The last try failed: {} Last good sync {} ({counts}).", s.error, when(t)),
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Account and sync (optional sign-in; nothing is contacted before the person chooses it)
+
+thread_local! {
+    /// A message for the next time the Account page is built (for instance "the server could not be told about the sign-out").
+    static NOTICE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// Runs `work` off the main thread and hands its result to `done` on the main thread.
+fn background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, done: impl FnOnce(T) + 'static) {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(work());
+    });
+    let mut done = Some(done);
+    gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || match rx.try_recv() {
+        Ok(v) => {
+            if let Some(d) = done.take() {
+                d(v);
+            }
+            gtk::glib::ControlFlow::Break
+        }
+        Err(mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
+        Err(_) => gtk::glib::ControlFlow::Break,
+    });
+}
+
+fn wrapped(text: &str) -> gtk::Label {
+    let l = lbl(text, "field-hint");
+    l.set_wrap(true);
+    l.set_xalign(0.0);
+    l
+}
+
+fn padded_box() -> gtk::Box {
+    let b = vbox(12);
+    b.set_margin_top(14);
+    b.set_margin_bottom(14);
+    b.set_margin_start(16);
+    b.set_margin_end(16);
+    b
+}
+
+fn account_page(ui: &Rc<Ui>, content: &gtk::Box) {
+    use zo_core::{login, sync};
+    let notice = NOTICE.with(|n| std::mem::take(&mut *n.borrow_mut()));
+    let signed_in = login::signed_in();
+    let cfg = sync::config();
+    match &signed_in {
+        Some(email) => {
+            let (sec, card) = section("Account");
+            let out = secondary("Sign out");
+            card.append(&row("Signed in", email, Some(&out)));
+            let st = wrapped(&notice);
+            st.set_margin_start(16);
+            st.set_margin_end(16);
+            st.set_margin_bottom(if notice.is_empty() { 0 } else { 12 });
+            card.append(&st);
+            {
+                let ui2 = ui.clone();
+                out.connect_clicked(move |_| {
+                    let dialog = adw::AlertDialog::new(Some("Sign out?"), Some("This computer stops syncing and forgets the sign-in. Your chats, memory and personalities stay here and on the server."));
+                    dialog.add_responses(&[("cancel", "Cancel"), ("out", "Sign out")]);
+                    dialog.set_response_appearance("out", adw::ResponseAppearance::Destructive);
+                    dialog.set_default_response(Some("cancel"));
+                    dialog.set_close_response("cancel");
+                    let ui3 = ui2.clone();
+                    dialog.connect_response(None, move |_, id| {
+                        if id == "out" {
+                            let ui4 = ui3.clone();
+                            background(zo_core::login::sign_out, move |r| {
+                                if let Err(e) = r {
+                                    NOTICE.with(|n| *n.borrow_mut() = e);
+                                }
+                                if PAGE.with(|p| p.borrow().as_str() == "sync") {
+                                    show(&ui4);
+                                }
+                            });
+                        }
+                    });
+                    dialog.present(Some(&ui2.window));
+                });
+            }
+            content.append(&sec);
+
+            let (sec, card) = section("Sync");
+            let on = gtk::Switch::new();
+            on.set_active(cfg.enabled);
+            let status = wrapped("");
+            let now = secondary("Sync now");
+            let bar = hbox(8);
+            bar.set_margin_start(16);
+            bar.set_margin_end(16);
+            bar.set_margin_bottom(14);
+            bar.set_margin_top(4);
+            bar.append(&now);
+            {
+                let status = status.clone();
+                on.connect_state_set(move |_, state| {
+                    status.set_text(&match sync::save_config(&sync::config().url, state) {
+                        Ok(()) => sync_line(),
+                        Err(e) => e,
+                    });
+                    gtk::glib::Propagation::Proceed
+                });
+            }
+            {
+                let status = status.clone();
+                now.connect_clicked(move |b| {
+                    b.set_sensitive(false);
+                    status.set_text("Syncing…");
+                    let (b, status) = (b.clone(), status.clone());
+                    background(sync::sync_now, move |_| {
+                        b.set_sensitive(true);
+                        status.set_text(&sync_line());
+                    });
+                });
+            }
+            card.append(&row("Keep in sync", "Every 30 seconds this computer and the server compare chats, memory notes and personalities. The newest change wins; a deleted chat or note is deleted on both. API keys are never sent.", Some(&on)));
+            card.append(&bar);
+            status.set_margin_start(16);
+            status.set_margin_end(16);
+            status.set_margin_bottom(14);
+            status.set_text(&sync_line());
+            card.append(&status);
+            {
+                // the status line follows the background sync while this page is open
+                let status = status.clone();
+                gtk::glib::timeout_add_local(std::time::Duration::from_secs(2), move || {
+                    if status.root().is_none() {
+                        return gtk::glib::ControlFlow::Break;
+                    }
+                    let t = status.text();
+                    if t.is_empty() || t.starts_with("Last") || t.starts_with("Not yet") || t.starts_with("The last try") {
+                        status.set_text(&sync_line());
+                    }
+                    gtk::glib::ControlFlow::Continue
+                });
+            }
+            content.append(&sec);
+        }
+        None => signed_out_cards(ui, content, &notice),
+    }
+
+    // for people who run their own server
+    let (sec, card) = section("");
+    let ex = gtk::Expander::new(Some("Advanced: server address"));
+    let inner = padded_box();
+    let url = gtk::Entry::new();
+    url.add_css_class("field-input");
+    url.set_placeholder_text(Some(login::DEFAULT_SERVER_URL));
+    url.set_text(&cfg.url);
+    url.set_hexpand(true);
+    inner.append(&wrapped("Only for people who run their own ZO-AI server. Leave it empty to use the ZO-AI server. Sign out before changing it."));
+    inner.append(&crate::field("Server address", &url));
+    let save = secondary("Save address");
+    save.set_halign(gtk::Align::Start);
+    save.set_sensitive(signed_in.is_none());
+    url.set_sensitive(signed_in.is_none());
+    inner.append(&save);
+    let st = wrapped("");
+    inner.append(&st);
+    ex.set_child(Some(&inner));
+    ex.set_margin_top(10);
+    ex.set_margin_bottom(10);
+    ex.set_margin_start(16);
+    ex.set_margin_end(16);
+    card.append(&ex);
+    save.connect_clicked(move |_| {
+        st.set_text(&match sync::save_config(&url.text(), sync::config().enabled) {
+            Ok(()) => "Saved.".to_string(),
+            Err(e) => e,
+        });
+    });
+    content.append(&sec);
+}
+
+enum Outcome {
+    SignedIn,
+    /// Created (a verification e-mail went out) or not verified yet; the ID token is kept for "Resend".
+    NeedsVerification(zo_core::login::Session, bool),
+    Failed(String),
+}
+
+fn signed_out_cards(ui: &Rc<Ui>, content: &gtk::Box, notice: &str) {
+    use zo_core::login;
+    let (sec, card) = section("Account");
+    let box_ = padded_box();
+    box_.append(&wrapped("Sign in to keep your chats, memory and personalities in step with the web version and your other computers. Optional: ZO-AI works fully without it. Nothing is sent anywhere until you sign in."));
+    let google = crate::primary("Continue with Google");
+    google.set_halign(gtk::Align::Start);
+    {
+        let ui2 = ui.clone();
+        google.connect_clicked(move |_| google_sheet(&ui2));
+    }
+    box_.append(&google);
+    card.append(&box_);
+    content.append(&sec);
+
+    let (sec, card) = section("Or with e-mail and password");
+    let f = padded_box();
+    let email = gtk::Entry::new();
+    email.add_css_class("field-input");
+    email.set_input_purpose(gtk::InputPurpose::Email);
+    email.set_hexpand(true);
+    let password = gtk::PasswordEntry::new();
+    password.set_show_peek_icon(true);
+    password.add_css_class("field-input");
+    password.set_hexpand(true);
+    f.append(&crate::field("E-mail", &email));
+    f.append(&crate::field("Password", &password));
+    let sign_in = crate::primary("Sign in");
+    let create = secondary("Create account");
+    let forgot = gtk::Button::with_label("Forgot password?");
+    forgot.add_css_class("flat");
+    let buttons = hbox(8);
+    buttons.append(&sign_in);
+    buttons.append(&create);
+    buttons.append(&forgot);
+    f.append(&buttons);
+    let status = wrapped(notice);
+    f.append(&status);
+    let resend = secondary("Resend verification e-mail");
+    resend.set_halign(gtk::Align::Start);
+    resend.set_visible(false);
+    f.append(&resend);
+    card.append(&f);
+    content.append(&sec);
+
+    let pending: Rc<std::cell::RefCell<Option<login::Session>>> = Rc::new(std::cell::RefCell::new(None));
+    let all: Rc<Vec<gtk::Button>> = Rc::new(vec![sign_in.clone(), create.clone(), forgot.clone(), resend.clone()]);
+    let go_ui = ui.clone();
+    let run: Rc<dyn Fn(bool)> = {
+        let (email, password, status, resend, pending, all) = (email.clone(), password.clone(), status.clone(), resend.clone(), pending.clone(), all.clone());
+        Rc::new(move |sign_up: bool| {
+            let (e, pw) = (email.text().to_string(), password.text().to_string());
+            status.set_text(if sign_up { "Creating the account…" } else { "Signing in…" });
+            resend.set_visible(false);
+            all.iter().for_each(|b| b.set_sensitive(false));
+            let (status, resend, pending, all, ui) = (status.clone(), resend.clone(), pending.clone(), all.clone(), go_ui.clone());
+            background(
+                move || -> Outcome {
+                    let s = match if sign_up { login::sign_up(&e, &pw) } else { login::sign_in_password(&e, &pw) } {
+                        Ok(s) => s,
+                        Err(m) => return Outcome::Failed(m),
+                    };
+                    if sign_up || s.email_verified == Some(false) {
+                        return Outcome::NeedsVerification(s.clone(), sign_up && s.verification_sent);
+                    }
+                    match login::exchange(&s.id_token, &login::default_device_name("desktop"), "desktop") {
+                        Ok(l) => match login::save_login(&l) {
+                            Ok(()) => Outcome::SignedIn,
+                            Err(m) => Outcome::Failed(m),
+                        },
+                        Err(m) if m.to_lowercase().contains("verif") => Outcome::NeedsVerification(s, false),
+                        Err(m) => Outcome::Failed(m),
+                    }
+                },
+                move |o| {
+                    all.iter().for_each(|b| b.set_sensitive(true));
+                    match o {
+                        Outcome::SignedIn => {
+                            if PAGE.with(|p| p.borrow().as_str() == "sync") {
+                                show(&ui);
+                            }
+                        }
+                        Outcome::NeedsVerification(s, sent) => {
+                            status.set_text(&verification_text(&s.email, sign_up, sent));
+                            *pending.borrow_mut() = Some(s);
+                            resend.set_visible(true);
+                        }
+                        Outcome::Failed(m) => status.set_text(&m),
+                    }
+                },
+            );
+        })
+    };
+    {
+        let run = run.clone();
+        sign_in.connect_clicked(move |_| run(false));
+    }
+    {
+        let run = run.clone();
+        password.connect_activate(move |_| run(false));
+    }
+    create.connect_clicked(move |_| run(true));
+    {
+        let (email, status, all) = (email.clone(), status.clone(), all.clone());
+        forgot.connect_clicked(move |_| {
+            let e = email.text().to_string();
+            status.set_text("Sending…");
+            all.iter().for_each(|b| b.set_sensitive(false));
+            let (status, all) = (status.clone(), all.clone());
+            let e2 = e.clone();
+            background(move || login::reset_password(&e2), move |r| {
+                all.iter().for_each(|b| b.set_sensitive(true));
+                status.set_text(&match r {
+                    Ok(()) => format!("If there is an account for {}, an e-mail to choose a new password is on its way.", e.trim()),
+                    Err(m) => m,
+                });
+            });
+        });
+    }
+    {
+        let (status, pending, all) = (status.clone(), pending.clone(), all.clone());
+        resend.connect_clicked(move |_| {
+            let Some(s) = pending.borrow().clone() else { return };
+            status.set_text("Sending…");
+            all.iter().for_each(|b| b.set_sensitive(false));
+            let (status, all) = (status.clone(), all.clone());
+            background(move || login::send_verification(&s.id_token), move |r| {
+                all.iter().for_each(|b| b.set_sensitive(true));
+                status.set_text(&match r {
+                    Ok(()) => "Sent again. Check your inbox (and the spam folder).".to_string(),
+                    Err(m) => m,
+                });
+            });
+        });
+    }
+}
+
+/// What to tell the person when the e-mail address is not verified yet.
+fn verification_text(email: &str, created: bool, sent: bool) -> String {
+    let first = match (created, sent) {
+        (true, true) => format!("Account created. We sent a verification e-mail to {email}."),
+        (true, false) => format!("Account created, but the verification e-mail could not be sent to {email}. Press Resend."),
+        (false, _) => format!("The e-mail address {email} is not verified yet."),
+    };
+    format!("{first} Open the link in it, then press Sign in.")
+}
+
+/// "Continue with Google": the system browser opens the approval page, and this panel shows the code to type there.
+fn google_sheet(ui: &Rc<Ui>) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use zo_core::login;
+    enum Msg {
+        Code(String, String),
+        Done(Result<(), String>),
+    }
+    let (win, body, foot) = crate::sheet(ui, "Continue with Google", 460);
+    let info = wrapped("Contacting the server…");
+    let code = gtk::Label::new(None);
+    code.set_selectable(true);
+    code.set_margin_top(6);
+    code.set_margin_bottom(6);
+    let status = wrapped("");
+    body.append(&info);
+    body.append(&code);
+    body.append(&status);
+    let cancel_btn = secondary("Cancel");
+    foot.append(&cancel_btn);
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let (w, c) = (win.clone(), cancel.clone());
+        cancel_btn.connect_clicked(move |_| {
+            c.store(true, Ordering::SeqCst);
+            w.close();
+        });
+    }
+    let (tx, rx) = mpsc::channel();
+    {
+        let (tx, cancel) = (tx, cancel.clone());
+        std::thread::spawn(move || {
+            let tx2 = tx.clone();
+            let r = login::run_device_flow(&login::default_device_name("desktop"), "desktop", move |c, u| {
+                let _ = tx2.send(Msg::Code(c.to_string(), u.to_string()));
+            }, &cancel)
+            .and_then(|l| login::save_login(&l));
+            let _ = tx.send(Msg::Done(r));
+        });
+    }
+    let ui2 = ui.clone();
+    let win2 = win.clone();
+    gtk::glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+        if win2.scrim.parent().is_none() {
+            // closed with X or Esc: stop waiting
+            cancel.store(true, Ordering::SeqCst);
+            return gtk::glib::ControlFlow::Break;
+        }
+        while let Ok(m) = rx.try_recv() {
+            match m {
+                Msg::Code(c, u) => {
+                    code.set_markup(&format!("<span size='xx-large' weight='bold' font_family='monospace'>{}</span>", gtk::glib::markup_escape_text(&c)));
+                    code.set_halign(gtk::Align::Center);
+                    info.set_text(&format!("Open {u} if the browser did not open, sign in, then type this code:"));
+                    status.set_text("Waiting for you to approve this computer. Only approve if you started this yourself.");
+                    if browser_url_ok(&u) {
+                        gtk::UriLauncher::new(&u).launch(Some(&ui2.window), gtk::gio::Cancellable::NONE, |_| {});
+                    }
+                }
+                Msg::Done(Ok(())) => {
+                    win2.close();
+                    if PAGE.with(|p| p.borrow().as_str() == "sync") {
+                        show(&ui2);
+                    }
+                    return gtk::glib::ControlFlow::Break;
+                }
+                Msg::Done(Err(e)) => {
+                    if e != "Cancelled." {
+                        code.set_text("");
+                        info.set_text("Signing in did not work.");
+                        status.set_text(&e);
+                        cancel_btn.set_label("Close");
+                    }
+                    return gtk::glib::ControlFlow::Break;
+                }
+            }
+        }
+        gtk::glib::ControlFlow::Continue
+    });
+    win.present();
+}
+
+/// The browser is only opened for an https address (or one on this computer, for a test server).
+fn browser_url_ok(u: &str) -> bool {
+    u.starts_with("https://") || u.starts_with("http://127.0.0.1") || u.starts_with("http://localhost")
+}
+
+// ---- the one-time card on the home screen ----
+
+fn dismissed_flag() -> std::path::PathBuf {
+    zo_core::audit::config_dir().join("signin-card-dismissed")
+}
+
+/// Whether the home screen's "Sign in" card is shown: not after signing in, not after "Not now".
+pub(crate) fn card_visible(signed_in: bool, dismissed: bool) -> bool {
+    !signed_in && !dismissed
+}
+
+pub(crate) fn signin_card_wanted() -> bool {
+    card_visible(zo_core::login::signed_in().is_some(), dismissed_flag().exists())
+}
+
+pub(crate) fn dismiss_signin_card() {
+    let p = dismissed_flag();
+    let _ = std::fs::create_dir_all(p.parent().unwrap_or(&p));
+    let _ = std::fs::write(&p, "");
 }
 
 /// A small panel with one text box. `work` gets the text and runs off the main thread (it may call the model); `done` runs on the
@@ -1367,4 +1702,33 @@ fn add_machine_sheet(ui: &Rc<Ui>) {
     }
     win.present();
     name.grab_focus();
+}
+
+#[cfg(test)]
+mod account_tests {
+    use super::*;
+
+    #[test]
+    fn home_card_rules() {
+        assert!(card_visible(false, false));
+        assert!(!card_visible(true, false));
+        assert!(!card_visible(false, true));
+        assert!(!card_visible(true, true));
+    }
+
+    #[test]
+    fn verification_messages() {
+        assert!(verification_text("a@b.c", true, true).starts_with("Account created. We sent a verification e-mail to a@b.c."));
+        assert!(verification_text("a@b.c", true, false).contains("Resend"));
+        assert!(verification_text("a@b.c", false, false).contains("not verified yet"));
+    }
+
+    #[test]
+    fn browser_only_opens_safe_addresses() {
+        assert!(browser_url_ok("https://zo-ai-server.onrender.com/device"));
+        assert!(browser_url_ok("http://127.0.0.1:8080/device"));
+        assert!(!browser_url_ok("http://evil.example/device"));
+        assert!(!browser_url_ok("file:///etc/passwd"));
+        assert!(!browser_url_ok("javascript:alert(1)"));
+    }
 }

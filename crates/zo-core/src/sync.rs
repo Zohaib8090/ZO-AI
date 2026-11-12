@@ -404,7 +404,8 @@ pub fn clean_url(url: &str) -> Result<String, String> {
 }
 
 pub fn save_config(url: &str, enabled: bool) -> Result<(), String> {
-    let url = if url.trim().is_empty() && !enabled { String::new() } else { clean_url(url)? };
+    // empty = the default server (see `login::server_url`)
+    let url = if url.trim().is_empty() { String::new() } else { clean_url(url)? };
     write_config(&url, enabled, &config().email)
 }
 

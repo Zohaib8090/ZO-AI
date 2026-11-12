@@ -1802,6 +1802,48 @@ fn build_ui(app: &adw::Application) {
     }
     composer_clamp.set_child(Some(&composer_wrap));
     chat.append(&composer_clamp);
+    // a one-time, optional invitation to sign in (under the composer, never over it); gone after signing in or "Not now"
+    let signin_card = hbox(12);
+    signin_card.add_css_class("settings-card");
+    signin_card.set_margin_top(14);
+    signin_card.set_margin_start(24);
+    signin_card.set_margin_end(24);
+    let signin_text = lbl("Sign in to sync with the web version (optional)", "pc-meta");
+    signin_text.set_hexpand(true);
+    signin_text.set_wrap(true);
+    signin_text.set_xalign(0.0);
+    signin_text.set_margin_start(14);
+    let signin_yes = primary("Sign in");
+    let signin_no = secondary("Not now");
+    for b in [&signin_yes, &signin_no] {
+        b.set_valign(gtk::Align::Center);
+        b.set_margin_top(8);
+        b.set_margin_bottom(8);
+    }
+    signin_no.set_margin_end(10);
+    signin_card.append(&signin_text);
+    signin_card.append(&signin_yes);
+    signin_card.append(&signin_no);
+    let signin_clamp = adw::Clamp::new();
+    {
+        let cc = signin_clamp.clone();
+        theme::on_zoom(move |_| {
+            cc.set_maximum_size(theme::zs(720));
+            cc.set_tightening_threshold(theme::zs(600));
+        });
+    }
+    signin_clamp.set_child(Some(&signin_card));
+    signin_clamp.set_visible(false);
+    chat.append(&signin_clamp);
+    {
+        let refresh = {
+            let (c, h) = (signin_clamp.clone(), hero.clone());
+            move || c.set_visible(h.is_visible() && settings::signin_card_wanted())
+        };
+        let r2 = refresh.clone();
+        hero.connect_visible_notify(move |_| r2());
+        chat.connect_map(move |_| refresh());
+    }
     let chat_ctl = chat::Ctl::new(&chat, &hero);
     // Copies the whole conversation (a drag-selection cannot cross from one message to the next).
     let copy_all = icon_button("edit-copy-symbolic", "Copy the whole conversation", "icon-btn");
@@ -2544,6 +2586,15 @@ fn build_ui(app: &adw::Application) {
     }
 
     refresh_projects(&ui);
+    {
+        let ui2 = ui.clone();
+        signin_yes.connect_clicked(move |_| settings::open_page(&ui2, "sync"));
+        let c = signin_clamp.clone();
+        signin_no.connect_clicked(move |_| {
+            settings::dismiss_signin_card();
+            c.set_visible(false);
+        });
+    }
 
     // Optional start view, used for verification: ZO_AI_START_VIEW=projects|project|settings|add-server|models
     match std::env::var("ZO_AI_START_VIEW").as_deref() {
