@@ -414,7 +414,7 @@ const ADMIN_PAGES = ["apps", "machines"];
 const human = n => { n = +n || 0; const u = ["B", "KB", "MB", "GB"]; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + " " + u[i]; };
 const view = () => $("view");
 function setTitle(t) { $("title").textContent = t; }
-function setNav(n) { nav = n; document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.nav === n)); markList(); }
+function setNav(n) { voiceSpeakStop(); nav = n; document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.nav === n)); markList(); }
 
 function greet() {
   const h = new Date().getHours(), part = h < 5 ? "evening" : h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
@@ -511,21 +511,19 @@ addEventListener("keydown", e => {
   if (e.key === "Escape") { if (vRec) voiceCancel(); else if (vSpeak) voiceSpeakStop(); return; }
   if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.code === "KeyM" && $("mic")) { e.preventDefault(); if (!$("mic").disabled) voiceToggle(); else if (!voiceCtor()) toast("Voice input needs Chrome, Edge or Safari"); }
 });
-document.addEventListener("input", e => { if (vRec && e.isTrusted && e.target.id === "text") voiceStop(false); });
+document.addEventListener("input", e => { if (vRec && e.isTrusted && e.target.id === "text") voiceStop(true); });
 document.addEventListener("visibilitychange", () => { if (document.hidden) voiceStop(true); });
 addEventListener("pagehide", () => { voiceStop(true); voiceSpeakStop(); });
 
 /* read answers aloud: plain words only, never code */
 function voicePlain(src) {
-  return String(src || "")
-    .replace(/(^|\n)(```|~~~)[^\n]*\n[\s\S]*?(\n(```|~~~)[ \t]*(?=\n|$)|$)/g, "$1")
-    .replace(/(^|\n)((?: {4}|\t)[^\n]*(?:\n|$))+/g, "$1")
-    .replace(/<[^>\n]+>/g, " ")
+  return String(src || "").split(/```/).filter((_, i) => i % 2 === 0).join("\n") /* same split as md(): odd parts are code */
+    .replace(/<\/?[a-zA-Z][^>\n]*>/g, " ")
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/https?:\/\/\S+/g, "").replace(/`+/g, "")
     .replace(/^\s{0,3}#{1,6}\s+(.*?)[ \t]*$/gm, (_, h) => h + (/[.!?:]$/.test(h) ? "" : ".")).replace(/^\s*>\s?/gm, "").replace(/^\s*([-*+]|\d+[.)])\s+(.*?)[ \t]*$/gm, (_, m, h) => h + (/[.!?:;,]$/.test(h) ? "" : ".")).replace(/^\s*([-*_]\s*){3,}$/gm, "")
     .replace(/^\s*\|?[\s:|-]+\|[\s:|-]*$/gm, "").replace(/\|/g, ", ")
-    .replace(/(\*\*|__|\*|_|~~)(?=\S)([^\n]*?\S)\1/g, "$2").replace(/[*_~]{1,3}/g, "")
+    .replace(/(\*\*|\*|~~)(?=\S)([^\n]*?\S)\1/g, "$2").replace(/(^|[^\w])(__|_)(?=\S)([^\n]*?\S)\2(?![\w])/g, "$1$3").replace(/\*{1,3}|~~/g, "")
     .replace(/[ \t]+/g, " ").replace(/\n{2,}/g, ". ").replace(/\n/g, " ").replace(/\.\s*\./g, ".").replace(/\s+/g, " ").trim();
 }
 function voicePick(lang) {
@@ -541,11 +539,11 @@ function voiceSpeak(text, wrap) {
   if (!voiceCanSpeak()) return; const plain = voicePlain(text); if (!plain) { toast("Nothing to read aloud in this answer."); return; }
   voiceStop(true); voiceSpeakStop();
   const parts = plain.match(/[^.!?؟۔।]+[.!?؟۔।]*\s*/g) || [plain], chunks = []; let cur = "";
-  parts.forEach(p => { if ((cur + p).length > 200 && cur) { chunks.push(cur); cur = ""; } cur += p; }); if (cur) chunks.push(cur);
+  parts.flatMap(p => p.match(/[\s\S]{1,200}(?:\s+|$)|[\s\S]{1,200}/g) || [p]).forEach(p => { if ((cur + p).length > 200 && cur) { chunks.push(cur); cur = ""; } cur += p; }); if (cur) chunks.push(cur);
   const me = vSpeak = { wrap }, lang = voiceLang(), voice = voicePick(lang);
   const next = i => {
     if (vSpeak !== me) return; if (i >= chunks.length) { vSpeak = null; voiceSpeakPaint(); return; }
-    const u = new SpeechSynthesisUtterance(chunks[i].trim()); u.lang = voice ? voice.lang : lang; if (voice) u.voice = voice;
+    const u = me.u = new SpeechSynthesisUtterance(chunks[i].trim()); u.lang = voice ? voice.lang : lang; if (voice) u.voice = voice;
     u.onend = () => next(i + 1); u.onerror = () => { if (vSpeak === me) { vSpeak = null; voiceSpeakPaint(); } };
     try { speechSynthesis.speak(u); } catch { vSpeak = null; voiceSpeakPaint(); }
   };
@@ -607,7 +605,7 @@ async function openChat(id) {
 }
 
 async function send() {
-  voiceStop(true); const t = $("text"); const text = t.value.trim(); if (!text || busy) return;
+  voiceStop(true); voiceSpeakStop(); const t = $("text"); const text = t.value.trim(); if (!text || busy) return;
   if (!$("thread")) showThread("New chat");
   const first = !chatId;
   t.value = ""; t.style.height = "auto";
@@ -639,7 +637,7 @@ async function send() {
     }
   } catch (e) { addError(e.message); }
   endGroup(group); stream = 0; setBusy(false); $("text")?.focus(); refreshChats();
-  if (ai && acc && voiceGet("read") === "1") voiceSpeak(acc, ai);
+  if (ai && acc && ai.isConnected && voiceGet("read") === "1") voiceSpeak(acc, ai);
 }
 function ask(ev) {
   const d = document.createElement("div"); d.className = "ask";
