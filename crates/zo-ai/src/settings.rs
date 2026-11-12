@@ -284,6 +284,44 @@ pub fn show(ui: &Rc<Ui>) {
         Some(&dd),
     ));
     content.append(&sec);
+
+    // ---- tray and startup ----
+    let (sec, card) = section("Tray and startup");
+    let present = crate::tray::present();
+    let keep = gtk::Switch::new();
+    keep.set_active(crate::tray::keep_setting().unwrap_or(true));
+    keep.connect_state_set(|_, on| {
+        crate::tray::set_keep(on);
+        gtk::glib::Propagation::Proceed
+    });
+    let sub = if present {
+        "Closing the window leaves ZO-AI running (chats, tasks, the phone link) with its icon in the panel, where you can open it, see what is running and quit."
+    } else {
+        "No panel that shows tray icons was found, so closing the window quits ZO-AI (it asks first when something is still running). This takes effect when a tray appears."
+    };
+    card.append(&row("Keep running in the tray when the window is closed", sub, Some(&keep)));
+    let auto = gtk::Switch::new();
+    auto.set_active(crate::tray::autostart_enabled());
+    let auto_note = wrapped("");
+    auto_note.set_margin_start(16);
+    auto_note.set_margin_end(16);
+    auto_note.set_margin_bottom(10);
+    auto_note.set_visible(false);
+    {
+        let note = auto_note.clone();
+        auto.connect_state_set(move |_, on| {
+            let text = match crate::tray::set_autostart(on) {
+                Ok(()) => String::new(),
+                Err(e) => format!("Could not change this: {e}"),
+            };
+            note.set_visible(!text.is_empty());
+            note.set_text(&text);
+            gtk::glib::Propagation::Proceed
+        });
+    }
+    card.append(&row("Start with the computer", "ZO-AI starts without a window when you sign in, so the tray icon, the shortcut and the phone link are ready.", Some(&auto)));
+    card.append(&auto_note);
+    content.append(&sec);
     }
 
     // ---- other apps ----

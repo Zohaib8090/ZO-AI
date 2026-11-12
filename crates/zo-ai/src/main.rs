@@ -3,6 +3,7 @@
 //! Rust port of the approved HTML design: sidebar, chat, project list,
 //! project workspace with instructions / context / memory / schedules.
 
+mod activity_page;
 mod ask;
 mod chat;
 use zo_core::store::chats;
@@ -17,6 +18,7 @@ mod scheduler;
 mod settings;
 mod shortcut;
 mod theme;
+mod tray;
 
 use adw::prelude::*;
 use gtk4 as gtk;
@@ -175,6 +177,8 @@ struct Ui {
     nav_projects: gtk::Button,
     nav_artifacts: gtk::Button,
     nav_scheduled: gtk::Button,
+    nav_activity: gtk::Button,
+    activity: Rc<activity_page::Page>,
 
     proj_list: gtk::Box,
     search_entry: gtk::Entry,
@@ -718,6 +722,7 @@ pub(crate) fn set_nav(ui: &Rc<Ui>, which: &str) {
         "projects" => "Projects",
         "artifacts" => "Artifacts",
         "scheduled" => "Scheduled",
+        "activity" => "Activity",
         _ => "",
     });
     for (btn, key) in [
@@ -726,6 +731,7 @@ pub(crate) fn set_nav(ui: &Rc<Ui>, which: &str) {
         (&ui.nav_projects, "projects"),
         (&ui.nav_artifacts, "artifacts"),
         (&ui.nav_scheduled, "scheduled"),
+        (&ui.nav_activity, "activity"),
     ] {
         if key == which {
             btn.add_css_class("active");
@@ -1618,6 +1624,100 @@ fn show_main(text: &str) {
 }
 
 thread_local! {
+    /// The page state of the open main window (weak, so closing the window frees it).
+    static UI: RefCell<Option<std::rc::Weak<Ui>>> = const { RefCell::new(None) };
+    /// Set while quitting for sure (after the person said "Quit anyway"), so the close handler does not ask again.
+    static FORCE_QUIT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Is the main window open (not closed into the tray)?
+pub(crate) fn main_window_open() -> bool {
+    MAIN.with(|m| m.borrow().is_some())
+}
+
+/// Brings the window up where it was (on the page it showed); builds it if it was closed.
+pub(crate) fn raise_main() {
+    let open = MAIN.with(|m| m.borrow().clone());
+    match open {
+        Some((win, _, _)) => win.present(),
+        None => show_main(""),
+    }
+}
+
+/// The tray's "Activity..." entry: the window, on the Activity page.
+pub(crate) fn open_activity() {
+    raise_main();
+    if let Some(ui) = UI.with(|u| u.borrow().as_ref().and_then(|w| w.upgrade())) {
+        activity_page::open(&ui);
+    }
+}
+
+/// The tray's left click: hide the window into the tray, or bring it up.
+pub(crate) fn toggle_window() {
+    let open = MAIN.with(|m| m.borrow().clone());
+    match open {
+        Some((win, _, _)) if win.is_active() && tray::keep_running() => win.close(),
+        _ => raise_main(),
+    }
+}
+
+static OWNS_SERVICE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static OWNS_APPROVALS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The tray's Quit: when something is still running, the window comes up and asks first.
+pub(crate) fn request_quit() {
+    if zo_core::activity::busy_count() > 0 {
+        confirm_quit();
+    } else {
+        quit_now();
+    }
+}
+
+fn confirm_quit() {
+    raise_main();
+    let n = zo_core::activity::busy_count();
+    let body = match n {
+        0 => "Nothing is running any more.".to_string(),
+        1 => "1 thing is still running. Quit anyway?".to_string(),
+        n => format!("{n} things are still running. Quit anyway?"),
+    };
+    let dialog = adw::AlertDialog::new(Some("Quit ZO-AI?"), Some(&body));
+    dialog.add_responses(&[("cancel", "Keep running"), ("quit", "Quit anyway")]);
+    dialog.set_response_appearance("quit", adw::ResponseAppearance::Destructive);
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_close_response("cancel");
+    dialog.connect_response(None, |_, id| {
+        if id == "quit" {
+            quit_now();
+        }
+    });
+    let parent = MAIN.with(|m| m.borrow().as_ref().map(|(w, _, _)| w.clone()));
+    dialog.present(parent.as_ref());
+}
+
+/// Ends ZO-AI cleanly: saves what the window holds, closes the terminals, removes the sockets it made, exits.
+pub(crate) fn quit_now() {
+    FORCE_QUIT.with(|f| f.set(true));
+    if let Some(ui) = UI.with(|u| u.borrow().as_ref().and_then(|w| w.upgrade())) {
+        ui.store.borrow().save();
+    }
+    for t in zo_core::term::list() {
+        t.close();
+    }
+    if OWNS_SERVICE.load(std::sync::atomic::Ordering::SeqCst) {
+        let _ = std::fs::remove_file(zo_core::service::socket_path());
+    }
+    if OWNS_APPROVALS.load(std::sync::atomic::Ordering::SeqCst) {
+        let _ = std::fs::remove_file(zo_core::approval::socket_path());
+    }
+    eprintln!("zo-ai: quit");
+    match gtk::gio::Application::default() {
+        Some(app) => app.quit(),
+        None => std::process::exit(0),
+    }
+}
+
+thread_local! {
     /// What to refresh when scheduled tasks finish; set while the main window exists.
     static TASKS_DONE: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
 }
@@ -1639,6 +1739,7 @@ fn build_ui(app: &adw::Application) {
     let nav_projects = nav_button("view-grid-symbolic", "Projects", false, None);
     let nav_artifacts = nav_button("view-list-symbolic", "Artifacts", false, None);
     let nav_scheduled = nav_button("alarm-symbolic", "Scheduled", false, None);
+    let nav_activity = nav_button("utilities-system-monitor-symbolic", "Activity", false, None);
 
     let sidebar = vbox(2);
     sidebar.add_css_class("sidebar");
@@ -1662,6 +1763,7 @@ fn build_ui(app: &adw::Application) {
     sidebar.append(&nav_projects);
     sidebar.append(&nav_artifacts);
     sidebar.append(&nav_scheduled);
+    sidebar.append(&nav_activity);
 
     // pinned projects and recent chats, scrolling when there are many
     let lists = vbox(1);
@@ -2058,6 +2160,23 @@ fn build_ui(app: &adw::Application) {
     sched_page.append(&sched_scroll);
     stack.add_named(&sched_page, Some("scheduled"));
 
+    // ---------- activity view ----------
+    let activity = activity_page::Page::new();
+    let act_page = vbox(0);
+    let act_head = hbox(8);
+    act_head.set_margin_top(34);
+    act_head.set_margin_start(44);
+    act_head.set_margin_end(44);
+    act_head.set_margin_bottom(22);
+    act_head.append(&lbl("Activity", "page-title"));
+    act_page.append(&act_head);
+    let act_scroll = gtk::ScrolledWindow::new();
+    act_scroll.set_child(Some(&activity.list));
+    act_scroll.set_vexpand(true);
+    act_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+    act_page.append(&act_scroll);
+    stack.add_named(&act_page, Some("activity"));
+
     // ---------- settings view ----------
     let settings_box = vbox(0);
     settings_box.set_margin_top(34);
@@ -2137,6 +2256,8 @@ fn build_ui(app: &adw::Application) {
         nav_projects: nav_projects.clone(),
         nav_artifacts: nav_artifacts.clone(),
         nav_scheduled: nav_scheduled.clone(),
+        nav_activity: nav_activity.clone(),
+        activity: activity.clone(),
         proj_list,
         search_entry,
         pv_title,
@@ -2404,6 +2525,7 @@ fn build_ui(app: &adw::Application) {
         (&nav_projects, "projects"),
         (&nav_artifacts, "artifacts"),
         (&nav_scheduled, "scheduled"),
+        (&nav_activity, "activity"),
     ] {
         let ui2 = ui.clone();
         let key = key.to_string();
@@ -2428,6 +2550,7 @@ fn build_ui(app: &adw::Application) {
                 set_nav(&ui2, "artifacts");
                 refresh_artifacts(&ui2);
             }
+            "activity" => activity_page::open(&ui2),
             _ => {
                 ui2.stack.set_visible_child_name("scheduled");
                 set_nav(&ui2, "scheduled");
@@ -2579,8 +2702,19 @@ fn build_ui(app: &adw::Application) {
     {
         let ui2 = ui.clone();
         window.connect_close_request(move |_| {
+            // closing keeps ZO-AI running when there is a tray icon to get it back from; without one the close button quits
+            // (asking first when something is still running), so the app is never left invisible with no way back
+            if !tray::keep_running() && !FORCE_QUIT.with(Cell::get) {
+                if zo_core::activity::busy_count() > 0 {
+                    confirm_quit();
+                    return glib::Propagation::Stop;
+                }
+                quit_now();
+                return glib::Propagation::Proceed;
+            }
             save_store(&ui2);
             MAIN.with(|m| *m.borrow_mut() = None);
+            UI.with(|u| *u.borrow_mut() = None);
             glib::Propagation::Proceed
         });
     }
@@ -2604,6 +2738,7 @@ fn build_ui(app: &adw::Application) {
         }
         Ok("settings") => settings::show(&ui),
         Ok("settings-sync") => settings::open_page(&ui, "sync"),
+        Ok("settings-general") => settings::open_page(&ui, "general"),
         Ok("add-server") => {
             settings::show(&ui);
             settings::open_add_server(&ui);
@@ -2625,6 +2760,11 @@ fn build_ui(app: &adw::Application) {
     }
 
     MAIN.with(|m| *m.borrow_mut() = Some((window.clone(), stack.clone(), prompt.clone())));
+    UI.with(|u| *u.borrow_mut() = Some(Rc::downgrade(&ui)));
+    activity_page::watch(&ui);
+    if std::env::var("ZO_AI_START_VIEW").as_deref() == Ok("activity") {
+        activity_page::open(&ui);
+    }
     window.present();
     // for verification: ZO_AI_SHOW=context opens the Context panel
     if std::env::var("ZO_AI_SHOW").as_deref() == Ok("context") {
@@ -2734,12 +2874,17 @@ fn main() -> glib::ExitCode {
         // first start: begin answering approval questions and stay alive after the window closes
         static FIRST: std::sync::Once = std::sync::Once::new();
         FIRST.call_once(|| {
-            ask::start();
+            if ask::start() {
+                OWNS_APPROVALS.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
             // terminals (and so the AI terminal tools) live in this process, with or without a window
             zo_core::term::enable_in_app();
-            if let Err(e) = zo_core::service::start() {
-                eprintln!("zo-ai: the phone service did not start: {e}");
+            match zo_core::service::start() {
+                Ok(()) => OWNS_SERVICE.store(true, std::sync::atomic::Ordering::SeqCst),
+                Err(e) => eprintln!("zo-ai: the phone service did not start: {e}"),
             }
+            // the icon in the panel (when there is a panel that shows icons): open, what is running, quit
+            tray::start();
             // the Claude model list is renewed once a day when there is an Anthropic key
             std::thread::spawn(|| {
                 let sel = zo_core::ai::Selection::load();
