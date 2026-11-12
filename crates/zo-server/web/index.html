@@ -38,6 +38,18 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 #login p{color:var(--dim);max-width:340px;margin:0}
 #err{color:var(--danger);min-height:1.4em;font-size:13px;max-width:420px}
 
+#login .legal,#consent .legal{font-size:12.5px;color:var(--dimmer);max-width:340px}
+#login .legal a,#consent a,.web-note a{color:var(--check)}
+#consent{height:100%;overflow:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px}
+#consent .hero-title{font-size:28px;display:flex;align-items:center;gap:12px}
+#consent .box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:6px 18px;max-width:520px;width:100%}
+#consent ul{margin:10px 0;padding-left:1.2em;font-size:14px;color:var(--text2)}#consent li{margin:7px 0}
+#consent label{display:flex;gap:10px;align-items:center;font-size:14px;max-width:520px;width:100%;cursor:pointer}
+#consent input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent);flex:none}
+#consent .acts{display:flex;gap:8px;max-width:520px;width:100%;justify-content:flex-end}
+.web-note{font-size:12.5px;color:var(--dim);text-align:center;padding:10px 8px 0}
+.tokbox{font-family:ui-monospace,"DejaVu Sans Mono",monospace;font-size:12.5px;word-break:break-all}
+.warn{border:1px solid var(--danger);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--text2);margin:6px 0 4px}
 /* layout */
 #app{height:100%;display:flex}
 .sidebar{width:268px;flex:none;background:var(--bg);border-right:1px solid var(--line);padding:10px 8px 8px 8px;display:flex;flex-direction:column;gap:2px;transition:margin-left .18s}
@@ -184,9 +196,24 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 <body>
 <div id="login" class="hide">
   <div class="hero-title"><svg class="mark" id="loginMark" viewBox="0 0 120 120"></svg>ZO-AI</div>
-  <p>Your AI, from any browser. Sign in with the Google account that owns it.</p>
+  <p>Your AI, from any browser. Sign in with your Google account and bring your own API key.</p>
   <button class="page-btn primary" id="signin">Sign in with Google</button>
   <div id="err"></div>
+  <div class="legal">By signing in you will be asked to agree to the <a href="/terms" target="_blank" rel="noopener">Terms</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy notice</a>.</div>
+</div>
+
+<div id="consent" class="hide">
+  <div class="hero-title"><svg class="mark" id="consentMark" viewBox="0 0 120 120"></svg>Before you start</div>
+  <div class="box"><ul>
+    <li><b>What this is.</b> ZO-AI on the web is the assistant built into Zohara OS. Here it can chat, search the web and keep notes about you (memory).</li>
+    <li><b>Where your data goes.</b> Your chats and memory are stored in the cloud (Google Firebase) under your own account, so they follow you between the web, the desktop app and the terminal. The person who runs this service can technically access the database. Do not put sensitive secrets in chats.</li>
+    <li><b>Your own API key.</b> You bring your own key from an AI provider. It is stored encrypted on our server and only used to call that provider for you.</li>
+    <li><b>No access to your computer.</b> The web version cannot see or control your computer. Computer-control tools run only in your own desktop app, which can sync its chats here.</li>
+    <li>You can export or delete everything at any time in Settings > Account.</li>
+  </ul></div>
+  <div class="legal">Read the <a href="/privacy" target="_blank" rel="noopener">Privacy notice</a> and the <a href="/terms" target="_blank" rel="noopener">Terms</a>.</div>
+  <label><input type="checkbox" id="agree"> I agree to the Terms and the Privacy notice.</label>
+  <div class="acts"><button class="btn" id="consentOut">Sign out</button><button class="btn primary" id="consentGo" disabled>Continue</button></div>
 </div>
 
 <div id="net" class="netbar hide" role="status"><span id="netmsg"></span><button class="btn" id="netin">Sign in again</button></div>
@@ -255,8 +282,14 @@ async function api(path, body) {
   let j = {}; try { j = await r.json(); } catch {}
   if (r.status === 401) { netBanner("unauthorized"); const e = new Error(j.error || "Sign in again."); e.status = 401; throw e; }
   netBanner(null);
+  if (r.status === 429) { const m = limitMsg(r); toast(m); const e = new Error(m); e.status = 429; throw e; }
   if (!r.ok || j.ok === false) { const e = new Error(j.error || ("Error " + r.status)); e.status = r.status; throw e; }
   return j;
+}
+/* 429 from the server's per-person limits: a friendly sentence with the wait time from Retry-After */
+function limitMsg(r) {
+  const s = parseInt(r.headers.get("Retry-After") || "", 10);
+  return "You are going a little fast. Please wait" + (s > 0 ? " " + s + " second" + (s === 1 ? "" : "s") : " a moment") + " and try again.";
 }
 /* a small bar at the top: shown while calls fail with a network error or 401, hidden again after the next good call */
 function netBanner(kind) {
@@ -266,7 +299,7 @@ function netBanner(kind) {
   b.classList.remove("hide");
 }
 const op = (o, extra = {}) => api("/api/op", { op: o, ...extra });
-function toast(t) { const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2600); }
+function toast(t) { if ([...document.querySelectorAll(".toast")].some(x => x.textContent === t)) return; const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2600); }
 
 /* ---------- markdown (headings, lists, quotes, code blocks, bold, italic, links) ---------- */
 function inline(s) {
@@ -296,6 +329,11 @@ function md(src) {
 
 /* ---------- state ---------- */
 let chatId = "", stream = 0, busy = false, nav = "new", chatList = [], status = {}, mode = "Auto";
+/* who is signed in: the answer of /api/account/whoami. Until it is known (or if it fails) the page behaves as restricted, so nothing powerful is shown. The server enforces the same rules. */
+let acct = null, uid = "";
+const restricted = () => acct ? !!acct.restricted : true;
+const ADMIN_PAGES = ["apps", "machines"];
+const human = n => { n = +n || 0; const u = ["B", "KB", "MB", "GB"]; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + " " + u[i]; };
 const view = () => $("view");
 function setTitle(t) { $("title").textContent = t; }
 function setNav(n) { nav = n; document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.nav === n)); markList(); }
@@ -335,7 +373,7 @@ async function refreshModel() {
 /* ---------- home and chat ---------- */
 function showHome() {
   chatId = ""; setNav("new"); setTitle("");
-  view().innerHTML = `<div class="home"><div class="hero"><svg class="mark" viewBox="0 0 120 120" data-mark></svg><div class="hero-title">${esc(greet())}</div></div><div class="composer-wrap">${composerHTML()}</div></div>`;
+  view().innerHTML = `<div class="home"><div class="hero"><svg class="mark" viewBox="0 0 120 120" data-mark></svg><div class="hero-title">${esc(greet())}</div></div><div class="composer-wrap">${composerHTML()}${restricted() ? '<div class="web-note">Web version: chat, web search and memory. Computer control runs in the desktop app, which syncs your chats here.</div>' : ""}</div></div>`;
   wireComposer();
 }
 function showThread(title) {
@@ -395,6 +433,7 @@ async function send() {
   let ai = null, acc = "", group = null;
   try {
     const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId }) });
+    if (r.status === 429) { const m = limitMsg(r); toast(m); throw new Error(m); }
     if (!r.ok || !r.body) { let j = {}; try { j = await r.json(); } catch {} throw new Error(j.error || "Error " + r.status); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
     for (;;) {
@@ -468,9 +507,10 @@ function popover(anchor, html) {
   setTimeout(() => document.addEventListener("mousedown", function h(e) { if (!p.contains(e.target)) { p.remove(); document.removeEventListener("mousedown", h); } }), 0);
   return p;
 }
+const modes = () => restricted() ? ["Manual", "Auto"] : ["Manual", "Auto", "Bypass"];
 function modePopover(a) {
   const info = { Manual: "Asks before every change and command.", Auto: "Looking around runs; changes ask first.", Bypass: "Never asks." };
-  const p = popover(a, '<div class="pop-head">What ZO-AI may do</div>' + ["Manual", "Auto", "Bypass"].map(m => `<button class="pop-row" data-m="${m}"><div class="c"><div class="pop-title">${m}</div><div class="pop-sub">${info[m]}</div></div><span class="pop-check">${m === mode ? icon("check") : ""}</span></button>`).join(""));
+  const p = popover(a, '<div class="pop-head">What ZO-AI may do</div>' + modes().map(m => `<button class="pop-row" data-m="${m}"><div class="c"><div class="pop-title">${m}</div><div class="pop-sub">${info[m]}</div></div><span class="pop-check">${m === mode ? icon("check") : ""}</span></button>`).join(""));
   p.querySelectorAll("[data-m]").forEach(b => b.onclick = async () => { await op("mode", { set: b.dataset.m }); mode = b.dataset.m; p.remove(); refreshModel(); });
 }
 async function modelPopover(a) {
@@ -483,9 +523,10 @@ async function modelPopover(a) {
 async function modelSheet() {
   let prov; try { prov = await op("providers"); } catch (e) { return toast(e.message); }
   const wrap = document.createElement("div");
-  wrap.innerHTML = `<div class="field-label">Provider</div><select id="mProv"></select><div class="field-label">API key</div><input class="field-input" id="mKey" type="password" placeholder="Paste the key (empty keeps the saved one)" autocomplete="off"><div class="field-hint">Keys stay on the server, stored encrypted.</div><div class="field-label">Model</div><select id="mModel"></select><div class="field-hint" id="mMsg"></div>`;
+  wrap.innerHTML = `<div class="field-label">Provider</div><select id="mProv"></select><div class="field-label">API key</div><input class="field-input" id="mKey" type="password" placeholder="Paste the key (empty keeps the saved one)" autocomplete="off"><div class="field-hint">${restricted() ? "Bring your own key: it is stored encrypted on our server and only used to call your provider for you. Only public https model addresses work." : "Keys stay on the server, stored encrypted."}</div><div class="field-label">Model</div><select id="mModel"></select><div class="field-hint" id="mMsg"></div>`;
   const sh = sheet("Model and API key", wrap, [btn("Close", "", () => { sh.close(); refreshModel(); })]);
   const sp = wrap.querySelector("#mProv"), sm = wrap.querySelector("#mModel"), msg = wrap.querySelector("#mMsg");
+  if (restricted()) prov.providers = prov.providers.filter(p => !p.local && p.id !== "claude-code" && !/^(ollama|lmstudio|llamacpp|vllm|sglang|claude-code)$/.test(p.id));
   prov.providers.forEach(p => sp.insertAdjacentHTML("beforeend", `<option value="${esc(p.id)}" ${p.id === prov.current ? "selected" : ""}>${esc(p.name)}${p.has_key ? " ✓" : ""}</option>`));
   if (!prov.current) sp.insertAdjacentHTML("afterbegin", '<option value="" selected>Choose…</option>');
   async function models() {
@@ -552,23 +593,25 @@ async function showScheduled() {
 }
 
 /* ---------- settings: a list of pages, each with a Back button ---------- */
-const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How ZO-AI talks to you."], ["memory", "Memory", "What ZO-AI remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."], ["apps", "Connected apps", "Tools ZO-AI can use (MCP servers)."], ["machines", "Machines", "Computers ZO-AI can reach over SSH."], ["sync", "Web sync", "How the desktop app and this page share chats and memory."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
+const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How ZO-AI talks to you."], ["memory", "Memory", "What ZO-AI remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."], ["apps", "Connected apps", "Tools ZO-AI can use (MCP servers)."], ["machines", "Machines", "Computers ZO-AI can reach over SSH."], ["sync", "Desktop sync", "Share chats and memory with the desktop app."], ["account", "Account", "Your data, devices, export and delete."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
+const pages = () => PAGES.filter(p => !(restricted() && ADMIN_PAGES.includes(p[0])));
 function row(title, sub, control) { const r = document.createElement("div"); r.className = "settings-row"; r.innerHTML = `<div class="col"><div class="pc-name2"></div>${sub ? '<div class="pc-meta2"></div>' : ""}</div>`; r.querySelector(".pc-name2").textContent = title; if (sub) r.querySelector(".pc-meta2").textContent = sub; if (control) r.appendChild(control); return r; }
 function cardOf(...rows) { const c = document.createElement("div"); c.className = "settings-card"; rows.forEach(r => c.appendChild(r)); return c; }
 function head(t) { const h = document.createElement("div"); h.className = "settings-head"; h.textContent = t; return h; }
 
 function settingsHome() {
   setNav("settings"); setTitle("Settings"); const b = pageBox("Settings", null, true); const c = document.createElement("div"); c.className = "settings-card";
-  PAGES.forEach(([id, name, sub]) => { const arrow = btn("Open  ›", "", null); arrow.style.pointerEvents = "none"; const r = row(name, sub, arrow); r.classList.add("click"); r.onclick = () => settingsPage(id); c.appendChild(r); });
+  pages().forEach(([id, name, sub]) => { const arrow = btn("Open  ›", "", null); arrow.style.pointerEvents = "none"; const r = row(name, sub, arrow); r.classList.add("click"); r.onclick = () => settingsPage(id); c.appendChild(r); });
   b.appendChild(c);
 }
 async function settingsPage(id) {
+  if (!pages().some(p => p[0] === id)) id = "model";
   setNav("settings"); const name = PAGES.find(p => p[0] === id)[1]; setTitle("Settings");
   const bk = document.createElement("button"); bk.className = "back"; bk.textContent = "‹ Settings"; bk.onclick = settingsHome;
   view().style.overflow = ""; view().innerHTML = `<div class="pagebox narrow"><div class="page-head" id="ph" style="gap:10px"></div><div id="pbody"></div></div>`;
   $("ph").appendChild(bk); $("ph").insertAdjacentHTML("beforeend", '<div class="page-title"></div>'); $("ph").querySelector(".page-title").textContent = name;
   const b = $("pbody"); b.innerHTML = '<div class="pc-meta">Loading…</div>';
-  try { await ({ model: pageModel, personality: pagePersonality, memory: pageMemory, general: pageGeneral, apps: pageApps, machines: pageMachines, sync: pageSync, data: pageData, about: pageAbout })[id](b); } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
+  try { await ({ model: pageModel, personality: pagePersonality, memory: pageMemory, general: pageGeneral, apps: pageApps, machines: pageMachines, sync: pageSync, account: pageAccount, data: pageData, about: pageAbout })[id](b); } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
 }
 async function pageModel(b) {
   const [s, prof] = await Promise.all([op("status"), op("profiles")]); b.innerHTML = "";
@@ -631,8 +674,8 @@ async function pageGeneral(b) {
   b.appendChild(head("Appearance"));
   b.appendChild(cardOf(row("Theme", "Light or dark, or the same as the rest of the system.", th)));
   b.appendChild(head("Permissions"));
-  const pm = document.createElement("select"); pm.style.width = "140px"; ["Manual", "Auto", "Bypass"].forEach(v => pm.insertAdjacentHTML("beforeend", `<option ${m.mode === v ? "selected" : ""}>${v}</option>`)); pm.onchange = async () => { await op("mode", { set: pm.value }); mode = pm.value; };
-  b.appendChild(cardOf(row("Permission mode", "Manual asks before every change and command. Auto lets looking around run and asks before changes. Bypass never asks. The same rule applies to every app connected to ZO-AI.", pm)));
+  const pm = document.createElement("select"); pm.style.width = "140px"; modes().forEach(v => pm.insertAdjacentHTML("beforeend", `<option ${m.mode === v ? "selected" : ""}>${v}</option>`)); pm.onchange = async () => { await op("mode", { set: pm.value }); mode = pm.value; };
+  b.appendChild(cardOf(row("Permission mode", (restricted() ? "Manual asks before every step. Auto lets looking around run and asks before changes." : "Manual asks before every change and command. Auto lets looking around run and asks before changes. Bypass never asks. The same rule applies to every app connected to ZO-AI."), pm)));
 }
 async function pageApps(b) {
   const r = await op("mcp_list"); b.innerHTML = "";
@@ -669,12 +712,65 @@ async function pageSync(b) {
   const [m, st] = await Promise.all([api("/api/sync/manifest", {}), op("sync_status").catch(() => null)]); b.innerHTML = "";
   const n = k => Object.keys(m[k] || {}).length;
   const newest = Math.max(0, ...["chats", "memory", "personalities"].flatMap(k => Object.values(m[k] || {}).map(Number)));
-  b.appendChild(head("Web sync"));
+  b.appendChild(head("Desktop sync"));
   b.appendChild(cardOf(
-    row("This server holds", `${n("chats")} chat${n("chats") == 1 ? "" : "s"}, ${n("memory")} memory item${n("memory") == 1 ? "" : "s"} and ${n("personalities")} personalit${n("personalities") == 1 ? "y" : "ies"}. Last change: ${ago(newest)}.`),
-    row("Turn it on in the desktop app", "In the desktop app open Settings > Web sync, paste this server's address and the access token, and turn sync on. It keeps chats, memory and personalities the same here and on the computer, and chats made on the computer show up in this page's list within a minute."),
+    row("Stored for you", `${n("chats")} chat${n("chats") == 1 ? "" : "s"}, ${n("memory")} memory item${n("memory") == 1 ? "" : "s"} and ${n("personalities")} personalit${n("personalities") == 1 ? "y" : "ies"}. Last change: ${ago(newest)}.`),
+    row("Turn it on in the desktop app", "First make a device token in Settings > Account (choose Sync a desktop app). Then in the desktop app open Settings > Web sync, paste this server's address and the device token, and turn sync on. It keeps chats, memory and personalities the same here and on the computer, and chats made on the computer show up in this page's list within a minute."),
+    row("Make a device token", "Tokens are made and revoked on the Account page.", btn("Open Account", "primary", () => settingsPage("account"))),
   ));
   if (st && st.enabled) b.appendChild(cardOf(row("This server also syncs out", `To ${st.url}. Last good sync: ${ago(st.last_ok)}.${st.error ? " Problem: " + st.error : ""}`)));
+}
+const LIMIT_LABELS = { requests_per_min: ["Requests per minute", 0], requests_per_minute: ["Requests per minute", 0], concurrent_sends: ["Answers at the same time", 0], max_concurrent_sends: ["Answers at the same time", 0], message_chars: ["Longest message (characters)", 0], max_message_chars: ["Longest message (characters)", 0], data_bytes: ["Storage", 1], max_data_bytes: ["Storage", 1], tool_steps: ["Steps per answer", 0], max_tool_steps: ["Steps per answer", 0], answer_secs: ["Longest answer (seconds)", 0], answer_seconds: ["Longest answer (seconds)", 0], max_answer_secs: ["Longest answer (seconds)", 0] };
+const listOf = r => Array.isArray(r) ? r : (r && (r.devices || r.items || r.list)) || [];
+const acctOp = (o, extra = {}) => api("/api/account/" + o, extra);
+async function pageAccount(b) {
+  const [w, dv] = await Promise.all([acctOp("whoami"), acctOp("devices_list").catch(() => ({ devices: [] }))]); acct = w; b.innerHTML = "";
+  b.appendChild(head("You"));
+  const links = document.createElement("div"); links.style.cssText = "display:flex;gap:6px";
+  [["Privacy", "/privacy"], ["Terms", "/terms"]].forEach(([t, h]) => { const a = document.createElement("a"); a.className = "btn"; a.href = h; a.target = "_blank"; a.rel = "noopener"; a.textContent = t; a.style.textDecoration = "none"; links.appendChild(a); });
+  const lim = w.limits && typeof w.limits === "object" ? Object.entries(w.limits) : [];
+  const limText = lim.map(([k, v]) => { const l = LIMIT_LABELS[k]; return (l ? l[0] : k.replace(/_/g, " ")) + ": " + (l && l[1] ? human(v) : v); }).join(" · ");
+  b.appendChild(cardOf(
+    row("Signed in as", (w.email || "") + (w.admin ? " · administrator" : "")),
+    row("Data stored for you", human(w.data_bytes) + (w.limits && (w.limits.data_bytes || w.limits.max_data_bytes) ? " of " + human(w.limits.data_bytes || w.limits.max_data_bytes) : "") + ". Chats, memory and personalities."),
+    ...(limText ? [row("Limits", limText)] : []),
+    row("Legal", "What is stored, where, and who can see it.", links)));
+  b.appendChild(head("Devices"));
+  const mk = btn("Create device token…", "primary", () => deviceSheet(b));
+  const devs = listOf(dv).map(d => { const rv = btn("Revoke", "danger", () => confirmBox("Revoke " + (d.name || "this device") + "?", "The device can no longer sign in with its token. Chats already synced stay.", "Revoke", async () => { try { await acctOp("device_revoke", { id: d.id }); } catch (e) { toast(e.message); } pageAccount(b); }));
+    return row(d.name || "Device", (d.scope === "full" ? "Terminal client (full access)" : "Desktop sync") + " · made " + (d.created ? when(d.created > 1e12 ? d.created : d.created * 1000) : "?") + " · last used " + (d.last_used ? ago(d.last_used > 1e12 ? d.last_used : d.last_used * 1000) : "never"), rv); });
+  b.appendChild(cardOf(...devs, row(devs.length ? "Add another device" : "No devices yet", "A device token lets the desktop app sync your chats, or the zo terminal client talk to your account. It replaces any shared password.", mk)));
+  b.appendChild(head("Your data"));
+  const ex = btn("Export my data", "", async () => { ex.disabled = true; try { const j = await acctOp("export"); delete j.ok; const u = URL.createObjectURL(new Blob([JSON.stringify(j, null, 2)], { type: "application/json" })); const a = document.createElement("a"); a.href = u; a.download = "zo-ai-export-" + new Date().toISOString().slice(0, 10) + ".json"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); toast("Export downloaded"); } catch (e) { toast(e.message); } ex.disabled = false; });
+  const del = btn("Delete my account and all data…", "danger", () => deleteSheet());
+  b.appendChild(cardOf(row("Export my data", "A JSON file with your chats, memory and personalities. API keys are never included.", ex), row("Delete my account and all data", "Removes every chat, memory, file, device and your saved API keys from the server. This cannot be undone.", del)));
+}
+function deviceSheet(b) {
+  const w = document.createElement("div");
+  w.innerHTML = '<div class="field-label">Name</div><input class="field-input" id="dn" maxlength="60" placeholder="My laptop"><div class="field-label">What is it for?</div><select id="ds"><option value="sync">Sync a desktop app</option><option value="full">Terminal client (full access)</option></select><div class="field-hint">Sync can only read and write your chats and memory. Full access can also talk to the assistant on your behalf.</div><div class="field-hint" id="de" style="color:var(--danger)"></div>';
+  const go = btn("Create", "primary", async () => { go.disabled = true; w.querySelector("#de").textContent = "";
+    try { const r = await acctOp("device_create", { name: w.querySelector("#dn").value.trim() || "Device", scope: w.querySelector("#ds").value }); sh.close(); tokenSheet(r.token, b); }
+    catch (e) { w.querySelector("#de").textContent = e.message; go.disabled = false; } });
+  const sh = sheet("Create a device token", w, [btn("Cancel", "", () => sh.close()), go]);
+}
+function tokenSheet(tok, b) {
+  const w = document.createElement("div");
+  w.innerHTML = '<div class="warn"><b>Copy this token now.</b> It is shown only once and cannot be shown again. Anyone who has it can use your account from that device. If you lose it, revoke it and make a new one.</div><div class="field-label">Your token</div><div class="field-input tokbox" id="tk"></div>';
+  w.querySelector("#tk").textContent = tok || "";
+  const cp = btn("Copy", "primary", async () => { try { await navigator.clipboard.writeText(tok); cp.textContent = "Copied"; } catch { const r = document.createRange(); r.selectNodeContents(w.querySelector("#tk")); getSelection().removeAllRanges(); getSelection().addRange(r); toast("Press Ctrl+C to copy"); } });
+  const done = btn("I saved it", "", () => { sh.close(); pageAccount(b); });
+  const sh = sheet("Your device token", w, [cp, done]);
+  sh.el.onmousedown = null; sh.el.querySelector("[data-x]").onclick = () => { sh.close(); pageAccount(b); };
+}
+function deleteSheet() {
+  const w = document.createElement("div");
+  w.innerHTML = '<div class="warn">This removes <b>all</b> your chats, memory, files, devices and saved API keys from the server, and your place in this service. It cannot be undone. Export first if you want a copy.</div><div class="field-label">Type DELETE to confirm</div><input class="field-input" id="dc" autocomplete="off" spellcheck="false"><div class="field-hint" id="de" style="color:var(--danger)"></div>';
+  const go = btn("Delete everything", "primary", async () => { go.disabled = true;
+    try { await acctOp("delete", { confirm: "DELETE" }); try { localStorage.removeItem("zo-consent:" + uid); } catch {} sh.close(); toast("Your account and data were deleted."); acct = null; if (NOAUTH) setTimeout(() => location.reload(), 900); else await signOut(auth); }
+    catch (e) { w.querySelector("#de").textContent = e.message; go.disabled = false; } });
+  go.style.cssText = "background:#E5484D;border-color:#E5484D;color:#fff"; go.disabled = true;
+  const sh = sheet("Delete my account", w, [btn("Cancel", "", () => sh.close()), go]);
+  w.querySelector("#dc").oninput = e => { go.disabled = e.target.value !== "DELETE"; };
 }
 async function pageData(b) {
   const r = await op("chats"); b.innerHTML = "";
@@ -700,13 +796,27 @@ $("signin").onclick = async () => {
   $("err").textContent = "";
   try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { $("err").textContent = e.code === "auth/unauthorized-domain" ? "This web address is not allowed in Firebase yet (Authentication > Settings > Authorized domains)." : e.message; }
 };
+$("consentMark").innerHTML = MARK;
+const consentKey = () => "zo-consent:" + uid;
+const consented = () => { try { return localStorage.getItem(consentKey()) === "1"; } catch { return false; } };
+function showConsent(u) {
+  $("login").classList.add("hide"); $("app").classList.add("hide"); $("consent").classList.remove("hide");
+  const cb = $("agree"), go = $("consentGo"); cb.checked = false; go.disabled = true;
+  cb.onchange = () => { go.disabled = !cb.checked; };
+  go.onclick = () => { if (!cb.checked) return; try { localStorage.setItem(consentKey(), "1"); } catch {} $("consent").classList.add("hide"); start(u, true); };
+  $("consentOut").onclick = () => NOAUTH ? location.reload() : signOut(auth);
+}
 let started = false;
-async function start(u) {
-  $("login").classList.add("hide"); $("app").classList.remove("hide");
+async function start(u, agreed) {
+  uid = u ? u.uid : "test";
+  if (!agreed && !consented()) return showConsent(u);
+  $("consent").classList.add("hide"); $("login").classList.add("hide"); $("app").classList.remove("hide");
   const name = u ? (u.displayName || u.email || "") : "test"; $("uname").textContent = name; $("avatar").textContent = (name[0] || "Z").toUpperCase();
   if (innerWidth <= 860) $("side").classList.remove("open");
   paint(); 
   /* only a refusal (401) signs the person out: a network error or a 5xx while the server restarts keeps the page, and the banner says Offline */
+  try { acct = await acctOp("whoami"); } catch (e) { acct = null; }
+  document.querySelectorAll('[data-nav="projects"],[data-nav="artifacts"],[data-nav="scheduled"]').forEach(n => n.classList.toggle("hide", restricted()));
   try { await op("status"); } catch (e) { if (!NOAUTH && e.status === 401) { $("app").classList.add("hide"); $("login").classList.remove("hide"); $("err").textContent = e.message; signOut(auth); return; } }
   showHome(); refreshChats();
   /* chats made on the computer appear here: refresh when the tab comes back, and once a minute */
@@ -716,7 +826,7 @@ async function start(u) {
 }
 paint();
 if (NOAUTH) start(null);
-else onAuthStateChanged(auth, u => { if (u) start(u); else { $("app").classList.add("hide"); $("login").classList.remove("hide"); } });
+else onAuthStateChanged(auth, u => { if (u) start(u); else { acct = null; uid = ""; $("app").classList.add("hide"); $("consent").classList.add("hide"); $("login").classList.remove("hide"); } });
 </script>
 </body>
 </html>
