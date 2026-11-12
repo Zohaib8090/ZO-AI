@@ -51,9 +51,43 @@ fn take(name: &str) -> Option<String> {
     v
 }
 
-/// Reads the three secret variables and removes them from the environment. Call it first thing in `main`.
+/// The secrets as the Docker entrypoint (`zo-entrypoint.sh`) hands them over: lines `NAME=base64(value)` on the file descriptor named
+/// by `ZO_SECRETS_FD`. They never sit in the environment of tini (process 1, the same user as this server), whose
+/// `/proc/1/environ` an admin's shell could otherwise read. Returns the decoded values; empty when there is no such descriptor.
+fn from_fd() -> std::collections::HashMap<String, String> {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    let fd = std::env::var("ZO_SECRETS_FD").ok().and_then(|v| v.trim().parse::<i32>().ok()).filter(|n| *n >= 3);
+    wipe("ZO_SECRETS_FD");
+    let Some(fd) = fd else { return Default::default() };
+    // SAFETY: the entrypoint opened this descriptor for us and nothing else in this process uses it; it is closed when `f` is dropped.
+    let mut f = unsafe { std::fs::File::from_raw_fd(fd) };
+    let mut text = String::new();
+    let _ = f.read_to_string(&mut text);
+    parse_fd_text(&text)
+}
+
+fn parse_fd_text(text: &str) -> std::collections::HashMap<String, String> {
+    use base64::Engine;
+    text.lines()
+        .filter_map(|l| {
+            let (name, b64) = l.split_once('=')?;
+            let v = base64::engine::general_purpose::STANDARD.decode(b64.trim()).ok()?;
+            let v = String::from_utf8(v).ok()?.trim().to_string();
+            (!v.is_empty()).then(|| (name.trim().to_string(), v))
+        })
+        .collect()
+}
+
+/// Reads the three secret variables (from the entrypoint's descriptor, else from the environment) and removes them from the
+/// environment. Call it first thing in `main`.
 pub fn take_secrets() -> Secrets {
-    Secrets { firebase: take(SECRET_VARS[0]), server_secret: take(SECRET_VARS[1]), claude_token: take(SECRET_VARS[2]) }
+    let mut fd = from_fd();
+    let mut get = |name: &str| {
+        let env = take(name);
+        fd.remove(name).or(env)
+    };
+    Secrets { firebase: get(SECRET_VARS[0]), server_secret: get(SECRET_VARS[1]), claude_token: get(SECRET_VARS[2]) }
 }
 
 #[cfg(test)]
@@ -79,6 +113,17 @@ mod tests {
         report += "\n===SELF===\n";
         report += &String::from_utf8_lossy(&std::fs::read("/proc/self/environ").unwrap()).replace('\0', "\n");
         std::fs::write(out, report).unwrap();
+    }
+
+    #[test]
+    fn the_entrypoints_lines_are_decoded() {
+        use base64::Engine;
+        let b = |v: &str| base64::engine::general_purpose::STANDARD.encode(v);
+        let text = format!("FIREBASE_SERVICE_ACCOUNT={}\nZO_SERVER_SECRET={}\nCLAUDE_CODE_OAUTH_TOKEN=\n", b("{\n \"a\": 1\n}"), b("s3cret"));
+        let m = parse_fd_text(&text);
+        assert_eq!(m["FIREBASE_SERVICE_ACCOUNT"], "{\n \"a\": 1\n}");
+        assert_eq!(m["ZO_SERVER_SECRET"], "s3cret");
+        assert!(!m.contains_key("CLAUDE_CODE_OAUTH_TOKEN"), "an empty value is no value");
     }
 
     #[test]

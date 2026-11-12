@@ -99,7 +99,10 @@ pub fn key_id(sel: &Selection, provider_id: &str) -> String {
 
 /// The key to use: the chosen profile's, and if that profile has none yet, the provider's shared one.
 pub fn get_key(sel: &Selection, provider_id: &str) -> Option<String> {
-    keys::get(&key_id(sel, provider_id)).or_else(|| if sel.profile.is_some() { keys::get(provider_id) } else { None })
+    // the shared key of the provider only goes to the provider's own address: a profile (which can arrive by sync) that points
+    // somewhere else must have a key of its own
+    let shared_ok = sel.profile.is_some() && super::providers::find(provider_id).is_some_and(|p| p.key_fits(&sel.base_url_for(p)));
+    keys::get(&key_id(sel, provider_id)).or_else(|| if shared_ok { keys::get(provider_id) } else { None })
 }
 
 /// Does this profile (or, without one, this provider) have a key of its own?

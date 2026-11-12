@@ -33,6 +33,7 @@ const MAP: &[(&str, &str)] = &[
     ("#FFFFFF", "#000000"),
     ("#5FD4D4", "#1FA5A5"),
     ("#7EE0E0", "#2BB8B8"),
+    ("#7C9EE0", "#2A62C8"),
 ];
 
 /// Colours that look right in both themes.

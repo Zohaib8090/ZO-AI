@@ -431,13 +431,14 @@ pub fn show(ui: &Rc<Ui>) {
         col.append(&cmdl);
         r.append(&col);
         let sw = gtk::Switch::new();
-        sw.set_active(s.enabled);
+        sw.set_active(s.enabled && !s.held);
         sw.set_valign(gtk::Align::Center);
         let name = s.name.clone();
         sw.connect_state_set(move |_, on| {
             let mut all = mcp_client::load_servers();
             if let Some(x) = all.iter_mut().find(|x| x.name == name) {
                 x.enabled = on;
+                x.held = false;
             }
             mcp_client::save_servers(&all);
             gtk::glib::Propagation::Proceed
@@ -1410,6 +1411,7 @@ fn add_server_sheet(ui: &Rc<Ui>) {
                 client_secret: nonempty(&client_secret.text()),
                 callback_port: port.text().trim().parse::<u16>().ok(),
                 scope: nonempty(&scopes.text()),
+                held: false,
                 updated: 0,
             };
             let typed_token = token.text().to_string();

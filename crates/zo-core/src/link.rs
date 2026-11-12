@@ -118,10 +118,17 @@ fn kick() {
 // ---------------------------------------------------------------------------------------------------------------------------
 // the permission cap
 
-/// The mode a web job runs in: what it asked for (else the mode saved on this computer), but never Bypass unless the person
-/// allowed that on this computer. A job that wants Bypass gets Auto.
+/// The mode a web job runs in: what it asked for if that is as strict as or stricter than the mode saved on this computer (else the
+/// saved mode: the web cannot loosen the protection the person set), and never Bypass unless the person allowed that on this
+/// computer. A job that wants Bypass gets Auto.
 pub fn cap_mode(requested: Option<Mode>, saved: Mode, allow_bypass: bool) -> Mode {
-    match requested.unwrap_or(saved) {
+    let m = match requested {
+        Some(r) if strength(r) < strength(saved) => r,
+        // looser than saved only by the person's own opt-in "Allow Bypass mode from the web"
+        Some(Mode::Bypass) if allow_bypass => Mode::Bypass,
+        _ => saved,
+    };
+    match m {
         Mode::Bypass if !allow_bypass => Mode::Auto,
         m => m,
     }
@@ -880,6 +887,9 @@ mod tests {
         assert_eq!(cap_mode(Some(Mode::Bypass), Mode::Auto, true), Mode::Bypass);
         assert_eq!(cap_mode(Some(Mode::Manual), Mode::Auto, false), Mode::Manual, "stricter stays stricter");
         assert_eq!(cap_mode(None, Mode::Manual, false), Mode::Manual);
+        assert_eq!(cap_mode(Some(Mode::Auto), Mode::Manual, false), Mode::Manual, "the web cannot loosen the saved mode");
+        assert_eq!(cap_mode(Some(Mode::Auto), Mode::Manual, true), Mode::Manual);
+        assert_eq!(cap_mode(Some(Mode::Bypass), Mode::Manual, false), Mode::Manual);
     }
 
     #[test]

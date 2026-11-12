@@ -36,9 +36,17 @@ pub struct ServerConfig {
     /// Scopes to ask for at sign-in, instead of the ones the server suggests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
+    /// Arrived from another device by the sync (new, or at a new address) and not yet turned on by the person HERE: it is not
+    /// started, so it cannot connect, get a header or load its tool list into chats on its own. Never synced; the switch clears it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub held: bool,
     /// When a remote server (an address) was added or changed (ms); the sync compares it between computers. Set by `save_servers`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub updated: u64,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -167,6 +175,7 @@ pub fn import_json(text: &str) -> Result<Vec<ServerConfig>, String> {
             client_secret: oauth["clientSecret"].as_str().or_else(|| d["clientSecret"].as_str()).map(str::to_string),
             callback_port: oauth["callbackPort"].as_u64().or_else(|| d["callbackPort"].as_u64()).and_then(|p| u16::try_from(p).ok()),
             scope: oauth["scopes"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" ")).or_else(|| oauth["scope"].as_str().map(str::to_string)),
+            held: false,
             updated: 0,
         })
     };
@@ -565,7 +574,7 @@ impl External {
 
     pub fn start_with(servers: &[ServerConfig]) -> External {
         let mut e = External::default();
-        for cfg in servers.iter().filter(|s| s.enabled) {
+        for cfg in servers.iter().filter(|s| s.enabled && !s.held) {
             match Connection::start(cfg).and_then(|mut c| c.tools().map(|t| (c, t))) {
                 Ok((c, tools)) => {
                     e.tools.extend(tools);
@@ -601,9 +610,12 @@ impl External {
         let (server, name) = (tool.server.clone(), tool.name.clone());
         // a tool that says it only reads is treated like our own reads; everything else of theirs asks first
         let risk = if tool.read_only { Risk::Read } else { Risk::Change };
-        if decide(mode, risk, None) == Decision::Ask && !approver.approve(public_name, &format!("{}\nfrom the MCP server \"{server}\"", mcp::summarize(&name, args))) {
-            audit::log(public_name, args, "denied");
-            return Err("The person did not approve this (or ZO-AI is not running to ask). Nothing was done.".into());
+        if decide(mode, risk, None) == Decision::Ask {
+            let text = format!("{}\nfrom the MCP server \"{server}\"", mcp::approval_text(&name, args)?);
+            if !approver.approve(public_name, &text) {
+                audit::log(public_name, args, "denied");
+                return Err("The person did not approve this (or ZO-AI is not running to ask). Nothing was done.".into());
+            }
         }
         let conn = self.conns.iter_mut().find(|c| c.server == server).ok_or("The server is not running.")?;
         let r = conn.call(&name, args);

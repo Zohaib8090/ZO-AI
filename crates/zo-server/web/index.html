@@ -291,8 +291,11 @@ select optgroup{background:var(--card);color:var(--accent);font-size:11px;font-w
 .side-scrim{display:none}
 @media(hover:none),(max-width:860px){#app.peek:not(.pinned) .side-scrim{display:block;position:fixed;inset:0;z-index:9;background:var(--scrim);animation:scrimin .18s ease-out}}
 @keyframes scrimin{from{opacity:0}to{opacity:1}}
+/* the side dock is a 440px column: beside a pinned sidebar it leaves the chat too narrow below about 1100px, so it floats over the page instead (with a dim backdrop) */
+@media(max-width:1100px){
+  .dock{position:fixed;right:0;top:0;bottom:0;width:min(440px,94vw);z-index:35;box-shadow:0 0 0 100vmax rgba(0,0,0,.35),-8px 0 28px rgba(0,0,0,.5)}
+}
 @media(max-width:860px){
-  .dock{position:fixed;right:0;top:0;bottom:0;width:min(440px,94vw);z-index:35;box-shadow:-8px 0 28px rgba(0,0,0,.5)}
   .sidebar{max-width:86vw}
   .msg-user-wrap{margin-left:40px}
   .pagebox,.pagebox.narrow{padding-left:16px;padding-right:16px}.page-head{margin-top:16px;flex-wrap:wrap}.page-title{font-size:26px}
@@ -564,7 +567,7 @@ const ADMIN_PAGES = ["apps", "machines"];
 const human = n => { n = +n || 0; const u = ["B", "KB", "MB", "GB"]; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + " " + u[i]; };
 const view = () => $("view");
 function setTitle(t) { $("title").textContent = t; }
-function setNav(n) { voiceSpeakStop(); nav = n; document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.nav === n)); markList(); }
+function setNav(n) { voiceSpeakStop(); if (matchMedia("(max-width:1100px)").matches && typeof dockHide === "function") dockHide(); /* a floating dock must not stay over the next page */ nav = n; document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.nav === n)); markList(); }
 
 function greet() {
   const h = new Date().getHours(), part = h < 5 ? "evening" : h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
@@ -842,20 +845,27 @@ const scrollEnd = () => { const s = $("scroller"); if (s) s.scrollTop = s.scroll
 const thread = () => $("thread");
 
 let lastUserMsg = "";
-function retryMessage(node) {
+async function retryMessage(node) {
   if (busy) return toast("Wait for the current answer to finish.");
-  if (node && node.parentNode) node.remove();
-  let retryText = "";
-  const userNodes = [...document.querySelectorAll(".msg-user")];
-  if (userNodes.length) retryText = userNodes[userNodes.length - 1].innerText.trim();
-  else retryText = lastUserMsg;
+  /* the question that belongs to THIS answer: the nearest user message above it (not the last one in the thread) */
+  let w = node && node.previousElementSibling;
+  while (w && !(w.classList && w.classList.contains("msg-user-wrap"))) w = w.previousElementSibling;
+  const q = w && w.querySelector(".msg-user"), retryText = q ? q.innerText.trim() : lastUserMsg;
   if (!retryText) return toast("Nothing to retry.");
-  if ($("text")) {
-    $("text").value = retryText;
-    $("text").style.height = "auto";
-    $("text").style.height = Math.min($("text").scrollHeight, 200) + "px";
-    send();
+  if (!$("text")) return;
+  if (w && chatId && !onDesktop()) {
+    /* ask the server to take that message again: what follows it is kept there as an earlier take, and nothing is added twice */
+    try {
+      const k = [...thread().querySelectorAll(".msg-user-wrap")].indexOf(w);
+      const c = await op("chat", { id: chatId });
+      const users = c.entries.map((e, i) => [e, i]).filter(([e]) => (e.kind || "") === "msg-user");
+      if (k >= 0 && users[k]) { while (w.nextSibling) w.nextSibling.remove(); return send({ reuse: w, reuseText: retryText, edit: users[k][1] }); }
+    } catch {}
   }
+  /* on the computer (or before the chat was saved): the same question is asked again as a new message; the old answer stays above it */
+  if (node && node.classList && node.classList.contains("msg-error") && node.parentNode) node.remove();
+  $("text").value = retryText; $("text").style.height = "auto"; $("text").style.height = Math.min($("text").scrollHeight, 200) + "px";
+  send();
 }
 function addUser(text, att) {
   lastUserMsg = text || lastUserMsg;
@@ -898,9 +908,10 @@ async function openChat(id) {
   scrollEnd(); markList();
 }
 
-async function send() {
+async function send(opts) {
+  const re = opts && opts.reuse ? opts : null; /* a retry of one earlier message (the event of a click is not it) */
   voiceStop(true); voiceSpeakStop();
-  const t = $("text"); const text0 = t.value.trim(); if ((!text0 && !aHas()) || busy) return;
+  const t = $("text"); const text0 = re ? re.reuseText : t.value.trim(); if ((!text0 && !(aHas() && !re)) || busy) return;
   const dsk = onDesktop();
   if (aBusy()) return toast("Still reading your attachments. One moment.");
   if (dsk) { /* look first: if the computer is not there, say so and keep the text */
@@ -908,14 +919,14 @@ async function send() {
     if (!onDesktop()) { $("text")?.focus(); return toast("Back to the cloud: send again."); }
     if (!ok || !devOnline(curDev())) { runPaint(); toast(ok ? "Your computer is not reachable." : "Could not check your computer."); $("text")?.focus(); return; }
   }
-  const taken = aTake(), text = [text0, aLinkText(taken.links)].filter(Boolean).join("\n\n");
+  const taken = re ? { items: [], links: [], attachments: [], meta: [] } : aTake(), text = re ? text0 : [text0, aLinkText(taken.links)].filter(Boolean).join("\n\n");
   if (!$("thread")) showThread("New chat");
   const first = !chatId;
-  t.value = ""; t.style.height = "auto";
-  const bubble = addUser(text, taken.meta); setBusy(true);
+  if (!re) { t.value = ""; t.style.height = "auto"; }
+  const bubble = re ? re.reuse : addUser(text, taken.meta); setBusy(true);
   let ai = null, acc = "", group = null, began = false, gotDone = false;
   try {
-    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId, ...(dsk ? { target: "desktop", device: runOn } : {}), ...(taken.attachments.length ? { attachments: taken.attachments } : {}), ...noteSendExtra() }) });
+    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId, ...(dsk ? { target: "desktop", device: runOn } : {}), ...(taken.attachments.length ? { attachments: taken.attachments } : {}), ...(re ? { edit: re.edit } : {}), ...noteSendExtra() }) });
     if (r.status === 429) { const m = limitMsg(r); toast(m); throw new Error(m); }
     if (!r.ok || !r.body) { let j = {}; try { j = await r.json(); } catch {} throw new Error(j.error || "Error " + r.status); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
@@ -943,7 +954,7 @@ async function send() {
     if (dsk && !gotDone) { addError("The connection to your computer was lost. The task may still be running there: check Running now on your computer."); linkRefresh(); }
   } catch (e) {
     // nothing reached the model: the message and its attachments go back into the box
-    if (!began) { bubble.remove(); /* before the chat began: */ aRestore(taken); if ($("text") && !$("text").value) $("text").value = text0; }
+    if (!began && !re) { bubble.remove(); /* before the chat began: */ aRestore(taken); if ($("text") && !$("text").value) $("text").value = text0; }
     addError(e.message);
   }
   clearWait(); endGroup(group); stream = 0; setBusy(false); $("text")?.focus(); refreshChats(); noteAnswer(chatId, $("title") ? $("title").textContent : "", !!ai);
@@ -1327,10 +1338,12 @@ function aAddLink(raw) {
 async function aTitle(url) {
   if (ATT.previews.has(url)) return;
   ATT.previews.set(url, null);
-  try { const r = await op("link_preview", { url }); ATT.previews.set(url, (r.title || "").trim()); } catch { ATT.previews.set(url, ""); }
+  try { const r = await op("link_preview", { url: aPreviewUrl(url) }); ATT.previews.set(url, (r.title || "").trim()); } catch { ATT.previews.set(url, ""); }
   ATT.items.forEach(i => { if (i.kind === "link" && i.url === url) i.title = ATT.previews.get(url) || ""; }); aRender();
 }
 /* web addresses typed or pasted into the message show as chips too (they stay in the text; the chip's x removes them from it) */
+/* the server visits only the page itself: no query string, no fragment, no user name (those can hold keys and one-time tokens) */
+function aPreviewUrl(url) { try { const u = new URL(url); u.search = ""; u.hash = ""; u.username = ""; u.password = ""; return u.href; } catch { return url; } }
 function aDetected() {
   const t = $("text"); if (!t) return [];
   const found = [], seen = new Set(ATT.items.filter(i => i.kind === "link").map(i => i.url));
@@ -1349,7 +1362,8 @@ function aRemoveFromText(url) {
 let aTimer = 0;
 function aTextChanged() {
   aRender(); clearTimeout(aTimer);
-  aTimer = setTimeout(() => aDetected().forEach(d => { if (!ATT.previews.has(d.url)) aTitle(d.url); }), 900);
+  /* no page is fetched for an address that is only typed or pasted: it might be half typed, or a one-time link, and the server's
+     visit would reach a third party and use it up. The chip shows the host; a title is fetched only for a link the person adds with "Add a link". */
 }
 
 /* ----- the "+" menu, paste, drag and drop ----- */
@@ -1711,58 +1725,53 @@ function dockUpdateTermTarget() {
   if ($("dockTermDot")) $("dockTermDot").style.background = dsk ? "#5FD4D4" : "#4C9AFF";
 }
 
+/* the size of a model's context window in tokens, only for models whose size is known (else 0: the page then shows no percentage) */
+function ctxWindowOf(name) {
+  const m = String(name || "").toLowerCase();
+  if (/gemini-(1\.5|2|3)/.test(m)) return 1000000;
+  if (/gpt-4\.1|gpt-5/.test(m)) return 400000;
+  if (/gpt-4o|gpt-4-turbo|o1|o3|o4/.test(m)) return 128000;
+  if (/claude/.test(m)) return 200000;
+  return 0;
+}
+
 async function renderDockContext() {
   const sc = $("dockCtxScroll");
   if (!sc) return;
   const dsk = onDesktop();
-  let mName = (dsk && dstat && dstat.model) ? dstat.model : (status && status.model ? status.model : "model");
+  const mName = (dsk && dstat && dstat.model) ? dstat.model : (status && status.model ? status.model : "");
   let chatText = "";
-  if (chatId) {
+  /* a chat of the linked computer is not on the cloud server (the link carries no chat reads), so its text comes from what the page shows */
+  if (chatId && !dsk) {
     try { const c = await op("chat", { id: chatId }); if (c && Array.isArray(c.entries)) chatText = c.entries.map(e => e.text || "").join(" "); } catch {}
   }
   if (!chatText && $("thread")) chatText = $("thread").innerText || "";
-  const charCount = chatText.length;
-  const historyTokens = Math.max(0, Math.round(charCount / 3.8));
-  const sysTokens = 2400, toolTokens = 3200;
-  const usedTokens = historyTokens + sysTokens + toolTokens;
-  let windowTokens = 128000;
-  if (/claude|gpt-4o|gemini/i.test(mName)) windowTokens = 200000;
-  if (/gemini-1\.5|gemini-2/i.test(mName)) windowTokens = 1000000;
-  const pct = Math.min(100, Math.max(1, (usedTokens / windowTokens) * 100)).toFixed(1);
-  const sysPct = Math.max(1, (sysTokens / windowTokens) * 100).toFixed(1);
-  const histPct = Math.max(1, (historyTokens / windowTokens) * 100).toFixed(1);
-  const toolPct = Math.max(1, (toolTokens / windowTokens) * 100).toFixed(1);
-  const freeTokens = Math.max(0, windowTokens - usedTokens);
-
+  const historyTokens = Math.max(0, Math.round(chatText.length / 3.8));
+  const windowTokens = ctxWindowOf(mName);
+  const pct = windowTokens ? Math.min(100, (historyTokens / windowTokens) * 100) : 0;
+  const head = windowTokens
+    ? `<span style="font-size:20px;font-weight:600;color:var(--text)">${pct < 0.1 && historyTokens ? "<0.1" : pct.toFixed(1)}% of the chat window</span><span class="pc-meta" style="font-size:12.5px">≈ ${historyTokens.toLocaleString()} / ${windowTokens.toLocaleString()} tokens</span>`
+    : `<span style="font-size:20px;font-weight:600;color:var(--text)">≈ ${historyTokens.toLocaleString()} tokens</span><span class="pc-meta" style="font-size:12.5px">window size of ${esc(mName || "this model")} unknown</span>`;
   sc.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
-      <span style="font-size:20px;font-weight:600;color:var(--text)">${pct}% used</span>
-      <span class="pc-meta" style="font-size:12.5px">≈ ${usedTokens.toLocaleString()} / ${windowTokens.toLocaleString()} tokens</span>
-    </div>
-    <div class="ctx-bar" style="margin:10px 0 14px">
-      <div class="ctx-seg ctx-c0" style="width:${sysPct}%" title="System prompt"></div>
-      <div class="ctx-seg ctx-c1" style="width:${histPct}%" title="Conversation history"></div>
-      <div class="ctx-seg ctx-c2" style="width:${toolPct}%" title="Tool specifications"></div>
-      <div class="ctx-seg ctx-free" style="flex:1" title="Free space"></div>
-    </div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">${head}</div>
+    ${windowTokens ? `<div class="ctx-bar" style="margin:10px 0 14px"><div class="ctx-seg ctx-c1" style="width:${Math.max(0.5, pct).toFixed(1)}%" title="Conversation"></div><div class="ctx-seg ctx-free" style="flex:1" title="Free space"></div></div>` : ""}
     <div class="card" style="padding:10px 14px;margin-bottom:14px">
-      <div class="ctx-row"><span><span class="ctx-dot ctx-c0"></span>System instructions</span><span class="pc-meta">≈ ${sysTokens.toLocaleString()} tokens</span></div>
-      <div class="ctx-row"><span><span class="ctx-dot ctx-c1"></span>Chat history</span><span class="pc-meta">≈ ${historyTokens.toLocaleString()} tokens</span></div>
-      <div class="ctx-row"><span><span class="ctx-dot ctx-c2"></span>Tools & MCP</span><span class="pc-meta">≈ ${toolTokens.toLocaleString()} tokens</span></div>
-      <div class="ctx-row"><span><span class="ctx-dot ctx-free"></span>Free capacity</span><span class="pc-meta">≈ ${freeTokens.toLocaleString()} tokens</span></div>
+      <div class="ctx-row"><span><span class="ctx-dot ctx-c1"></span>This conversation</span><span class="pc-meta">≈ ${historyTokens.toLocaleString()} tokens</span></div>
+      <div class="ctx-row"><span><span class="ctx-dot ctx-free"></span>System instructions, tools and MCP</span><span class="pc-meta">not measured</span></div>
     </div>
-    <div class="field-hint" style="margin-bottom:16px">Sizes are estimated from character count; provider usage may differ slightly based on tokenization.</div>
+    <div class="field-hint" style="margin-bottom:16px">Only the conversation is counted, as its length in characters divided by 3.8 (a rough estimate; the provider's own count differs). The model's instructions and tools are added on top and are not measured here.</div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn" id="dockCtxRefresh" style="padding:6px 12px;font-size:12.5px">Refresh</button>
-      <button class="btn primary" id="dockCtxCompact" style="padding:6px 14px;font-size:12.5px">Compact session</button>
+      <button class="btn primary" id="dockCtxCompact" style="padding:6px 14px;font-size:12.5px"${dsk ? " disabled title=\"Compacting runs where the chat lives: do it on your computer\"" : ""}>Compact session</button>
     </div>
+    ${dsk ? '<div class="field-hint" style="margin-top:8px;text-align:right">This chat is on your computer: compact it there.</div>' : ""}
   `;
 
   const rfBtn = $("dockCtxRefresh");
   if (rfBtn) rfBtn.onclick = () => renderDockContext();
 
   const cpBtn = $("dockCtxCompact");
-  if (cpBtn) {
+  if (cpBtn && !dsk) {
     cpBtn.onclick = async () => {
       cpBtn.disabled = true; cpBtn.textContent = "Summarizing…";
       try {

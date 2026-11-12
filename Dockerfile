@@ -23,8 +23,10 @@ ENV HOME=/home/zo \
 RUN mkdir -p /home/zo/.local/share /home/zo/.config /home/zo/.claude
 WORKDIR /home/zo
 COPY --from=build /src/target/release/zo-server /src/target/release/zo-mcp /usr/local/bin/
+COPY zo-entrypoint.sh /usr/local/bin/zo-entrypoint.sh
 # Render sets PORT and uses healthCheckPath from render.yaml; this line is for running the image anywhere else.
 HEALTHCHECK --interval=60s --timeout=5s --start-period=20s CMD curl -fsS "http://127.0.0.1:${PORT:-8787}/healthz" || exit 1
-# tini is process 1: it passes the stop signal on, so a redeploy ends the server at once.
-ENTRYPOINT ["tini", "--"]
+# tini is process 1: it passes the stop signal on, so a redeploy ends the server at once. The entrypoint script gives the secrets to
+# zo-server through a pipe and starts tini WITHOUT them in its environment (/proc/1/environ is readable by the same user).
+ENTRYPOINT ["sh", "/usr/local/bin/zo-entrypoint.sh"]
 CMD ["zo-server"]

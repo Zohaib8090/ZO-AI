@@ -169,7 +169,7 @@ fn snapshot() -> Snapshot {
     s.mcp = if servers.is_empty() {
         "None set up. Add one in Settings, Connect other apps.".into()
     } else {
-        let on: Vec<String> = servers.iter().filter(|x| x.enabled).map(|x| x.name.clone()).collect();
+        let on: Vec<String> = servers.iter().filter(|x| x.enabled && !x.held).map(|x| x.name.clone()).collect();
         format!("{} set up ({} on): {}", servers.len(), on.len(), servers.iter().map(|x| x.name.as_str()).collect::<Vec<_>>().join(", "))
     };
 

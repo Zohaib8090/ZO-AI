@@ -362,6 +362,12 @@ fn there_is_only_a_limited_number_of_big_message_bodies_at_one_time() {
     drop(held);
     assert_eq!(n.load(Ordering::SeqCst), 0);
     assert!(BigSend::take(&n).is_some());
+    // one person holds at most a few of the places
+    let mine: Vec<_> = (0..MAX_BIG_SENDS_PER_PERSON).map(|_| BigShare::take("big-person-a").expect("a place")).collect();
+    assert!(BigShare::take("big-person-a").is_none());
+    assert!(BigShare::take("big-person-b").is_some(), "another person is not locked out");
+    drop(mine);
+    assert!(BigShare::take("big-person-a").is_some());
 }
 
 #[test]

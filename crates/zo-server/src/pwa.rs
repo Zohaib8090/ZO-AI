@@ -10,14 +10,34 @@ use tiny_http::{Request, Response};
 const INDEX: &str = include_str!("../web/index.html");
 const SW: &str = include_str!("../web/sw.js");
 const MANIFEST: &str = include_str!("../web/manifest.webmanifest");
-const ROBOTS: &str = "User-agent: *\nAllow: /\nSitemap: https://zo-ai-server.onrender.com/sitemap.xml\n";
-const SITEMAP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+/// The address the page files in the repository name (robots.txt, sitemap, canonical, og:url); the server swaps it for its own
+/// address (ZO_PUBLIC_URL / RENDER_EXTERNAL_URL) when that is set, so a move to another host does not leave the old one in every page.
+pub const DEFAULT_BASE: &str = "https://zo-ai-server.onrender.com";
+
+fn base_of(app: &App) -> &str {
+    app.public_url.as_deref().map(|u| u.trim_end_matches('/')).filter(|u| !u.is_empty()).unwrap_or(DEFAULT_BASE)
+}
+
+fn robots(base: &str) -> String {
+    format!("User-agent: *\nAllow: /\nSitemap: {base}/sitemap.xml\n")
+}
+
+fn sitemap(base: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://zo-ai-server.onrender.com/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
-  <url><loc>https://zo-ai-server.onrender.com/privacy</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
-  <url><loc>https://zo-ai-server.onrender.com/terms</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
+  <url><loc>{base}/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>{base}/privacy</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
+  <url><loc>{base}/terms</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
 </urlset>
-"#;
+"#
+    )
+}
+
+/// The app page with this server's own address in its canonical, og: and JSON-LD tags.
+pub fn index_for(app: &App) -> String {
+    INDEX.replace(DEFAULT_BASE, base_of(app))
+}
 
 const ICONS: [(&str, &[u8]); 6] = [
     ("/icons/icon-192.png",    include_bytes!("../web/icons/icon-192.png")),
@@ -51,8 +71,8 @@ pub fn serve(app: &App, req: Request, path: &str) {
     let (body, ctype, cache): (Vec<u8>, &str, &str) = match path {
         "/sw.js"              => (sw_text().as_bytes().to_vec(), "text/javascript; charset=utf-8", "no-cache"),
         "/manifest.webmanifest" => (MANIFEST.as_bytes().to_vec(), "application/manifest+json", "no-cache"),
-        "/robots.txt"         => (ROBOTS.as_bytes().to_vec(), "text/plain; charset=utf-8", "no-cache"),
-        "/sitemap.xml"        => (SITEMAP.as_bytes().to_vec(), "application/xml; charset=utf-8", "public, max-age=3600"),
+        "/robots.txt"         => (robots(base_of(app)).into_bytes(), "text/plain; charset=utf-8", "no-cache"),
+        "/sitemap.xml"        => (sitemap(base_of(app)).into_bytes(), "application/xml; charset=utf-8", "public, max-age=3600"),
         p => match ICONS.iter().find(|(n, _)| *n == p) {
             Some((_, b)) => (b.to_vec(), "image/png", "public, max-age=86400"),
             None => return crate::text(app, req, 404, "not found"),
@@ -89,8 +109,14 @@ mod tests {
 
     #[test]
     fn robots_points_to_sitemap_and_sitemap_has_key_urls() {
-        assert!(ROBOTS.contains("Sitemap:") && ROBOTS.contains("sitemap.xml"));
-        assert!(SITEMAP.contains("<loc>https://zo-ai-server.onrender.com/</loc>"));
-        assert!(SITEMAP.contains("/privacy") && SITEMAP.contains("/terms"));
+        let (r, s) = (robots(DEFAULT_BASE), sitemap(DEFAULT_BASE));
+        assert!(r.contains("Sitemap:") && r.contains("sitemap.xml"));
+        assert!(s.contains("<loc>https://zo-ai-server.onrender.com/</loc>"));
+        assert!(s.contains("/privacy") && s.contains("/terms"));
+        // another host: nothing names the old one
+        let (r, s) = (robots("https://ai.example.org"), sitemap("https://ai.example.org"));
+        assert!(r.contains("https://ai.example.org/sitemap.xml") && !r.contains("onrender") && !s.contains("onrender") && s.contains("https://ai.example.org/terms"));
+        let moved = INDEX.replace(DEFAULT_BASE, "https://ai.example.org");
+        assert!(!moved.contains("onrender.com") && moved.contains("rel=\"canonical\" href=\"https://ai.example.org/\""));
     }
 }

@@ -317,6 +317,8 @@ pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approv
 pub fn run_with(cfg: &Config, history: &mut Vec<Turn>, user: &str, extra: Extra, mode: Mode, approver: &dyn Approver, cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     let restricted = crate::tenant::is_restricted();
     crate::tools::begin_answer();
+    crate::tools::note_attachment(user);
+    crate::tools::note_attachment(&extra.text);
     if restricted {
         if user.chars().count() > crate::tenant::MAX_MESSAGE_CHARS {
             return Err(format!("That message is too long (at most {} characters).", crate::tenant::MAX_MESSAGE_CHARS));

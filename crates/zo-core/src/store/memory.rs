@@ -322,6 +322,18 @@ pub fn system_with(base: &str, query: &str) -> String {
     out
 }
 
+/// `base` followed by the personality only, with NO notes: for a restricted account, whose notes must reach the model only through
+/// `zohara_memory_search` (which closes the web for the rest of the answer; notes placed in the prompt would not).
+pub fn system_without_notes(base: &str) -> String {
+    let mut out = base.to_string();
+    let p = super::personality::instructions();
+    if !p.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&p);
+    }
+    out
+}
+
 /// The personality and the briefing as one piece, for programs that take extra instructions (Claude Code).
 pub fn extras(query: &str) -> String {
     [super::personality::instructions(), briefing(query)].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("\n\n")

@@ -94,7 +94,8 @@ fn parse_item(m: &Value) -> Option<ModelInfo> {
 
 /// Every model the key can see, newest first. Follows the pages of the list.
 pub fn fetch_anthropic(base_url: &str, key: &str) -> Result<Vec<ModelInfo>, String> {
-    let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(8)).timeout(Duration::from_secs(20)).build();
+    // the same agent as every other call that sends a key: for a restricted account only public addresses, and no redirects
+    let agent = super::agent::quick_agent(Duration::from_secs(20));
     let base = base_url.trim_end_matches('/');
     let mut out: Vec<ModelInfo> = Vec::new();
     let mut after: Option<String> = None;

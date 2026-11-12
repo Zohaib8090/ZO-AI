@@ -270,8 +270,11 @@ fn attr(tag: &str, name: &str) -> Option<String> {
 pub fn page_summary(html: &str) -> (String, String) {
     let lower = html.to_ascii_lowercase();
     let (mut og_title, mut og_desc, mut desc) = (None, None, None);
-    for (i, _) in lower.match_indices("<meta") {
-        let Some(end) = html[i..].find('>') else { continue };
+    // a hostile page of thousands of `<meta ` with no `>` must not cost quadratic time: a tag is at most 2000 bytes, and only the
+    // first 300 tags are looked at
+    for (i, _) in lower.match_indices("<meta").take(300) {
+        let window = &html.as_bytes()[i..html.len().min(i + 2000)];
+        let Some(end) = window.iter().position(|b| *b == b'>') else { continue };
         let tag = &html[i..i + end];
         let key = attr(tag, "property").or_else(|| attr(tag, "name")).unwrap_or_default().to_ascii_lowercase();
         let content = attr(tag, "content").map(|c| entities(&c).split_whitespace().collect::<Vec<_>>().join(" ")).filter(|c| !c.is_empty());
@@ -384,6 +387,11 @@ mod tests {
         let (t, d) = page_summary("<title>Only a title</title><meta name=description content=bare>");
         assert_eq!((t.as_str(), d.as_str()), ("Only a title", "bare"));
         assert_eq!(page_summary("no tags at all"), (String::new(), String::new()));
+        // a hostile page: 50 000 unfinished tags and one `>` at the end is cheap to read
+        let hostile = format!("{}>", "<meta ".repeat(50_000));
+        let t0 = std::time::Instant::now();
+        assert_eq!(page_summary(&hostile), (String::new(), String::new()));
+        assert!(t0.elapsed() < Duration::from_secs(1), "{:?}", t0.elapsed());
         assert_eq!(page_summary(&format!("<title>{}</title>", "x".repeat(500))).0.chars().count(), 160);
     }
 

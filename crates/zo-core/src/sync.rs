@@ -109,6 +109,9 @@ pub fn plan(local: &Side, remote: &Side) -> Plan {
         let (l, r) = (l.filter(|_| !dead(l)), r.filter(|_| !dead(r)));
         match (l, r) {
             (Some(a), Some(b)) if a > b => p.push.push(k.clone()),
+            // a key this computer had before times were kept is a working key the person chose: a different one on the server never
+            // replaces it silently (nothing backs the old one up); they set it again here (or clear it) to make the two agree
+            (Some(a), Some(_)) if a == UNKNOWN_TIME && k.starts_with("keys:") => {}
             (Some(a), Some(b)) if b > a => p.pull.push(k.clone()),
             (Some(_), None) => p.push.push(k.clone()),
             (None, Some(_)) => p.pull.push(k.clone()),
@@ -228,7 +231,7 @@ fn local_side_of(kinds: &[&str]) -> Side {
         }
     }
     if want("profiles") {
-        for p in profiles::load() {
+        for p in profiles::load().into_iter().filter(|p| !p.base_url.as_deref().is_some_and(address_carries_secret)) {
             items.insert(key("profiles", &p.id), p.updated.max(UNKNOWN_TIME));
         }
     }
@@ -239,7 +242,7 @@ fn local_side_of(kinds: &[&str]) -> Side {
         }
     }
     if want("mcp") && mcp_here() {
-        for s in mcp_client::load_servers().iter().filter(|s| mcp_client::is_url(&s.command)) {
+        for s in mcp_client::load_servers().iter().filter(|s| mcp_client::is_url(&s.command) && !address_carries_secret(&s.command)) {
             items.insert(key("mcp", &mcp_id(&s.name)), s.updated.max(UNKNOWN_TIME));
         }
     }
@@ -392,7 +395,7 @@ pub fn get_doc(kind: &str, id: &str) -> Option<Value> {
         }
         "memory" => memory::load().items.into_iter().find(|i| i.id == id).and_then(|i| serde_json::to_value(i).ok()),
         "personalities" => personality::load().items.into_iter().find(|p| p.id == id).map(|p| json!({"id": p.id, "name": p.name, "prompt": p.prompt, "generated": p.generated})),
-        "profiles" => profiles::load().into_iter().find(|p| p.id == id).map(|mut p| {
+        "profiles" => profiles::load().into_iter().find(|p| p.id == id && !p.base_url.as_deref().is_some_and(address_carries_secret)).map(|mut p| {
             p.updated = p.updated.max(UNKNOWN_TIME);
             serde_json::to_value(p).unwrap_or(Value::Null)
         }),
@@ -402,7 +405,7 @@ pub fn get_doc(kind: &str, id: &str) -> Option<Value> {
         }
         "mcp" if mcp_here() => mcp_client::load_servers()
             .into_iter()
-            .find(|s| mcp_client::is_url(&s.command) && mcp_id(&s.name) == id)
+            .find(|s| mcp_client::is_url(&s.command) && mcp_id(&s.name) == id && !address_carries_secret(&s.command))
             .map(|s| json!({"name": s.name, "address": s.command, "enabled": s.enabled, "updated": s.updated.max(UNKNOWN_TIME)})),
         "keys" if syncable_key_id(id) => crate::ai::keys::get(id).map(|k| json!({"id": id, "key": k, "updated": key_times().get(id).copied().unwrap_or(UNKNOWN_TIME)})),
         _ => None,
@@ -416,6 +419,21 @@ fn local_updated(kind: &str, id: &str) -> Option<u64> {
     local_side_of(&[kind]).items.get(&key(kind, id)).copied()
 }
 
+/// Does this address carry a secret in its path, query or fragment (`?api_key=…`, `?token=…`, `;key=…`)? Such an address is never
+/// synced: what travels is plain text on the server and on the other devices, and "never a token" is the promise.
+fn address_carries_secret(addr: &str) -> bool {
+    let rest = addr.trim().split("://").nth(1).unwrap_or("");
+    let tail = match rest.find(['/', '?', '#']) {
+        Some(i) => rest[i..].to_ascii_lowercase(),
+        None => return false,
+    };
+    const NAMES: &[&str] = &["key", "token", "secret", "auth", "password", "passwd", "pwd", "sig", "signature", "credential", "bearer", "jwt", "session", "sas"];
+    // names of query or matrix parameters (the word before `=`), and a path segment that is a long random-looking string
+    let params = tail.split(['?', '&', ';', '#']).skip(1).filter_map(|kv| kv.split_once('=')).any(|(k, _)| NAMES.iter().any(|n| k.contains(n)));
+    let long_token = tail.split(['/', '?', '&', '#', '=']).any(|seg| seg.len() >= 32 && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') && seg.chars().any(|c| c.is_ascii_digit()));
+    params || long_token
+}
+
 /// A model server address in a profile: http(s), no spaces, at most 500 characters; an account without a computer of its own (a
 /// restricted one) may only name a public https address. Empty is fine (the provider's own).
 fn check_profile_address(base_url: &str) -> Result<(), String> {
@@ -425,6 +443,9 @@ fn check_profile_address(base_url: &str) -> Result<(), String> {
     crate::ai::probe::check_address(base_url)?;
     if crate::tenant::is_restricted() {
         crate::ai::agent::check_restricted_provider(providers::find("custom").ok_or("no custom provider")?, base_url).map_err(|e| format!("{NOT_FOR_ACCOUNT}{e}"))?;
+    }
+    if address_carries_secret(base_url) || base_url.split("://").nth(1).unwrap_or("").split(['/', '?', '#']).next().unwrap_or("").contains('@') {
+        return Err("An address with a user name, password or key inside it is not synced (it would be stored as plain text). Put the key in the profile's key instead.".into());
     }
     Ok(())
 }
@@ -448,6 +469,9 @@ fn check_profile(id: &str, p: &mut profiles::Profile) -> Result<(), String> {
     }
     if let Some(u) = p.base_url.as_deref() {
         check_profile_address(u)?;
+        if !prov.key_fits(u) {
+            return Err(format!("The profile's address is not {}'s own, so it is not taken in. Use a Custom endpoint for another address.", prov.name));
+        }
         p.base_url = Some(u.trim().to_string()).filter(|u| !u.is_empty());
     }
     Ok(())
@@ -517,8 +541,8 @@ pub fn put_doc(kind: &str, id: &str, doc: &Value) -> Result<bool, String> {
             // a remote server by address only: no program to start, no account or token inside the address
             crate::ai::probe::check_address(&address)?;
             let authority = address.split("://").nth(1).unwrap_or("").split(['/', '?', '#']).next().unwrap_or("");
-            if !mcp_client::is_url(&address) || authority.contains('@') {
-                return Err("A synced MCP server must be a web address without a user name or password.".into());
+            if !mcp_client::is_url(&address) || authority.contains('@') || address_carries_secret(&address) {
+                return Err("A synced MCP server must be a web address without a user name, password or key inside it.".into());
             }
             let up = doc.get("updated").and_then(Value::as_u64).filter(|u| *u > 0).ok_or("The server has no time.")?;
             let enabled = doc.get("enabled").and_then(Value::as_bool).unwrap_or(true);
@@ -609,12 +633,25 @@ pub fn put_doc(kind: &str, id: &str, doc: &Value) -> Result<bool, String> {
                 if !mcp_client::is_url(&x.command) {
                     return Err("A program with that name is already set up here.".into());
                 }
-                // the headers and sign-in details of this computer stay; only the address, the on/off switch and the time come in
                 let keep = x.clone();
-                s = mcp_client::ServerConfig { command: s.command, enabled: s.enabled, updated: s.updated, name: keep.name.clone(), ..keep };
+                if keep.command.trim_end_matches('/') == s.command.trim_end_matches('/') {
+                    // the same server: the headers and sign-in details of this computer stay; the on/off switch and the time come in
+                    s = mcp_client::ServerConfig { command: keep.command.clone(), enabled: s.enabled, updated: s.updated, name: keep.name.clone(), ..keep };
+                } else {
+                    // a new ADDRESS for a server that is set up here: the headers, client secret and saved sign-in were given to the old
+                    // address, so none of them may go to the new one. It comes in without them and held until the person
+                    // turns it on (and signs in again) on this computer.
+                    let name = keep.name.clone();
+                    applying(|| crate::ai::keys::clear(&mcp_client::token_id(&name)));
+                    s = mcp_client::ServerConfig { name, command: s.command, enabled: s.enabled, held: true, updated: s.updated, ..Default::default() };
+                }
                 all.retain(|x| mcp_id(&x.name) != id);
             } else if all.iter().filter(|x| mcp_client::is_url(&x.command)).count() >= MAX_MCP {
                 return Err(format!("There are already {MAX_MCP} MCP servers here."));
+            } else {
+                // a server that arrives from elsewhere does not connect (and does not load its tool list into chats) until the person
+                // turns it on on this computer; what it says about its switch is kept, so the sides still agree
+                s.held = true;
             }
             all.push(s);
             mcp_client::save_servers_as_is(&all);
@@ -1559,6 +1596,31 @@ mod tests {
     // ---- profiles, settings, MCP servers and keys ----
 
     #[test]
+    fn an_address_with_a_secret_inside_is_not_synced() {
+        for bad in ["https://gw.example.com/v1?api_key=SECRET", "https://mcp.example.com/sse?token=abc", "https://x.example.com/v1;key=1", "https://x.example.com/ab12cd34ef56ab12cd34ef56ab12cd34ef56/mcp", "https://x.example.com/v1?x=1#access_token=z"] {
+            assert!(address_carries_secret(bad), "{bad}");
+        }
+        for ok in ["https://api.openai.com/v1", "https://x.example.com/v1?api-version=2024-02-01", "https://mcp.example.com/mcp", "http://127.0.0.1:8000/v1"] {
+            assert!(!address_carries_secret(ok), "{ok}");
+        }
+        assert!(check_profile_address("https://gw.example.com/v1?api_key=SECRET").is_err());
+        assert!(check_profile_address("https://me:pw@gw.example.com/v1").is_err());
+        assert!(put_doc("mcp", "x", &json!({"name": "x", "address": "https://mcp.example.com/sse?token=abc", "updated": 5})).is_err());
+    }
+
+    #[test]
+    fn a_working_key_from_before_times_were_kept_is_never_replaced_silently() {
+        let p = plan(&side(&[("keys:openai", UNKNOWN_TIME)], &[]), &side(&[("keys:openai", 500)], &[]));
+        assert!(p.pull.is_empty() && p.push.is_empty(), "{p:?}");
+        // a key that has a real time still follows the newest edit
+        let p = plan(&side(&[("keys:openai", 400)], &[]), &side(&[("keys:openai", 500)], &[]));
+        assert_eq!(names(&p.pull), ["keys:openai"]);
+        // and a key only the server has is still copied
+        let p = plan(&side(&[], &[]), &side(&[("keys:openai", 500)], &[]));
+        assert_eq!(names(&p.pull), ["keys:openai"]);
+    }
+
+    #[test]
     fn the_new_kinds_plan_like_the_others() {
         // a profile only here is copied, one deleted on the server is deleted here, the newest edit of an MCP server wins
         let p = plan(
@@ -1612,13 +1674,15 @@ mod tests {
     #[test]
     fn a_profile_travels_with_its_pins_and_address_but_never_with_a_key() {
         let (_g, dir) = sandbox("prof");
-        crate::ai::keys::set("openrouter", "sk-or-very-secret-1").unwrap();
-        let mut sel = crate::ai::Selection { provider: "openrouter".into(), model: "x/y".into(), ..Default::default() };
-        sel.base_urls.insert("openrouter".into(), "https://proxy.example.com/v1".into());
+        crate::ai::keys::set("custom", "sk-or-very-secret-1").unwrap();
+        let mut sel = crate::ai::Selection { provider: "custom".into(), model: "x/y".into(), ..Default::default() };
+        sel.base_urls.insert("custom".into(), "https://proxy.example.com/v1".into());
         let p = profiles::create("Work", &sel).unwrap();
         profiles::pin(&p.id, "x/y");
         profiles::pin(&p.id, "x/z");
-        assert!(crate::ai::keys::get(&format!("openrouter@{}", p.id)).is_some(), "the profile has its own copy of the key here");
+        // a profile of a hosted provider that points at another address is not taken in (its key would be sent there)
+        assert!(put_doc("profiles", "evil", &json!({"id": "evil", "name": "Evil", "provider": "openai", "model": "x", "base_url": "https://evil.example/v1", "updated": 5})).unwrap_err().contains("not OpenAI's own"));
+        assert!(crate::ai::keys::get(&format!("custom@{}", p.id)).is_some(), "the profile has its own copy of the key here");
         let doc = get_doc("profiles", &p.id).unwrap();
         assert_eq!((doc["base_url"].as_str(), doc["pinned"].as_array().unwrap().len()), (Some("https://proxy.example.com/v1"), 2));
         assert!(doc["updated"].as_u64().unwrap() > 1);
@@ -1696,18 +1760,28 @@ mod tests {
             assert!(!shown.contains(secret), "{secret} in {shown}");
         }
         assert!(get_doc("mcp", "files").is_none());
-        // the other side's newer edit changes the address and the switch, and the headers of this computer stay
+        // the other side's newer edit changes the switch, and the headers of this computer stay
         let mut newer = doc.clone();
         newer["updated"] = json!(doc["updated"].as_u64().unwrap() + 20);
         newer["enabled"] = json!(false);
-        newer["address"] = json!("https://mcp2.example.com/mcp");
         assert!(put_doc("mcp", "github", &newer).unwrap());
         let now = mcp_client::load_servers();
         let g = now.iter().find(|s| s.name == "github").unwrap();
-        assert!(!g.enabled && g.command == "https://mcp2.example.com/mcp" && g.headers.contains_key("Authorization"));
+        assert!(!g.enabled && g.headers.contains_key("Authorization") && g.client_secret.is_some());
+        // a NEW ADDRESS for that server comes in without the headers, the client secret and the saved sign-in, and switched off
+        let mut moved = doc.clone();
+        moved["updated"] = json!(doc["updated"].as_u64().unwrap() + 40);
+        moved["enabled"] = json!(true);
+        moved["address"] = json!("https://evil.example/mcp");
+        assert!(put_doc("mcp", "github", &moved).unwrap());
+        let now = mcp_client::load_servers();
+        let g = now.iter().find(|s| s.name == "github").unwrap();
+        assert!(g.held && g.command == "https://evil.example/mcp" && g.headers.is_empty() && g.client_secret.is_none() && g.client_id.is_none() && g.env.is_empty());
         // a new one comes in; wrong ones are refused (a program, a user name in the address, a name that is not the id)
         let fresh = json!({"name": "docs", "address": "https://docs.example.com/mcp", "enabled": true, "updated": 5});
         assert!(put_doc("mcp", "docs", &fresh).unwrap());
+        assert!(mcp_client::load_servers().iter().find(|s| s.name == "docs").unwrap().held, "a synced new server is held until the person turns it on here");
+        assert!(mcp_client::External::start_with(&mcp_client::load_servers().into_iter().filter(|s| s.name == "docs").collect::<Vec<_>>()).problems_note().is_none(), "a held server is not even tried");
         for (id, d) in [
             ("run", json!({"name": "run", "address": "npx -y thing", "updated": 5})),
             ("u", json!({"name": "u", "address": "https://me:pw@x.example.com/mcp", "updated": 5})),

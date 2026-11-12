@@ -157,6 +157,33 @@ impl Drop for BigSend<'_> {
     }
 }
 
+/// How many big message bodies one person may have being read at once: one account cannot take all the places of `MAX_BIG_SENDS`.
+const MAX_BIG_SENDS_PER_PERSON: usize = 2;
+static BIG_SENDS_BY_PERSON: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// One person's place among the big message bodies; given back when dropped.
+struct BigShare(String);
+
+impl BigShare {
+    fn take(who: &str) -> Option<BigShare> {
+        let mut all = BIG_SENDS_BY_PERSON.lock().unwrap_or_else(|e| e.into_inner());
+        if all.iter().filter(|w| *w == who).count() >= MAX_BIG_SENDS_PER_PERSON {
+            return None;
+        }
+        all.push(who.to_string());
+        Some(BigShare(who.to_string()))
+    }
+}
+
+impl Drop for BigShare {
+    fn drop(&mut self) {
+        let mut all = BIG_SENDS_BY_PERSON.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = all.iter().position(|w| *w == self.0) {
+            all.remove(i);
+        }
+    }
+}
+
 pub struct App {
     pub no_auth: bool,
     pub noauth_admin: bool,
@@ -574,13 +601,13 @@ fn route(app: Arc<App>, mut req: Request) {
     }
     match (&method, path.as_str()) {
         (Method::Options, _) => return text(&app, req, 204, ""),
-        (Method::Get, "/healthz") => return text(&app, req, 200, "ok"),
+        (Method::Get | Method::Head, "/healthz") => return text(&app, req, 200, "ok"),
         // /device is the approval page: a page of the same app (it works out from the address which screen to show)
-        (Method::Get, "/") | (Method::Get, "/index.html") | (Method::Get, "/device") => return html(&app, req, include_str!("../web/index.html").to_string(), pages::APP_CSP),
+        (Method::Get | Method::Head, "/") | (Method::Get | Method::Head, "/index.html") | (Method::Get | Method::Head, "/device") => return html(&app, req, pwa::index_for(&app), pages::APP_CSP),
         // the installable app: manifest, icons and the service worker (see pwa.rs)
-        (Method::Get, p) if pwa::serves(p) => return pwa::serve(&app, req, p),
+        (Method::Get | Method::Head, p) if pwa::serves(p) => return pwa::serve(&app, req, p),
         // Google Search Console ownership verification file (must stay here permanently)
-        (Method::Get, "/google0dfec91cc0809278.html") => {
+        (Method::Get | Method::Head, "/google0dfec91cc0809278.html") => {
             let r = Response::from_string("google-site-verification: google0dfec91cc0809278.html")
                 .with_header(header("Content-Type", "text/html; charset=utf-8"))
                 .with_header(header("Cache-Control", "no-cache"));
@@ -675,9 +702,12 @@ fn route(app: Arc<App>, mut req: Request) {
     };
     // a message body may be 14 MB and is held in memory while it arrives: only a few big ones at a time (a plain message is small)
     let _big = if r == Route::Send && req.body_length().is_none_or(|n| n > BODY_LIMIT) {
+        let busy = || Fail { status: 429, error: "Too many large messages are being sent right now. Try again in a moment.".into(), retry: Some(5) };
+        // the person's own share first (so one account cannot take every place), then the global one
+        let Some(mine) = BigShare::take(&who.tenant) else { return fail(&app, req, busy()) };
         match BigSend::take(&BIG_SENDS) {
-            Some(g) => Some(g),
-            None => return fail(&app, req, Fail { status: 429, error: "Too many large messages are being sent right now. Try again in a moment.".into(), retry: Some(5) }),
+            Some(g) => Some((mine, g)),
+            None => return fail(&app, req, busy()),
         }
     } else {
         None
@@ -704,7 +734,7 @@ fn route(app: Arc<App>, mut req: Request) {
             link::send_http(&app, req, v, &who)
         }
         Route::Send => send(&app, req, v, lease, tenant),
-        Route::Sync => match sync_api::handle(&path, &v, &tenant) {
+        Route::Sync => match sync_api::handle(&path, &v, &tenant, matches!(who.cred, Cred::Device { scope: Scope::Sync, .. })) {
             Ok(r) => reply(&app, req, 200, r),
             Err(e) => reply(&app, req, 400, json!({"ok": false, "error": e})),
         },

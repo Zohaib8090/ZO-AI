@@ -70,6 +70,24 @@ pub fn all() -> &'static [Provider] {
     ALL
 }
 
+/// The host part of an http(s) address, lowercase, without user name or port (`""` when there is none).
+fn host_of(url: &str) -> String {
+    let rest = url.trim().split("://").nth(1).unwrap_or("");
+    let auth = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let auth = auth.rsplit('@').next().unwrap_or("");
+    let host = if auth.starts_with('[') { auth.split(']').next().unwrap_or("") } else { auth.split(':').next().unwrap_or("") };
+    host.to_ascii_lowercase()
+}
+
+impl Provider {
+    /// May this provider's API key be sent to `base`? Only to the provider's own host: a different address is for a Custom endpoint,
+    /// which has a key of its own. A local server and a custom endpoint may be anywhere (their key is typed for that address).
+    pub fn key_fits(&self, base: &str) -> bool {
+        let base = base.trim();
+        base.is_empty() || self.local || self.id == "custom" || self.protocol == Protocol::ClaudeCode || (!host_of(base).is_empty() && host_of(base) == host_of(self.base_url))
+    }
+}
+
 pub fn find(id: &str) -> Option<&'static Provider> {
     ALL.iter().find(|p| p.id == id)
 }

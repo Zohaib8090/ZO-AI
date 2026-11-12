@@ -18,7 +18,7 @@ Needs a signed-in app. **With the switch off, or signed out, there is no network
 * Jobs are untrusted: id must be `[A-Za-z0-9-_:.]` up to 64; text up to 100 000 characters; attachments at most 20 items / 8 MB; a job whose `age_ms` (or
   `now - created_ms`) is 120 s or more is never run. The request given to the local service is **built from the checked fields**, so a job cannot add a tenant,
   a mode or any other key. Only one web session runs at a time.
-* Permission cap: the mode of a web job is what it asked for (else the mode saved on the computer), but **Bypass becomes Auto** unless "Allow Bypass mode from the
+* Permission cap: the mode of a web job is what it asked for only if that is as strict as or stricter than the mode saved on the computer (the web cannot loosen it; else the saved mode), and **Bypass becomes Auto** unless "Allow Bypass mode from the
   web" is on. The `mode` op can only make the computer stricter, never looser.
 * Approvals: shown on the computer ("A web session wants to: ...", Allow / Deny; the tray asks for attention). The web gets the `approval` event with
   `local:true` and no buttons. With "Answer approvals from the web too" on, the event has `local:false` and `approval_reply` jobs are accepted for that job only.

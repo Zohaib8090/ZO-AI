@@ -257,6 +257,11 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             if tenant::is_restricted() {
                 return Err("Terminal command execution on the cloud server requires an admin account. The web terminal is only for the cloud server of an admin account. To work on your own computer, choose \"My computer\" under the chat box and ask in the chat: your desktop asks you to approve every change.".into());
             }
+            // the same permission rules as every other shell run: this op has no one to ask, so what would ask is refused
+            // (only Bypass, which the admin switched on, or a read-only command in Auto, runs)
+            if crate::policy::decide(Mode::load(), crate::policy::Risk::Shell, Some(cmd)) != crate::policy::Decision::Allow {
+                return Err("This command needs approval, and the web terminal has no one to ask. Only read-only commands run in Auto mode; set the mode to Bypass (as an admin) to run anything, or use \"My computer\" so your desktop asks.".into());
+            }
             let out = match crate::tools::call("zohara_shell", &json!({"cmd": cmd, "timeout": 60})) {
                 Ok(s) => s,
                 Err(e) => e,
@@ -286,7 +291,8 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             let p = providers::find(&pid).ok_or("choose a provider on the computer first")?;
             // an address in the request is tried without being saved (so the form can check it before the person saves)
             let base = req.get("base_url").and_then(Value::as_str).map(str::trim).filter(|u| !u.is_empty()).map(str::to_string).unwrap_or_else(|| sel.base_url_for(p));
-            let key = crate::ai::profiles::get_key(&sel, p.id);
+            // the key only goes to the provider's own address (a different one is tried without it)
+            let key = crate::ai::profiles::get_key(&sel, p.id).filter(|_| p.key_fits(&base));
             let (list, error) = match crate::ai::probe::list(p, &base, key.as_deref()) {
                 Ok(l) => (l, None),
                 Err(e) => (Vec::new(), Some(e)),
@@ -304,7 +310,7 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             let p = providers::find(&pid).ok_or("choose a provider first")?;
             let base = req.get("base_url").and_then(Value::as_str).map(str::trim).filter(|u| !u.is_empty()).map(str::to_string).unwrap_or_else(|| sel.base_url_for(p));
             let model = req.get("model").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| if sel.provider == p.id { sel.model.clone() } else { String::new() });
-            let key = crate::ai::profiles::get_key(&sel, p.id);
+            let key = crate::ai::profiles::get_key(&sel, p.id).filter(|_| p.key_fits(&base));
             // a failed test is still an answer: the form stays, the message says what to fix
             Ok(match crate::ai::probe::test(p, &base, key, &model) {
                 Ok(m) => json!({"works": true, "message": m}),
@@ -329,6 +335,8 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
                 let prov = providers::find(p).ok_or("unknown provider")?;
                 if sel.provider != p {
                     sel.provider = p.to_string();
+                    // the active profile belongs to the old provider: it must not be rewritten into the new one (the desktop does this too)
+                    sel.profile = None;
                     // a new provider starts without the old provider's model
                     sel.model = prov.models.first().map(|m| m.to_string()).unwrap_or_default();
                     sel.effort = None;
@@ -374,6 +382,11 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
         "profile_use" => {
             let id = s(req, "id");
             let p = crate::ai::profiles::load().into_iter().find(|p| p.id == id).ok_or("that profile is gone")?;
+            if let (Some(u), Some(prov)) = (p.base_url.as_deref(), providers::find(&p.provider)) {
+                if !prov.key_fits(u) {
+                    return Err(format!("This profile's address is not {}'s own, so it is not used (its key would be sent there). Use a Custom endpoint.", prov.name));
+                }
+            }
             let mut sel = Selection::load();
             sel.apply_profile(&p);
             sel.profile = Some(p.id.clone());
@@ -543,7 +556,7 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
         }
         "mcp_list" => {
             let all = crate::mcp_client::load_servers();
-            Ok(json!({"servers": all.iter().map(|s| json!({"name": s.name, "command": s.command, "enabled": s.enabled})).collect::<Vec<_>>()}))
+            Ok(json!({"servers": all.iter().map(|s| json!({"name": s.name, "command": s.command, "enabled": s.enabled && !s.held, "held": s.held})).collect::<Vec<_>>()}))
         }
         "mcp_add" => {
             let mut a = json!({"name": s(req, "name"), "address": s(req, "address")});
@@ -569,6 +582,7 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             let mut all = crate::mcp_client::load_servers();
             let x = all.iter_mut().find(|x| x.name == name).ok_or("no such server")?;
             x.enabled = on;
+            x.held = false; // the person's own choice here
             crate::mcp_client::save_servers(&all);
             Ok(json!({}))
         }
@@ -583,6 +597,9 @@ fn check_base_url(p: &providers::Provider, u: &str) -> Result<(), String> {
         return Ok(());
     }
     crate::ai::probe::check_address(u)?;
+    if !p.key_fits(u) {
+        return Err(format!("{} can only be used at its own address (its key would be sent there). For another address choose a Custom endpoint.", p.name));
+    }
     if tenant::is_restricted() {
         crate::ai::agent::check_restricted_provider(p, u)?;
     }
@@ -782,7 +799,9 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
     }
     // a message of only attachments still needs words for the model
     let ask_text = if text.is_empty() { "Please look at what I attached.".to_string() } else { text.clone() };
-    let prompt = crate::store::memory::system_with(agent::system_prompt(), &text);
+    // a restricted account's notes reach the model only through zohara_memory_search, which closes the web for the rest of the answer
+    // (notes placed in the prompt would let a hostile page carry them out through the web tools)
+    let prompt = if restricted { crate::store::memory::system_without_notes(agent::system_prompt()) } else { crate::store::memory::system_with(agent::system_prompt(), &text) };
     let system = if restricted {
         prompt
     } else {
@@ -1261,7 +1280,7 @@ mod tenant_tests {
         let _g = lock();
         let (t, other) = (fresh(true), fresh(true));
         let (url, seen) = fake_model(vec![
-            tool_reply(&[("zohara_web_search", json!({"query": ""})), ("zohara_shell", json!({"cmd": "echo owned"})), ("zohara_memory_save", json!({"text": "The person keeps bees"}))]),
+            tool_reply(&[("zohara_memory_save", json!({"text": "The person keeps bees"})), ("zohara_web_search", json!({"query": ""})), ("zohara_shell", json!({"cmd": "echo owned"}))]),
             chat_reply("Done. I cannot use your computer, but I saved the note."),
         ]);
         use_model(&t, &url);
@@ -1276,7 +1295,7 @@ mod tenant_tests {
         assert_eq!(done("zohara_shell")["ok"], false);
         assert!(done("zohara_shell")["output"].as_str().unwrap().contains("not available"));
         assert!(!r.iter().any(|l| l.to_string().contains("owned") && l["event"] == "tool_done"));
-        assert_eq!(done("zohara_memory_save")["ok"], true);
+        assert_eq!(done("zohara_memory_save")["ok"], true, "saved before the web was touched");
         let seen = seen.join().unwrap();
         let names: Vec<&str> = seen[0]["tools"].as_array().unwrap().iter().map(|x| x["function"]["name"].as_str().unwrap()).collect();
         assert_eq!(names.len(), 5, "{names:?}");
@@ -1679,6 +1698,56 @@ mod tenant_tests {
         let r = ask(json!({"op": "providers"}));
         assert_eq!((find_in(&r, "groq")["hidden"].clone(), find_in(&r, "openai")["hidden"].clone()), (json!(true), json!(false)));
         assert!(ask(json!({"op": "settings_set", "hidden_providers": ["no way"]}))["error"].is_string());
+    }
+
+    #[test]
+    fn the_web_terminal_follows_the_permission_mode_and_a_key_only_goes_to_its_own_address() {
+        let _g = lock();
+        let admin = fresh(false);
+        let ask = |v: Value| talk(with_tenant(v, &admin), true).remove(0);
+        let mark = std::env::temp_dir().join(format!("zo-term-{}", std::process::id()));
+        let _ = std::fs::remove_file(&mark);
+        let cmd = format!("touch {}", mark.display());
+        for m in ["Manual", "Auto"] {
+            ask(json!({"op": "mode", "set": m}));
+            let r = ask(json!({"op": "terminal_run", "cmd": cmd}));
+            assert!(r["error"].as_str().unwrap_or("").contains("needs approval"), "{m}: {r}");
+            assert!(!mark.exists(), "{m}: the command ran without approval");
+        }
+        // a read-only command is fine in Auto; anything runs only in Bypass
+        assert!(ask(json!({"op": "terminal_run", "cmd": "echo hi"}))["output"].as_str().unwrap().contains("hi"));
+        ask(json!({"op": "mode", "set": "Bypass"}));
+        assert!(ask(json!({"op": "terminal_run", "cmd": cmd}))["error"].is_null());
+        assert!(mark.exists());
+        let _ = std::fs::remove_file(&mark);
+        ask(json!({"op": "mode", "set": "Auto"}));
+        // a provider's key is never sent to another address: not saved, not tried with the key, not through a profile
+        crate::tenant::scope(&admin, || crate::ai::keys::set("openai", "sk-real").unwrap());
+        for op in ["select", "profile_update"] {
+            let r = ask(json!({"op": op, "provider": "openai", "id": "x", "base_url": "https://evil.example/v1"}));
+            assert!(r["error"].as_str().unwrap_or("").contains("own address") || r["error"].as_str().unwrap_or("").contains("gone"), "{op}: {r}");
+        }
+        let r = ask(json!({"op": "models", "provider": "openai", "base_url": "http://127.0.0.1:1/v1"}));
+        assert!(r["error"].as_str().is_some_and(|e| !e.contains("sk-real")), "{r}");
+        let p = providers::find("openai").unwrap();
+        assert!(p.key_fits("https://api.openai.com/v1") && p.key_fits("") && !p.key_fits("https://evil.example/v1") && !p.key_fits("https://api.openai.com.evil.example/v1") && !p.key_fits("https://api.openai.com@evil.example/v1"));
+        assert!(providers::find("custom").unwrap().key_fits("https://anything.example/v1"));
+        // a profile that points elsewhere does not get the provider's shared key
+        let mut sel = Selection::load();
+        sel.provider = "openai".into();
+        sel.profile = Some("pz".into());
+        sel.base_urls.insert("openai".into(), "https://evil.example/v1".into());
+        crate::tenant::scope(&admin, || assert_eq!(crate::ai::profiles::get_key(&sel, "openai"), None));
+        sel.base_urls.remove("openai");
+        crate::tenant::scope(&admin, || assert_eq!(crate::ai::profiles::get_key(&sel, "openai").as_deref(), Some("sk-real")));
+        // selecting another provider leaves the active profile alone instead of rewriting it
+        ask(json!({"op": "select", "provider": "custom", "model": "m", "base_url": "http://127.0.0.1:9/v1"}));
+        let id = ask(json!({"op": "profile_create", "name": "Work"}))["id"].as_str().unwrap().to_string();
+        ask(json!({"op": "select", "provider": "ollama", "model": "z"}));
+        let r = ask(json!({"op": "profiles"}));
+        let work = r["profiles"].as_array().unwrap().iter().find(|p| p["id"] == json!(id)).unwrap().clone();
+        assert_eq!((work["provider"].clone(), work["model"].clone()), (json!("custom"), json!("m")), "{r}");
+        assert!(r["active"].is_null(), "{r}");
     }
 
     fn find_in(r: &Value, id: &str) -> Value {
