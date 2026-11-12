@@ -328,6 +328,22 @@ select optgroup{background:var(--card);color:var(--accent);font-size:11px;font-w
 .toast.update .tx{color:var(--dim);font-size:16px;line-height:1}
 .note-list .settings-row{padding:10px 16px}.note-hint{font-size:13px;color:var(--dim);padding:12px 16px;line-height:1.5}
 /* ---- end notifications and install ---- */
+.skel-wrap{display:flex;flex-direction:column;gap:10px;padding:6px 2px}.skel{height:14px;border-radius:7px;background:linear-gradient(90deg,var(--raise) 25%,var(--hov) 50%,var(--raise) 75%);background-size:200% 100%;animation:shim 1.2s linear infinite}@keyframes shim{to{background-position:-200% 0}}
+.inline{display:flex;gap:8px;align-items:center;margin-top:8px}.inline .field-input{flex:1;min-width:0}.inline .field-hint{margin:0}
+.adv{margin-top:12px}.adv summary{font-size:13px;color:var(--dim);cursor:pointer;padding:2px 0}.adv[open] summary{color:var(--text)}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:99px;background:var(--raise);color:var(--dim);margin-left:6px;vertical-align:middle}.chip.ok{color:#3FB950}.chip.warn{color:var(--danger)}
+.ok{color:#3FB950}.bad{color:var(--danger)}
+.btn.mini{padding:3px 10px;font-size:12px;margin-left:8px}
+.mlist{margin-top:8px;max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--input)}
+.mrow{display:flex;align-items:center;gap:8px;padding:8px 10px 8px 12px;cursor:pointer;border-bottom:1px solid var(--line);font-size:13px}.mrow:last-child{border-bottom:none}.mrow:hover{background:var(--hov)}.mrow.sel{background:var(--hov);box-shadow:inset 3px 0 0 var(--accent)}
+.mname{flex:1;min-width:0;overflow-wrap:anywhere}.mnone{padding:14px;font-size:13px;color:var(--dim)}
+.star{color:var(--dimmer);padding:4px;border-radius:6px;display:flex}.star:hover{color:var(--accent);background:var(--raise)}.star.on{color:var(--accent)}.star.on svg,.chip.pin svg{fill:currentColor}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.chip.pin{margin:0;padding:3px 4px 3px 8px;color:var(--text2)}.chip.pin svg{width:12px;height:12px;color:var(--accent)}.chip.pin button{color:var(--dim);padding:0 5px;font-size:14px;line-height:1}.chip.pin button:hover{color:var(--danger)}
+.acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.note{font-size:12.5px;color:var(--dim);margin:10px 4px 0;line-height:1.5}.note a{color:var(--accent)}
+.pop-group{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--dimmer);padding:8px 10px 2px}.pop-empty{font-size:12.5px;color:var(--dim);padding:10px;max-width:260px}.pop-more{border-top:1px solid var(--line);border-radius:0 0 8px 8px;margin-top:4px}
+.popover .skel-wrap{padding:8px 10px;min-width:220px}
+@media(max-width:700px){.mlist{max-height:200px}.inline{flex-wrap:wrap}}
 </style>
 </head>
 <body>
@@ -466,6 +482,7 @@ const P = {
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/>', speaker: '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11"/>',
   out: '<path d="M14 5h4a1 1 0 011 1v12a1 1 0 01-1 1h-4M10 8l-4 4 4 4M6 12h10"/>', stop: '<rect x="7" y="7" width="10" height="10" rx="2"/>', check: '<path d="M5 12l5 5 9-10"/>', pin: '<path d="M9 4h6l-1 6 3 3H7l3-3-1-6zM12 13v7"/>',
 };
+P.star = '<path d="M12 4l2.4 5 5.4.7-4 3.8 1 5.4L12 16.3 7.2 18.9l1-5.4-4-3.8 5.4-.7z"/>';
 const icon = n => `<svg viewBox="0 0 24 24">${P[n] || ""}</svg>`;
 const MARK = '<circle cx="60" cy="60" r="48" fill="none" stroke="currentColor" stroke-width="8" mask="url(#zoGap)"/><path d="M60 30Q60 60 90 60Q60 60 60 90Q60 60 30 60Q60 60 60 30Z" fill="var(--accent2)" stroke="none"/><path d="M94 14Q94 26 106 26Q94 26 94 38Q94 26 82 26Q94 26 94 14Z" fill="#F2B84B" stroke="none"/>'; // the exact shapes of crates/zo-ai/data/zo-ai-mark.svg
 document.body.insertAdjacentHTML("afterbegin", '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><mask id="zoGap"><rect width="120" height="120" fill="#fff"/><circle cx="94" cy="26" r="16" fill="#000"/></mask></defs></svg>');
@@ -1434,50 +1451,194 @@ function modePopover(a) {
   const p = popover(a, '<div class="pop-head">What ZO-AI may do</div>' + modes().map(m => `<button class="pop-row" data-m="${m}"><div class="c"><div class="pop-title">${m}</div><div class="pop-sub">${info[m]}</div></div><span class="pop-check">${m === curMode() ? icon("check") : ""}</span></button>`).join("") + (onDesktop() ? '<div class="pop-sub" style="padding:4px 10px 8px">Your computer may limit this: web sessions never run on Bypass unless you allowed it there.</div>' : ""));
   p.querySelectorAll("[data-m]").forEach(b => b.onclick = async () => { try { await mop("mode", { set: b.dataset.m }); if (!onDesktop()) mode = b.dataset.m; } catch (e) { toast(e.message); } p.remove(); refreshModel(); });
 }
+/* ---------- model data: small cache so the pickers do not repeat calls ---------- */
+const cache = {}, inflight = {};
+function cached(name, call, force) {
+  const c = cache[name];
+  if (!force && c && Date.now() - c.t < 30000) return Promise.resolve(c.v);
+  if (!force && inflight[name]) return inflight[name];
+  const p = call().then(v => { cache[name] = { t: Date.now(), v }; return v; }).finally(() => { if (inflight[name] === p) delete inflight[name]; });
+  return inflight[name] = p;
+}
+const dropCache = (...n) => n.forEach(k => { delete cache[k]; delete cache["d:" + k]; });
+const getProviders = f => cached((onDesktop() ? "d:" : "") + "providers", () => mop("providers"), f);
+const getProfiles = f => cached((onDesktop() ? "d:" : "") + "profiles", () => mop("profiles"), f);
+const jsGet = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch { return null; } };
+const jsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+/* hidden_providers lives in the synced settings document; if this server does not have the op yet, it is kept in this browser only */
+const getSettings = f => cached("settings", async () => { try { const r = await op("settings_get"); return { hidden_providers: r.hidden_providers || (r.settings && r.settings.hidden_providers) || [], local: false }; } catch (e) { return { hidden_providers: jsGet("zo.hidden") || [], local: true }; } }, f);
+async function setHidden(list) {
+  const cur = await getSettings();
+  if (!cur.local) { try { await op("settings_set", { hidden_providers: list }); dropCache("settings"); return; } catch (e) { if (!/unknown/i.test(e.message)) throw e; } }
+  jsSet("zo.hidden", list); cache.settings = { t: Date.now(), v: { hidden_providers: list, local: true } };
+}
+const isLocalProv = p => p.local || /^(ollama|lmstudio|llamacpp|vllm|sglang|claude-code)$/.test(p.id);
+/* providers that may be offered: restricted people get no local providers and no Claude Code; hidden ones are left out, except the one in use */
+function shownProviders(prov, hidden, keep) {
+  return prov.providers.filter(p => !(restricted() && isLocalProv(p)) && (p.id === keep || !(hidden || []).includes(p.id)));
+}
+function validAddr(u, needs) {
+  u = (u || "").trim();
+  if (!u) return needs ? "Enter the address of the endpoint, for example https://api.example.com/v1" : "";
+  let x; try { x = new URL(u); } catch { return "That does not look like a web address. It should start with https://"; }
+  if (restricted()) {
+    if (x.protocol !== "https:") return "Only https addresses work here.";
+    const h = x.hostname;
+    if (h === "localhost" || h.startsWith("[") || !h.includes(".") || /^(0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) || /\.(local|internal|lan)$/.test(h)) return "Use a public address. Local and private addresses are not allowed on this server.";
+  } else if (!/^https?:$/.test(x.protocol)) return "The address must start with http:// or https://";
+  return "";
+}
+const skel = n => '<div class="skel-wrap">' + Array.from({ length: n || 3 }, (_, i) => `<div class="skel" style="width:${[92, 70, 82, 60][i % 4]}%"></div>`).join("") + "</div>";
+const activePins = prof => { const a = prof.profiles.find(x => x.id === prof.active); return a ? (a.pinned || []) : []; };
+
+/* quick popover: pinned models grouped by profile; one click switches profile and model */
 async function modelPopover(a) {
-  let prof = { profiles: [] }; try { prof = await mop("profiles"); if (!Array.isArray(prof.profiles)) prof.profiles = []; } catch (e) { if (onDesktop()) toast(e.message); }
-  const rows = prof.profiles.map(x => `<button class="pop-row" data-p="${esc(x.id)}"><div class="c"><div class="pop-title">${esc(x.name)}</div><div class="pop-sub">${esc(x.provider)} · ${esc(x.model)}</div></div><span class="pop-check">${prof.active === x.id ? icon("check") : ""}</span></button>`).join("");
-  const p = popover(a, (rows ? '<div class="pop-head">Profiles</div>' + rows : "") + `<button class="pop-row" data-more><div class="c"><div class="pop-title">${onDesktop() ? "Models on your computer…" : "Model and API key…"}</div></div></button>`);
-  p.querySelectorAll("[data-p]").forEach(b => b.onclick = async () => { try { await mop("profile_use", { id: b.dataset.p }); } catch (e) { toast(e.message); } p.remove(); refreshModel(); });
+  const p = popover(a, `<div class="pop-head">Pinned models</div>${skel(3)}`);
+  let prof = { profiles: [] };
+  try { prof = await getProfiles(); } catch {}
+  if (!p.isConnected) return;
+  const groups = prof.profiles.map(x => {
+    const ms = (x.pinned && x.pinned.length) ? x.pinned : (x.model ? [x.model] : []);
+    return `<div class="pop-group">${esc(x.name)}</div>` + ms.map(m => `<button class="pop-row" data-p="${esc(x.id)}" data-m="${esc(m)}"><div class="c"><div class="pop-title">${esc(m)}</div><div class="pop-sub">${esc(x.provider)}</div></div><span class="pop-check">${prof.active === x.id && status.model === m ? icon("check") : ""}</span></button>`).join("");
+  }).join("");
+  p.innerHTML = (groups || '<div class="pop-empty">Nothing pinned yet. Open the full list and tap the star next to a model.</div>') + `<button class="pop-row pop-more" data-more><div class="c"><div class="pop-title">More…</div><div class="pop-sub">All models, API key, address</div></div></button>`;
+  paint(p);
+  p.querySelectorAll("[data-p]").forEach(b => b.onclick = async () => {
+    p.remove();
+    try { await mop("profile_use", { id: b.dataset.p }); await mop("select", { model: b.dataset.m }); dropCache("profiles"); await refreshModel(); }
+    catch (e) { toast(e.message); }
+  });
   p.querySelector("[data-more]").onclick = () => { p.remove(); modelSheet(); };
 }
+
+/* the full sheet: provider, address, key, models with search and pins */
 async function modelSheet() {
-  const dsk = onDesktop(); let prov; try { prov = await mop("providers"); if (!Array.isArray(prov.providers)) prov.providers = []; } catch (e) { return toast(e.message); }
-  let cc = null; if (!dsk && !restricted()) { try { cc = await acctOp("claude_status"); } catch { cc = null; } }
+  const dsk = onDesktop(); /* the computer answers only: providers, models, select, profiles (no address, key, test or pins from the web) */
   const wrap = document.createElement("div");
-  wrap.innerHTML = `<div class="field-label">Provider</div><select id="mProv"></select><div class="field-hint hide" id="mCC"></div><div id="mKeyBox" ${dsk ? "hidden" : ""}><div class="field-label">API key</div><input class="field-input" id="mKey" type="password" placeholder="Paste the key (empty keeps the saved one)" autocomplete="off"><div class="field-hint">${restricted() ? "Bring your own key: it is stored encrypted on our server and only used to call your provider for you. Only public https model addresses work." : "Keys stay on the server, stored encrypted."}</div></div>${dsk ? '<div class="field-hint">This changes the model on your computer. API keys are set in the desktop app, never here.</div>' : ""}<div class="field-label">Model</div><select id="mModel"></select><div class="field-hint" id="mMsg"></div>`;
-  const sh = sheet(dsk ? "Models on your computer" : "Model and API key", wrap, [btn("Close", "", () => { sh.close(); refreshModel(); })]);
-  const sp = wrap.querySelector("#mProv"), sm = wrap.querySelector("#mModel"), msg = wrap.querySelector("#mMsg");
-  if (!dsk && cc && cc.admin) { const h = wrap.querySelector("#mCC"); h.classList.remove("hide"); h.textContent = claudeLine(cc); if (!cc.present) prov.providers = prov.providers.filter(p => p.id !== "claude-code"); }
-  else if (!dsk && !restricted()) prov.providers = prov.providers.filter(p => p.id !== "claude-code");
-  if (!dsk && restricted()) prov.providers = prov.providers.filter(p => !p.local && p.id !== "claude-code" && !/^(ollama|lmstudio|llamacpp|vllm|sglang|claude-code)$/.test(p.id));
-  const majorIds = new Set(["anthropic", "openai", "gemini"]);
-  const localIds = new Set(["ollama", "lmstudio", "llamacpp", "vllm", "sglang"]);
-  const major = [], local = [], cloud = [], custom = [];
-  prov.providers.forEach(p => {
-    if (p.id === "custom") custom.push(p);
-    else if (majorIds.has(p.id)) major.push(p);
-    else if (localIds.has(p.id) || p.local) local.push(p);
-    else cloud.push(p);
-  });
-  const opt = p => `<option value="${esc(p.id)}" ${p.id === prov.current ? "selected" : ""}>${esc(p.name)}${p.has_key ? " ✓" : ""}</option>`;
-  sp.innerHTML = "";
-  if (!prov.current) sp.insertAdjacentHTML("beforeend", '<option value="" selected>Choose a provider…</option>');
-  if (major.length) sp.insertAdjacentHTML("beforeend", `<optgroup label="Popular Providers">${major.map(opt).join("")}</optgroup>`);
-  if (cloud.length) sp.insertAdjacentHTML("beforeend", `<optgroup label="Cloud & Open-Weight">${cloud.map(opt).join("")}</optgroup>`);
-  if (local.length) sp.insertAdjacentHTML("beforeend", `<optgroup label="Local Models (This Computer)">${local.map(opt).join("")}</optgroup>`);
-  if (custom.length) sp.insertAdjacentHTML("beforeend", `<optgroup label="Custom Endpoint">${custom.map(opt).join("")}</optgroup>`);
+  wrap.innerHTML = skel(5);
+  const useBtn = btn("Use this model", "primary", () => use()); useBtn.disabled = true;
+  const sh = sheet(dsk ? "Models on your computer" : "Model and API key", wrap, [btn("Close", "", () => { sh.close(); refreshModel(); }), useBtn]);
+  let prov, prof, st, hidden, cc = null;
+  try {
+    [prov, prof, st] = await Promise.all([getProviders(true), getProfiles(true), mop("status")]);
+    if (!Array.isArray(prov.providers)) prov.providers = []; if (!Array.isArray(prof.profiles)) prof.profiles = [];
+    hidden = dsk ? { hidden_providers: prov.hidden_providers || [] } : await getSettings();
+    if (!dsk && !restricted()) { try { cc = await acctOp("claude_status"); } catch { cc = null; } }
+  } catch (e) { wrap.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; return; }
+  let list = shownProviders(prov, hidden.hidden_providers, prov.current);
+  if (!dsk && !restricted() && !(cc && cc.admin && cc.present)) list = list.filter(p => p.id !== "claude-code");
+  wrap.innerHTML = `<div class="field-label">Provider</div><select id="mProv"></select><div class="field-hint hide" id="mCC"></div>
+    <details class="adv" id="mAdv"${dsk ? " hidden" : ""}><summary id="mAdvT">Advanced: address</summary>
+      <div class="field-label" id="mUrlL" style="margin-top:8px">Address (endpoint URL)</div><input class="field-input" id="mUrl" type="url" inputmode="url" spellcheck="false" autocomplete="off" autocapitalize="off">
+      <div class="field-hint" id="mUrlHint"></div>
+      <div class="inline"><button class="btn" id="mTestB">Test connection</button><span class="field-hint" id="mTest" role="status"></span></div></details>
+    <div id="mKeyBox"${dsk ? " hidden" : ""}><div class="field-label">API key <span class="chip" id="mKeySt"></span></div>
+      <div class="inline"><input class="field-input" id="mKey" type="password" placeholder="Paste the key" autocomplete="off"><button class="btn primary" id="mKeyB">Save</button></div>
+      <div class="field-hint">${restricted() ? "Bring your own key: it is stored encrypted on our server and only used to call your provider for you." : "Keys stay on the server, stored encrypted. Empty keeps the saved one."}</div></div>
+    <div class="field-label">Model <button class="btn mini" id="mFetch">Fetch models</button></div>
+    <input class="field-input" id="mQ" placeholder="Search models" autocomplete="off" spellcheck="false">
+    <div class="mlist" id="mList" role="listbox"></div><div class="field-hint" id="mState" role="status"></div>
+    <div id="mEffBox" class="hide"><div class="field-label">Effort</div><select id="mEff"></select></div>`;
+  const $$ = id => wrap.querySelector("#" + id);
+  const sp = $$("mProv"), url = $$("mUrl");
+  if (cc && cc.admin) { const h = $$("mCC"); h.classList.remove("hide"); h.textContent = claudeLine(cc); }
+  const majorIds = new Set(["anthropic", "openai", "gemini"]), opt = p => `<option value="${esc(p.id)}"${p.id === prov.current ? " selected" : ""}>${esc(p.name)}${p.has_key || p.local ? " ✓" : ""}</option>`;
+  const groups = [["Popular Providers", p => majorIds.has(p.id)], ["Cloud & Open-Weight", p => !majorIds.has(p.id) && p.id !== "custom" && !isLocalProv(p)], ["Local Models (This Computer)", p => p.id !== "custom" && !majorIds.has(p.id) && isLocalProv(p)], ["Custom Endpoint", p => p.id === "custom"]];
   if (!prov.current) sp.insertAdjacentHTML("afterbegin", '<option value="" selected>Choose…</option>');
-  async function models() {
-    if (!sp.value) { sm.innerHTML = ""; return; }
-    sm.innerHTML = "<option>Loading…</option>";
-    try { const r = await mop("models", { provider: sp.value }); sm.innerHTML = ""; (r.models || []).forEach(x => sm.insertAdjacentHTML("beforeend", `<option ${x === r.current ? "selected" : ""}>${esc(x)}</option>`)); if (!(r.models || []).length) sm.innerHTML = dsk ? "<option value=''>No models listed</option>" : "<option value=''>No models: save the key first</option>"; }
-    catch (e) { sm.innerHTML = "<option value=''></option>"; msg.textContent = e.message; }
+  groups.forEach(([lbl, f]) => { const g = list.filter(f); if (g.length) sp.insertAdjacentHTML("beforeend", `<optgroup label="${lbl}">${g.map(opt).join("")}</optgroup>`); });
+  let models = [], chosen = st.model || "", effort = "", loading = false, error = "", seq = 0, dirty = false, filter = "";
+  const cur = () => prov.providers.find(p => p.id === sp.value);
+  const pinned = () => new Set(activePins(prof));
+
+  function setAddrUi() {
+    const p = cur(); const needs = !!(p && p.needs_url);
+    $$("mAdv").open = needs || $$("mAdv").open; $$("mAdvT").textContent = needs ? "Address (endpoint URL)" : "Advanced: address";
+    $$("mAdv").classList.toggle("hide", !p); $$("mUrlL").classList.toggle("hide", needs);
+    $$("mUrlHint").textContent = needs ? "The base address of the service, for example https://api.example.com/v1. " + (restricted() ? "Only public https addresses work here." : "") : (p && p.default_url ? "Leave it as it is to use the normal address: " + p.default_url : "Only change this for a proxy or your own gateway.");
+    url.placeholder = (p && p.default_url) || "https://";
+    $$("mKeyBox").classList.toggle("hide", !p || isLocalProv(p));
+    const has = p && (p.has_key || isLocalProv(p)); const k = $$("mKeySt"); k.textContent = has ? "Key saved" : "No key yet"; k.className = "chip " + (has ? "ok" : "warn");
+    $$("mTest").textContent = ""; $$("mTest").className = "field-hint";
   }
-  sp.onchange = async () => { if (sp.value) { try { await mop("select", { provider: sp.value }); prov.current = sp.value; msg.textContent = ""; models(); } catch (e) { msg.textContent = e.message; } } };
-  sm.onchange = async () => { if (sm.value) { try { await mop("select", { model: sm.value }); msg.textContent = "Model chosen."; } catch (e) { msg.textContent = e.message; } } };
-  wrap.querySelector("#mKey").onchange = async e => { const k = e.target.value.trim(); if (!k || !sp.value) return; try { await op("set_key", { provider: sp.value, key: k }); e.target.value = ""; msg.textContent = "Key saved."; models(); } catch (er) { msg.textContent = er.message; } };
-  models();
+  function renderList() {
+    const box = $$("mList"), q = filter.trim().toLowerCase(), pins = pinned();
+    if (loading) { box.innerHTML = skel(4); $$("mState").innerHTML = '<span class="spin"></span> Fetching the models list…'; return; }
+    let items = models.filter(m => !q || m.toLowerCase().includes(q));
+    items = [...items.filter(m => pins.has(m)), ...items.filter(m => !pins.has(m))];
+    const custom = q && !models.some(m => m.toLowerCase() === q) ? filter.trim() : "";
+    box.innerHTML = items.map(m => `<div class="mrow${m === chosen ? " sel" : ""}" role="option" aria-selected="${m === chosen}" data-m="${esc(m)}"><span class="mname">${esc(m)}</span>${dsk ? "" : `<button class="star${pins.has(m) ? " on" : ""}" data-s="${esc(m)}" title="${pins.has(m) ? "Unpin" : "Pin to the quick list"}" aria-label="Pin ${esc(m)}">${icon("star")}</button>`}</div>`).join("")
+      + (custom ? `<div class="mrow${custom === chosen ? " sel" : ""}" data-m="${esc(custom)}"><span class="mname">Use “${esc(custom)}” as the model name</span></div>` : "");
+    if (!items.length && !custom) box.innerHTML = '<div class="mnone">' + (models.length ? "No model matches your search." : "No models yet.") + "</div>";
+    box.querySelectorAll("[data-m]").forEach(r => r.onclick = e => { if (e.target.closest("[data-s]")) return; chosen = r.dataset.m; renderList(); });
+    box.querySelectorAll("[data-s]").forEach(b => b.onclick = e => { e.stopPropagation(); togglePin(b.dataset.s); });
+    const s = $$("mState"); s.className = "field-hint";
+    if (error) { s.innerHTML = `<span class="bad">${esc(error)}</span> <button class="btn mini" id="mRetry">Try again</button>`; $$("mRetry").onclick = fetchModels; }
+    else s.textContent = models.length ? `${models.length} models. Tap the star to pin one to the quick list.` : "";
+    useBtn.disabled = !chosen || !sp.value;
+  }
+  async function fetchModels() {
+    const p = cur(); if (!p) { models = []; renderList(); return; }
+    const my = ++seq, bad = (dsk ? () => "" : validAddr)(url.value, p.needs_url);
+    if (bad) { models = []; error = bad; loading = false; renderList(); return; }
+    loading = true; error = ""; renderList();
+    try {
+      const r = await mop("models", dsk ? { provider: p.id } : { provider: p.id, base_url: url.value.trim() });
+      if (my !== seq) return;
+      models = r.models || []; error = r.error || "";
+      if (r.base_url && !dirty && !url.value.trim() && p.needs_url) url.value = r.base_url;
+      if (!models.includes(chosen) && !(chosen && !models.length && p.id === prov.current)) chosen = models.includes(r.current) && p.id === prov.current ? r.current : "";
+      effort = r.effort || ""; const eb = $$("mEffBox");
+      eb.classList.toggle("hide", !(r.efforts && r.efforts.length));
+      $$("mEff").innerHTML = '<option value="">Default</option>' + (r.efforts || []).map(x => `<option${x === effort ? " selected" : ""}>${esc(x)}</option>`).join("");
+    } catch (e) { if (my !== seq) return; models = []; error = e.message; }
+    loading = false; renderList();
+  }
+  async function togglePin(m) {
+    const p = cur(); if (!p || dsk) return;
+    try {
+      const ap = prof.profiles.find(x => x.id === prof.active); let id = prof.active, on = !pinned().has(m), note = on ? "Pinned" : "Unpinned";
+      if (on && (!ap || ap.provider !== p.id)) {
+        await op("select", { provider: p.id, model: m, base_url: url.value.trim() });
+        const c = await op("profile_create", { name: p.name }); id = c.id; note = "Pinned to a new profile, " + p.name;
+      }
+      await op("profile_pin", { id, model: m, on });
+      dropCache("profiles"); prof = await getProfiles(true); renderList(); toast(note); refreshModel();
+    } catch (e) { toast(e.message); }
+  }
+  async function use() {
+    const p = cur(); if (!p || !chosen) return;
+    const bad = (dsk ? () => "" : validAddr)(url.value, p.needs_url); if (bad) { $$("mAdv").open = true; return toast(bad); }
+    useBtn.disabled = true;
+    try {
+      const body = { provider: p.id, model: chosen, base_url: url.value.trim() };
+      if (!$$("mEffBox").classList.contains("hide")) body.effort = $$("mEff").value;
+      if (dsk) { delete body.base_url; }
+      await mop("select", body); dropCache("profiles"); sh.close(); await refreshModel(); toast("Using " + chosen);
+    } catch (e) { toast(e.message); useBtn.disabled = false; }
+  }
+  sp.onchange = () => { dirty = false; const p = cur(); url.value = (p && p.id === prov.current && st.base_url) || ""; chosen = p && p.id === prov.current ? st.model || "" : ""; models = []; filter = ""; $$("mQ").value = ""; setAddrUi(); if (p && p.needs_url && !url.value) { error = ""; renderList(); $$("mUrl").focus(); } else fetchModels(); };
+  url.oninput = () => { dirty = true; };
+  url.onchange = () => { const p = cur(); const bad = (dsk ? () => "" : validAddr)(url.value, p && p.needs_url); $$("mUrlHint").textContent = bad; if (!bad) fetchModels(); };
+  $$("mTestB").onclick = async () => {
+    const p = cur(), t = $$("mTest"), b = $$("mTestB"); if (!p) return;
+    const bad = (dsk ? () => "" : validAddr)(url.value, p.needs_url); if (bad) { t.className = "field-hint bad"; t.textContent = bad; return; }
+    b.disabled = true; t.className = "field-hint"; t.innerHTML = '<span class="spin"></span> Testing…';
+    try { const r = await op("model_test", { provider: p.id, base_url: url.value.trim(), model: chosen || undefined }); const good = r.works !== false; t.className = "field-hint " + (good ? "ok" : "bad"); t.textContent = r.message || (good ? "Connected." : "The test failed."); }
+    catch (e) { t.className = "field-hint bad"; t.textContent = /unknown request/i.test(e.message) ? "This server cannot test connections yet." : e.message; }
+    b.disabled = false;
+  };
+  $$("mKeyB").onclick = async () => {
+    const p = cur(), k = $$("mKey").value.trim(); if (!p) return; if (!k) return toast("Paste the key first.");
+    const b = $$("mKeyB"); b.disabled = true;
+    try { await op("set_key", { provider: p.id, key: k }); $$("mKey").value = ""; p.has_key = true; dropCache("providers"); setAddrUi(); toast("Key saved"); fetchModels(); }
+    catch (e) { toast(e.message); }
+    b.disabled = false;
+  };
+  let qt; $$("mQ").oninput = e => { clearTimeout(qt); qt = setTimeout(() => { filter = e.target.value; renderList(); }, 150); };
+  $$("mFetch").onclick = fetchModels;
+  url.value = prov.current ? (st.base_url || "") : "";
+  setAddrUi(); renderList();
+  if (cur()) fetchModels(); else $$("mState").textContent = "Choose a provider to see its models.";
 }
 
 /* ---------- pages ---------- */
@@ -1836,17 +1997,49 @@ async function settingsPage(id) {
   const bk = document.createElement("button"); bk.className = "back"; bk.textContent = "‹ Settings"; bk.onclick = settingsHome;
   view().style.overflow = ""; view().innerHTML = `<div class="pagebox narrow"><div class="page-head" id="ph" style="gap:10px"></div><div id="pbody"></div></div>`;
   $("ph").appendChild(bk); $("ph").insertAdjacentHTML("beforeend", '<div class="page-title"></div>'); $("ph").querySelector(".page-title").textContent = name;
-  const b = $("pbody"); b.innerHTML = '<div class="pc-meta">Loading…</div>';
+  const b = $("pbody"); b.innerHTML = skel(4);
   try { await ({ model: pageModel, personality: pagePersonality, memory: pageMemory, general: pageGeneral, apps: pageApps, machines: pageMachines, sync: pageSync, computers: pageComputers, notifications: pageNotifications, account: pageAccount, data: pageData, about: pageAbout })[id](b); } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
 }
 async function pageModel(b) {
-  const [s, prof] = await Promise.all([op("status"), op("profiles")]); b.innerHTML = "";
-  const change = btn("Change", "", modelSheet);
+  const [s, prof, prov, hid] = await Promise.all([op("status"), getProfiles(true), getProviders(true), getSettings(true)]); b.innerHTML = "";
+  const refresh = () => { dropCache("profiles"); settingsPage("model"); refreshModel(); };
   b.appendChild(head("Model"));
-  b.appendChild(cardOf(row("Provider and model", s.ready ? (s.provider + " · " + (s.model || "no model chosen")) : "Nothing chosen yet", change)));
+  b.appendChild(cardOf(row("Provider and model", s.ready ? (s.provider + " · " + (s.model || "no model chosen")) : "Nothing chosen yet", btn("Change", "primary", modelSheet))));
   b.appendChild(head("Profiles"));
-  const rows = prof.profiles.map(p => { const on = prof.active === p.id; const u = btn(on ? "In use" : "Use", on ? "" : "primary", async () => { await op("profile_use", { id: p.id }); settingsPage("model"); }); u.disabled = on; return row(p.name, p.provider + " · " + p.model, u); });
-  b.appendChild(rows.length ? cardOf(...rows) : cardOf(row("No profiles yet", "A profile is a preset: a provider, a model, its address, how hard it thinks and its own API key. Make several and switch between them here. Profiles made on the computer sync here.")));
+  const rows = prof.profiles.map(p => {
+    const on = prof.active === p.id, c = document.createElement("div"); c.className = "acts";
+    const u = btn(on ? "In use" : "Use", on ? "" : "primary", async () => { try { await op("profile_use", { id: p.id }); refresh(); } catch (e) { toast(e.message); } }); u.disabled = on;
+    const rn = btn("Rename", "", () => { const w = document.createElement("div"); w.innerHTML = '<div class="field-label">Name</div><input class="field-input" maxlength="40">'; const i = w.querySelector("input"); i.value = p.name;
+      const go = btn("Save", "primary", async () => { try { await op("profile_rename", { id: p.id, name: i.value }); dlg.close(); refresh(); } catch (e) { toast(e.message); } }); i.onkeydown = e => { if (e.key === "Enter") go.click(); };
+      const dlg = sheet("Rename profile", w, [btn("Cancel", "", () => dlg.close()), go]); i.focus(); i.select(); });
+    const dl = btn("Delete", "danger", () => confirmBox("Delete " + p.name + "?", "The profile and its pinned models are removed. Chats stay.", "Delete", async () => { try { await op("profile_delete", { id: p.id }); refresh(); } catch (e) { toast(e.message); } }));
+    c.append(u, rn, dl);
+    const r = row(p.name, [p.provider, p.model, p.base_url].filter(Boolean).join(" · "), c);
+    const pins = p.pinned || [];
+    if (pins.length) {
+      const d = document.createElement("div"); d.className = "chips";
+      d.innerHTML = pins.map(m => `<span class="chip pin">${icon("star")}<span>${esc(m)}</span><button data-u="${esc(m)}" aria-label="Unpin ${esc(m)}" title="Unpin">×</button></span>`).join("");
+      d.querySelectorAll("[data-u]").forEach(x => x.onclick = async () => { try { await op("profile_pin", { id: p.id, model: x.dataset.u, on: false }); refresh(); } catch (e) { toast(e.message); } });
+      r.querySelector(".col").appendChild(d);
+    }
+    return r;
+  });
+  const nw = btn("New profile…", "primary", () => { const w = document.createElement("div"); w.innerHTML = '<div class="field-label">Name</div><input class="field-input" maxlength="40" placeholder="Fast, Deep, Work"><div class="field-hint">It starts from the provider and model in use now.</div>'; const i = w.querySelector("input");
+    const go = btn("Create", "primary", async () => { try { await op("profile_create", { name: i.value }); dlg.close(); refresh(); } catch (e) { toast(e.message); } }); i.onkeydown = e => { if (e.key === "Enter") go.click(); };
+    const dlg = sheet("New profile", w, [btn("Cancel", "", () => dlg.close()), go]); i.focus(); });
+  b.appendChild(cardOf(...rows, row(rows.length ? "Add another" : "No profiles yet", "A profile is a preset: a provider, a model, its address, how hard it thinks and the models you pinned. Switch between them in one click from the model button.", nw)));
+  b.insertAdjacentHTML("beforeend", '<div class="note" id="syncNote">Profiles, pinned models and MCP addresses sync from your desktop when you are signed in there. <a href="#" id="toSync">Open Desktop sync</a></div>');
+  $("toSync").onclick = e => { e.preventDefault(); settingsPage("sync"); };
+  b.appendChild(head("Providers shown in the picker"));
+  const hidden = new Set(hid.hidden_providers || []);
+  const provRows = shownProviders(prov, [], null).map(p => {
+    const sw = document.createElement("input"); sw.type = "checkbox"; sw.className = "switch"; sw.checked = !hidden.has(p.id); sw.setAttribute("aria-label", "Show " + p.name);
+    if (p.id === prov.current) { sw.disabled = true; sw.title = "In use"; }
+    sw.onchange = async () => { sw.checked ? hidden.delete(p.id) : hidden.add(p.id); try { await setHidden([...hidden]); toast(sw.checked ? p.name + " shown" : p.name + " hidden"); } catch (e) { sw.checked = !sw.checked; sw.checked ? hidden.delete(p.id) : hidden.add(p.id); toast(e.message); } };
+    return row(p.name, p.id === prov.current ? "In use, always shown" : (p.has_key || p.local ? "Key saved" : "No key yet"), sw);
+  });
+  b.appendChild(cardOf(...provRows));
+  b.insertAdjacentHTML("beforeend", `<div class="note">Hidden providers stay out of the model list. ${hid.local ? "On this server the choice is kept in this browser only." : "The choice syncs with your other devices."}</div>`);
   await claudeCard(b);
 }
 async function pagePersonality(b) {
@@ -1910,10 +2103,33 @@ async function pageGeneral(b) {
   const vh = document.createElement("div"); vh.className = "field-hint"; vh.textContent = "In Chrome and Edge your voice goes to the browser maker's speech service for recognition, not to ZO-AI's server. ZO-AI only receives the text you send."; b.appendChild(vh);
 }
 async function pageApps(b) {
+  if (restricted()) { b.innerHTML = `<div class="msg-error">Connected apps are not available on this account.</div>`; return; }
   const r = await op("mcp_list"); b.innerHTML = "";
+  const redo = () => pageApps(b);
+  const add = btn("Add server…", "primary", () => {
+    const w = document.createElement("div"); w.innerHTML = '<div class="field-label">Name</div><input class="field-input" id="an" placeholder="notes" autocomplete="off"><div class="field-label">Address</div><input class="field-input" id="aa" type="url" placeholder="https://example.com/mcp" autocomplete="off" spellcheck="false"><div class="field-label">Token (optional)</div><input class="field-input" id="at" type="password" autocomplete="off"><div class="field-hint" id="ae">Only servers with a web address. The token is stored on the server and never shown again.</div>';
+    const q = i => w.querySelector("#" + i);
+    const go = btn("Add", "primary", async () => {
+      if (!q("an").value.trim() || !/^https?:\/\//i.test(q("aa").value.trim())) { q("ae").className = "field-hint bad"; q("ae").textContent = "Give it a name and an address that starts with https://"; return; }
+      go.disabled = true; try { const x = await op("mcp_add", { name: q("an").value.trim(), address: q("aa").value.trim(), token: q("at").value.trim() || undefined }); dlg.close(); toast(x.message || "Added"); redo(); } catch (e) { q("ae").className = "field-hint bad"; q("ae").textContent = e.message; go.disabled = false; } });
+    const dlg = sheet("Add a server", w, [btn("Cancel", "", () => dlg.close()), go]); q("an").focus(); });
+  const paste = btn("Paste a config…", "", () => {
+    const w = document.createElement("div"); w.innerHTML = '<div class="field-label">Config (JSON)</div><textarea class="field-input" rows="8" spellcheck="false" placeholder=\'{"mcpServers": {"name": {"url": "https://…"}}}\'></textarea><div class="field-hint" id="pe">The same format other apps use. Servers that start a program (command) are skipped: they stay on the desktop.</div>'; const t = w.querySelector("textarea");
+    const go = btn("Import", "primary", async () => { go.disabled = true; try { const x = await op("mcp_import", { config: t.value }); dlg.close(); toast(x.message || "Imported"); redo(); } catch (e) { w.querySelector("#pe").className = "field-hint bad"; w.querySelector("#pe").textContent = e.message; go.disabled = false; } });
+    const dlg = sheet("Paste a config", w, [btn("Cancel", "", () => dlg.close()), go]); t.focus(); });
+  const acts = document.createElement("div"); acts.className = "acts"; acts.append(add, paste);
   b.appendChild(head("MCP servers ZO-AI can use"));
-  if (!r.servers.length) return b.appendChild(cardOf(row("No servers yet", "Add MCP servers on the computer; they sync here.")));
-  b.appendChild(cardOf(...r.servers.map(s => { const sw = document.createElement("input"); sw.type = "checkbox"; sw.className = "switch"; sw.checked = s.enabled; sw.onchange = () => op("mcp_toggle", { name: s.name, enabled: sw.checked }); return row(s.name, s.command, sw); })));
+  const rows = r.servers.map(s => {
+    const c = document.createElement("div"); c.className = "acts";
+    const sw = document.createElement("input"); sw.type = "checkbox"; sw.className = "switch"; sw.checked = s.enabled; sw.setAttribute("aria-label", "Enable " + s.name);
+    sw.onchange = async () => { try { await op("mcp_toggle", { name: s.name, enabled: sw.checked }); toast(s.name + (sw.checked ? " on" : " off")); } catch (e) { sw.checked = !sw.checked; toast(e.message); } };
+    const rm = btn("Remove", "danger", () => confirmBox("Remove " + s.name + "?", "ZO-AI stops using this server. Its saved token is deleted.", "Remove", async () => { try { await op("mcp_remove", { name: s.name }); redo(); } catch (e) { toast(e.message); } }));
+    c.append(sw, rm);
+    return row(s.name, (s.address || s.command || "") + (!s.address && s.command ? " · runs on the desktop" : ""), c);
+  });
+  b.appendChild(cardOf(...rows, row(rows.length ? "Add more" : "No servers yet", "Add a server by its web address, or paste a config.", acts)));
+  b.insertAdjacentHTML("beforeend", '<div class="note">Servers that run a program on your computer (command or stdio) can only be added and run on the desktop. Remote servers sync from your desktop when you are signed in there. <a href="#" id="toSync2">Open Desktop sync</a></div>');
+  $("toSync2").onclick = e => { e.preventDefault(); settingsPage("sync"); };
 }
 async function pageMachines(b) {
   const r = await op("machines"); b.innerHTML = "";
