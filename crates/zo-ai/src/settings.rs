@@ -742,7 +742,7 @@ fn padded_box() -> gtk::Box {
 fn account_page(ui: &Rc<Ui>, content: &gtk::Box) {
     use zo_core::{login, sync};
     let notice = NOTICE.with(|n| std::mem::take(&mut *n.borrow_mut()));
-    let signed_in = login::signed_in();
+    let signed_in = login::signed_in_quick();
     let cfg = sync::config();
     match &signed_in {
         Some(email) => {
@@ -1127,7 +1127,7 @@ pub(crate) fn card_visible(signed_in: bool, dismissed: bool) -> bool {
 }
 
 pub(crate) fn signin_card_wanted() -> bool {
-    card_visible(zo_core::login::signed_in().is_some(), dismissed_flag().exists())
+    card_visible(zo_core::login::signed_in_quick().is_some(), dismissed_flag().exists())
 }
 
 pub(crate) fn dismiss_signin_card() {

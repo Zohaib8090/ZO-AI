@@ -101,6 +101,26 @@ fn file_save(p: &std::path::Path, m: &serde_json::Map<String, serde_json::Value>
     f.write_all(serde_json::Value::Object(m.clone()).to_string().as_bytes()).map_err(|e| e.to_string())
 }
 
+/// How long the keyring tool may take (a locked wallet can wait for a person to type a password; nothing waits for that forever).
+const KEYRING_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Waits for a child with a deadline; kills it when the deadline passes. Output is read after it has ended (these are tiny).
+fn finish(mut child: std::process::Child, wait: std::time::Duration) -> Result<std::process::Output, String> {
+    let end = std::time::Instant::now() + wait;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().map_err(|e| e.to_string()),
+            Ok(None) if std::time::Instant::now() < end => std::thread::sleep(std::time::Duration::from_millis(25)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("The keyring did not answer in time (is it locked?).".into());
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
 pub fn available() -> bool {
     if let Some(t) = tenant_keys() {
         return t.is_some() && secret().is_ok();
@@ -125,7 +145,8 @@ pub fn get(id: &str) -> Option<String> {
     if let Some(p) = file() {
         return file_load(&p).get(id).and_then(|v| v.as_str()).filter(|k| !k.is_empty()).map(str::to_string);
     }
-    let out = Command::new("secret-tool").args(["lookup", "service", "zo-ai", "provider", id]).stderr(Stdio::null()).output().ok()?;
+    let child = Command::new("secret-tool").args(["lookup", "service", "zo-ai", "provider", id]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let out = finish(child, KEYRING_WAIT).ok()?;
     let key = String::from_utf8(out.stdout).ok()?.trim().to_string();
     (out.status.success() && !key.is_empty()).then_some(key)
 }
@@ -151,7 +172,7 @@ pub fn set(id: &str, key: &str) -> Result<(), String> {
         .spawn()
         .map_err(|_| "The keyring tool (secret-tool, from libsecret) is not installed, so the key cannot be stored safely.".to_string())?;
     child.stdin.take().ok_or("no stdin")?.write_all(key.trim().as_bytes()).map_err(|e| e.to_string())?;
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let out = finish(child, KEYRING_WAIT)?;
     if out.status.success() {
         Ok(())
     } else {
@@ -175,5 +196,7 @@ pub fn clear(id: &str) {
         let _ = file_save(&p, &m);
         return;
     }
-    let _ = Command::new("secret-tool").args(["clear", "service", "zo-ai", "provider", id]).stderr(Stdio::null()).status();
+    if let Ok(child) = Command::new("secret-tool").args(["clear", "service", "zo-ai", "provider", id]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        let _ = finish(child, KEYRING_WAIT);
+    }
 }

@@ -72,16 +72,25 @@ only ever made by approving a device request or by `exchange`. Kind `desktop` ge
 `verify_url` is `<public base>/device`, where the public base is `ZO_PUBLIC_URL`, else `RENDER_EXTERNAL_URL`. A server that has neither (or an
 invalid one: it must be `https://host[:port]` with no path) refuses to start in login mode (exit code 2).
 
-If the server answers 403 with `terms_required` (a first-time person who has not accepted the privacy notice and terms), the app sends the person to
-the web app to accept them there.
+If the server answers 403 with `terms_required` (a first-time person who has not accepted the privacy notice and terms), the app says where to accept them: the person opens the web app
+once, accepts there, and signs in again.
 
 ## Security model
+
+* **`device_start` and `device_poll` are for programs only**: they send no cross-site permission, and a request with an `Origin` header (which only a browser sends) is refused,
+  so another web page cannot start a sign-in from a visitor's own address. Per-address limits count an IPv6 address by its /64, and the last fifth of the waiting-request room is
+  kept for networks that have nothing waiting. The approval screen shows the account being approved, says when the request came from another network, and asks for a tick
+  (always for a terminal) before Approve.
 
 * **The person never handles a secret.** The `zd_` credential is 32 random bytes (base64url) made by the server. It travels from the
   server to the device once, over HTTPS, and is never shown, logged or put in an error text.
 * **On the server only a hash is kept** (sha256, in Firestore `users/<tenant>/meta/devices` and an index by hash). A stolen database does not
   give out working credentials. A credential belongs to one account's tenant and cannot reach another person's data.
-* **On the device** the credential is in the system keyring / key store (id `sync-token`), never in a file. `~/.config/zo-ai/sync.json`
+* **On the device** the credential is in the system keyring / key store (id `sync-token` for the desktop app, `cli-token` for `zo`: each program has its own
+  credential, so signing out of one never signs out the other, and the app's narrower `sync` credential is never used where `zo` needs a `full` one). Where there is
+  no keyring (no `secret-tool`, a server shell) the credential is kept in `~/.config/zo-ai/credentials.json`, mode 0600, instead; a keyring that does not answer within
+  8 seconds is given up on. If it cannot be stored at all, the new credential is revoked on the server again, so no orphan device is left.
+  Older setups (a pasted token with syncing on but no account) are switched off when the app starts: nothing is sent for them. `~/.config/zo-ai/sync.json`
   holds only the server address (if chosen by hand), the on/off switch and the account's e-mail address.
 * **Device-code phishing** (an attacker starts a request on their own device and tricks a victim into approving it, which would give the
   attacker's device the victim's account). Defences:
@@ -119,7 +128,7 @@ the web app to accept them there.
   device forgets it. Chats, memory and personalities on the device stay. If the server cannot be reached, the device says so and still signs out locally: remove
   the device afterwards as below.
 * **Lost or stolen device**: sign in to the web app, Account > **Signed-in devices**, press Revoke next to the device. From that moment its credential stops working
-  (the next call gets 401, and the device's sync stops with an error). Then change the password (e-mail account) or review the account's security at Google, if the
+  (the next call gets 401; the device notices on its next sync round, forgets the sign-in and shows the signed-out screen). Then change the password (e-mail account) or review the account's security at Google, if the
   device was unlocked and someone could have used it.
 * **Delete the account**: Account > Delete account removes the account, all devices and the data on the server (`PRIVACY.md`).
 * **Operator**: setting an address in `ZO_BLOCKED_EMAILS` refuses its sign-ins.

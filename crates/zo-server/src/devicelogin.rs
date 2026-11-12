@@ -36,6 +36,23 @@ const POLLS_PER_MIN: u32 = 120;
 /// Tables of per-address counters are emptied beyond this size (an attacker with a million addresses must not fill the memory).
 const TABLE_MAX: usize = 10_000;
 
+/// What the per-address limits count by: an IPv4 address as it is, an IPv6 address as its /64 (one person or one attacker is given a
+/// whole /64, so counting single addresses would give them 2^64 allowances). An IPv4-mapped IPv6 address counts as the IPv4 one.
+pub fn addr_key(ip: &str) -> String {
+    use std::net::IpAddr;
+    match ip.parse::<IpAddr>() {
+        Ok(IpAddr::V4(a)) => a.to_string(),
+        Ok(IpAddr::V6(a)) => match a.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => {
+                let s = a.segments();
+                format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+            }
+        },
+        Err(_) => ip.to_string(),
+    }
+}
+
 /// The caps. The defaults are the contract's; the tests use smaller ones.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
@@ -116,6 +133,8 @@ struct Req {
     kind: Kind,
     user_code: String,
     ip: String,
+    /// `addr_key(ip)`: what the per-address limits count by.
+    key: String,
     requested_at: u64,
     expires: Instant,
     last_poll: Option<Instant>,
@@ -222,11 +241,19 @@ impl DeviceLogin {
             i.starts.clear();
         }
         let per_min = self.limits.per_ip_per_min;
-        i.starts.entry(ip.to_string()).or_insert_with(|| Bucket::new(per_min, now)).take(now).map_err(StartError::Rate)?;
-        if i.by_hash.values().filter(|r| r.ip == ip).count() >= self.limits.per_ip_pending {
+        let key = addr_key(ip);
+        i.starts.entry(key.clone()).or_insert_with(|| Bucket::new(per_min, now)).take(now).map_err(StartError::Rate)?;
+        let here = i.by_hash.values().filter(|r| r.key == key).count();
+        if here >= self.limits.per_ip_pending {
             return Err(StartError::TooManyHere);
         }
-        if i.by_hash.len() >= self.limits.global_pending {
+        let all = i.by_hash.len();
+        if all >= self.limits.global_pending {
+            return Err(StartError::Full);
+        }
+        // the last fifth of the room is kept for networks that have nothing waiting, so a few busy (or hostile) networks cannot
+        // take every place
+        if here > 0 && all >= self.limits.global_pending * 4 / 5 {
             return Err(StartError::Full);
         }
         let device_code = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random_bytes::<32>().map_err(StartError::NoRandom)?);
@@ -242,7 +269,7 @@ impl DeviceLogin {
         }
         let hash = hash_token(&device_code);
         i.by_code.insert(code.clone(), hash.clone());
-        i.by_hash.insert(hash, Req { name: name.to_string(), kind, user_code: code.clone(), ip: ip.to_string(), requested_at: unix_now(), expires: now + Duration::from_secs(EXPIRES_SECS), last_poll: None, state: State::Pending });
+        i.by_hash.insert(hash, Req { name: name.to_string(), kind, user_code: code.clone(), ip: ip.to_string(), key: key.clone(), requested_at: unix_now(), expires: now + Duration::from_secs(EXPIRES_SECS), last_poll: None, state: State::Pending });
         Ok(Started { device_code, user_code: code })
     }
 
@@ -253,7 +280,7 @@ impl DeviceLogin {
         if i.polls.len() > TABLE_MAX {
             i.polls.clear();
         }
-        i.polls.entry(ip.to_string()).or_insert_with(|| Bucket::new(POLLS_PER_MIN, now)).take(now)?;
+        i.polls.entry(addr_key(ip)).or_insert_with(|| Bucket::new(POLLS_PER_MIN, now)).take(now)?;
         if !device_code_shaped(device_code) {
             return Ok(Polled::Expired);
         }
@@ -545,6 +572,28 @@ mod tests {
         assert_eq!(d.start("x", Kind::Desktop, "9.9.9.9", now), Err(StartError::Full));
         // and when they run out the room is back
         assert!(d.start("x", Kind::Desktop, "9.9.9.9", now + Duration::from_secs(EXPIRES_SECS)).is_ok());
+    }
+
+    #[test]
+    fn ipv6_counts_by_its_64_and_busy_networks_leave_room() {
+        assert_eq!(addr_key("2001:db8:1:2:aaaa::1"), addr_key("2001:db8:1:2:bbbb::9"));
+        assert_ne!(addr_key("2001:db8:1:2::1"), addr_key("2001:db8:1:3::1"));
+        assert_eq!(addr_key("::ffff:1.2.3.4"), "1.2.3.4");
+        // one /64 gets one allowance, however many addresses it uses
+        let d = dl();
+        let now = d.now();
+        for n in 0..5 {
+            d.start("x", Kind::Desktop, &format!("2001:db8:1:2::{n:x}"), now).unwrap();
+        }
+        assert_eq!(d.start("x", Kind::Desktop, "2001:db8:1:2::ff", now), Err(StartError::TooManyHere));
+        // the last fifth of the room is for networks with nothing waiting
+        let d = DeviceLogin::new(Limits { global_pending: 10, per_ip_pending: 100, per_ip_per_min: 1000 });
+        let now = d.now();
+        for n in 0..8 {
+            d.start("x", Kind::Desktop, "1.1.1.1", now).unwrap_or_else(|e| panic!("{n}: {e:?}"));
+        }
+        assert_eq!(d.start("x", Kind::Desktop, "1.1.1.1", now), Err(StartError::Full), "a network that already waits cannot take the reserve");
+        assert!(d.start("x", Kind::Desktop, "2.2.2.2", now).is_ok(), "a new network can");
     }
 
     #[test]

@@ -654,6 +654,8 @@ fn the_whole_device_login_start_lookup_approve_poll_once_then_the_credential_wor
         assert_eq!(l.status, 200, "{:?}", l.body);
         assert_eq!((l.body["name"].clone(), l.body["kind"].clone(), l.body["ip"].clone()), (json!(name), json!(kind), json!("127.0.0.1")));
         assert!(l.body["requested_at"].as_u64().unwrap() > 1_700_000_000);
+        // the screen is told who is approving and whether the request came from the approver's own network
+        assert_eq!((l.body["email"].clone(), l.body["same_network"].clone()), (json!("me@x.test"), json!(true)));
         // a device that has no credential cannot be used, and the page for another person does not find it by accident
         let ap = call(&r, "tok", "/api/auth/device_approve", json!({"user_code": code, "approve": true}));
         every_answer.push_str(&ap.body.to_string());
@@ -1076,4 +1078,37 @@ mod end_to_end {
         let left = call(&r, "tok-a", "/api/account/devices_list", json!({}));
         assert!(left.body["devices"].as_array().unwrap().is_empty(), "{:?}", left.body);
     }
+}
+
+#[test]
+fn the_two_public_calls_refuse_web_pages_and_give_no_cross_site_permission() {
+    let r = rig(&[], "", 200, 600);
+    let url = format!("{}/api/auth/device_start", r.base);
+    let body = json!({"name": "x", "kind": "cli"}).to_string();
+    // a page in a browser always sends an Origin: refused, nothing recorded, no permission header
+    let res = match ureq::post(&url).set("Origin", "https://evil.example").set("Content-Type", "text/plain").send_string(&body) {
+        Err(ureq::Error::Status(c, r)) => (c, r),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(res.0, 403);
+    assert_eq!(res.1.header("Access-Control-Allow-Origin"), None);
+    assert_eq!(r.app.login.pending(), 0);
+    let poll_url = format!("{}/api/auth/device_poll", r.base);
+    assert!(matches!(ureq::post(&poll_url).set("Origin", "https://evil.example").send_string("{}"), Err(ureq::Error::Status(403, _))));
+    // the preflight is refused too, without a permission
+    let pre = match ureq::request("OPTIONS", &url).set("Origin", "https://evil.example").set("Access-Control-Request-Method", "POST").call() {
+        Err(ureq::Error::Status(c, r)) => (c, r),
+        Ok(r) => (r.status(), r),
+        Err(e) => panic!("{e}"),
+    };
+    assert_eq!(pre.0, 403);
+    assert_eq!(pre.1.header("Access-Control-Allow-Origin"), None);
+    // a program (no Origin) still works, and its answer carries no permission either
+    let ok = ureq::post(&url).send_string(&body).unwrap();
+    assert_eq!(ok.status(), 200);
+    assert_eq!(ok.header("Access-Control-Allow-Origin"), None);
+    assert_eq!(r.app.login.pending(), 1);
+    // the web app's own calls keep theirs
+    let w = ureq::request("OPTIONS", &format!("{}/api/op", r.base)).call().unwrap();
+    assert_eq!(w.header("Access-Control-Allow-Origin"), Some("*"));
 }

@@ -106,14 +106,17 @@ fn full_message() -> String {
 }
 
 /// The calls of a signed-in person, and `signout`.
-pub fn handle(app: &App, name: &str, v: &Value, who: &Who) -> Result<Value, Fail> {
+pub fn handle(app: &App, name: &str, v: &Value, who: &Who, ip: &str) -> Result<Value, Fail> {
     let Some(devs) = &app.devices else { return Err(Fail::new(400, "Signing in a device needs the cloud database, which this server does not have.")) };
     let now = app.login.now();
     let out = match name {
         "device_lookup" => {
             account(who)?;
             let i = app.login.lookup(&who.tenant, text(v, "user_code"), now).map_err(locked)?;
-            json!({"ok": true, "name": i.name, "kind": i.kind.name(), "requested_at": i.requested_at, "ip": i.ip})
+            // `same_network`: the request came from the same network as this approval (a request from somewhere else is a warning sign)
+            let same = crate::devicelogin::addr_key(&i.ip) == crate::devicelogin::addr_key(ip);
+            let email = account(who)?.1.to_string();
+            json!({"ok": true, "name": i.name, "kind": i.kind.name(), "requested_at": i.requested_at, "ip": i.ip, "same_network": same, "email": email})
         }
         "device_approve" => {
             let (_, email) = account(who)?;

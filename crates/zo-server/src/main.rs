@@ -192,6 +192,14 @@ fn secure(app: &App) -> Vec<Header> {
     h
 }
 
+/// An answer without any cross-site permission.
+fn send_bare(app: &App, req: Request, mut r: Response<std::io::Cursor<Vec<u8>>>) {
+    for h in secure(app) {
+        r.add_header(h);
+    }
+    let _ = req.respond(r);
+}
+
 fn send_response(app: &App, req: Request, mut r: Response<std::io::Cursor<Vec<u8>>>) {
     for h in cors(app).into_iter().chain(secure(app)) {
         r.add_header(h);
@@ -199,9 +207,12 @@ fn send_response(app: &App, req: Request, mut r: Response<std::io::Cursor<Vec<u8
     let _ = req.respond(r);
 }
 
+fn json_response(status: u16, body: Value) -> Response<std::io::Cursor<Vec<u8>>> {
+    Response::from_string(body.to_string()).with_status_code(status).with_header(header("Content-Type", "application/json")).with_header(header("Cache-Control", "no-store"))
+}
+
 fn reply(app: &App, req: Request, status: u16, body: Value) {
-    let r = Response::from_string(body.to_string()).with_status_code(status).with_header(header("Content-Type", "application/json")).with_header(header("Cache-Control", "no-store"));
-    send_response(app, req, r);
+    send_response(app, req, json_response(status, body));
 }
 
 fn text(app: &App, req: Request, status: u16, body: &str) {
@@ -242,13 +253,17 @@ impl From<Refusal> for Fail {
     }
 }
 
-fn fail(app: &App, req: Request, f: Fail) {
+fn fail_response(f: Fail) -> Response<std::io::Cursor<Vec<u8>>> {
     let body = json!({"ok": false, "error": f.error, "retry_after": f.retry});
-    let mut r = Response::from_string(body.to_string()).with_status_code(f.status).with_header(header("Content-Type", "application/json")).with_header(header("Cache-Control", "no-store"));
+    let mut r = json_response(f.status, body);
     if let Some(s) = f.retry {
         r.add_header(header("Retry-After", &s.to_string()));
     }
-    send_response(app, req, r);
+    r
+}
+
+fn fail(app: &App, req: Request, f: Fail) {
+    send_response(app, req, fail_response(f));
 }
 
 fn get_header(req: &Request, name: &'static str) -> Option<String> {
@@ -438,6 +453,13 @@ fn send(app: &Arc<App>, req: Request, v: Value, lease: Lease, tenant: zo_core::t
 fn route(app: Arc<App>, mut req: Request) {
     let path = req.url().split('?').next().unwrap_or("").to_string();
     let method = req.method().clone();
+    // The two calls a device makes before it is signed in are for programs (the app, `zo`), never for another web page: no
+    // cross-site permission at all, and a request that carries an Origin (only browsers send one) is refused. Otherwise any page could
+    // start a sign-in from its visitor's own address and show the visitor the code.
+    if matches!(path.as_str(), "/api/auth/device_start" | "/api/auth/device_poll") && (method == Method::Options || get_header(&req, "Origin").is_some()) {
+        let r = Response::from_string(json!({"ok": false, "error": "This call is for the ZO-AI app and terminal client, not for web pages."}).to_string()).with_status_code(403).with_header(header("Content-Type", "application/json")).with_header(header("Cache-Control", "no-store"));
+        return send_bare(&app, req, r);
+    }
     match (&method, path.as_str()) {
         (Method::Options, _) => return text(&app, req, 204, ""),
         (Method::Get, "/healthz") => return text(&app, req, 200, "ok"),
@@ -448,6 +470,7 @@ fn route(app: Arc<App>, mut req: Request) {
         _ => {}
     }
     let Some(r) = route_of(&method, &path) else { return text(&app, req, 404, "not found") };
+    let ip = source(&req);
     // a device that is not signed in yet: nothing to check but where it comes from, and a small body read against a short deadline
     if matches!(r, Route::DeviceStart | Route::DevicePoll) {
         let ip = source(&req);
@@ -459,8 +482,8 @@ fn route(app: Arc<App>, mut req: Request) {
             Err(f) => return fail(&app, req, f),
         };
         return match loginapi::public(&app, path.strip_prefix("/api/auth/").unwrap_or(""), &v, &ip) {
-            Ok(r) => reply(&app, req, 200, r),
-            Err(f) => fail(&app, req, f),
+            Ok(r) => send_bare(&app, req, json_response(200, r)),
+            Err(f) => send_bare(&app, req, fail_response(f)),
         };
     }
     let who = match who(&app, &req, &path) {
@@ -529,7 +552,7 @@ fn route(app: Arc<App>, mut req: Request) {
             };
             reply(&app, req, if sent { 200 } else { 404 }, json!({"ok": sent}))
         }
-        Route::Auth | Route::Signout => match loginapi::handle(&app, path.strip_prefix("/api/auth/").unwrap_or(""), &v, &who) {
+        Route::Auth | Route::Signout => match loginapi::handle(&app, path.strip_prefix("/api/auth/").unwrap_or(""), &v, &who, &ip) {
             Ok(r) => reply(&app, req, 200, r),
             Err(f) => fail(&app, req, f),
         },

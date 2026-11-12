@@ -281,7 +281,15 @@ pub fn exchange(id_token: &str, name: &str, kind: &str) -> Result<Login, String>
 pub fn exchange_at(base: &str, id_token: &str, name: &str, kind: &str) -> Result<Login, String> {
     check_kind(kind)?;
     let name = clean_device_name(name)?;
-    let v = srv_call(base, "/api/auth/exchange", Some(id_token), &json!({"name": name, "kind": kind})).map_err(Fail::text)?;
+    let v = srv_call(base, "/api/auth/exchange", Some(id_token), &json!({"name": name, "kind": kind})).map_err(|f| {
+        let t = f.text();
+        // terms can only be accepted in the web app: say where, so the person is not left at a dead end
+        if t.to_lowercase().contains("the terms") {
+            format!("The terms have not been accepted yet. Open {} in a browser, sign in there once and accept the privacy notice and the terms, then sign in here again.", base.trim_end_matches('/'))
+        } else {
+            t
+        }
+    })?;
     credential_from(&v)
 }
 
@@ -466,52 +474,153 @@ pub fn signout_at(base: &str, credential: &str) -> Result<(), String> {
 // ---------------------------------------------------------------------------------------------------------------------------
 // what this computer remembers
 
-/// The signed-in account's e-mail address, or None when nobody is signed in on this computer.
-pub fn signed_in() -> Option<String> {
-    let email = sync::config().email;
-    (!email.is_empty() && sync::token().is_some()).then_some(email)
+/// Which program on this computer a sign-in belongs to. The desktop app (credential scope `sync`) and the terminal client `zo`
+/// (scope `full`) each have their OWN credential, so signing out of one never signs the other out, and the app's narrower
+/// credential is never used where a full one is needed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Client {
+    Desktop,
+    Cli,
 }
 
-/// Remembers a sign-in: the credential goes to the key store, the e-mail to sync.json, syncing is switched on and the background
-/// loop is started (a round runs within a second). An address chosen by hand earlier is kept.
+impl Client {
+    fn credential_id(self) -> &'static str {
+        match self {
+            Client::Desktop => CREDENTIAL_ID,
+            Client::Cli => "cli-token",
+        }
+    }
+}
+
+fn cli_record_path() -> std::path::PathBuf {
+    crate::audit::config_dir().join("cli-login.json")
+}
+
+/// The e-mail of a client's sign-in, from files only (no key store, so it never waits on the keyring).
+pub fn email_of(client: Client) -> String {
+    match client {
+        Client::Desktop => sync::config().email,
+        Client::Cli => std::fs::read_to_string(cli_record_path()).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).and_then(|v| v.get("email").and_then(Value::as_str).map(str::to_string)).unwrap_or_default(),
+    }
+}
+
+/// The credential of a client (key store, or the private file when there is no key store).
+pub fn credential_of(client: Client) -> Option<String> {
+    sync::load_credential(client.credential_id())
+}
+
+/// Quick check for the screen (only reads small files: never waits for the key store, so it is safe on the window's thread).
+/// A sign-in whose credential was lost or revoked is found out by the next sync round, which clears it.
+pub fn signed_in_quick() -> Option<String> {
+    let e = email_of(Client::Desktop);
+    (!e.is_empty()).then_some(e)
+}
+
+/// The desktop app's signed-in account, or None (also checks that the credential is there).
+pub fn signed_in() -> Option<String> {
+    signed_in_as(Client::Desktop)
+}
+
+pub fn signed_in_as(client: Client) -> Option<String> {
+    let email = email_of(client);
+    (!email.is_empty() && credential_of(client).is_some()).then_some(email)
+}
+
+/// Remembers the desktop app's sign-in: the credential goes to the key store, the e-mail to sync.json, syncing is switched on and
+/// the background loop is started (a round runs within a second). An address chosen by hand earlier is kept.
 pub fn save_login(login: &Login) -> Result<(), String> {
+    save_login_as(Client::Desktop, login)
+}
+
+pub fn save_login_as(client: Client, login: &Login) -> Result<(), String> {
     let cred = login.credential.trim();
     if !cred.starts_with("zd_") {
         return Err("That is not a device credential.".into());
     }
-    let cfg = sync::config();
-    crate::ai::keys::set(CREDENTIAL_ID, cred).map_err(|e| format!("The sign-in could not be stored safely: {e}"))?;
-    if let Err(e) = sync::write_config(&cfg.url, true, &login.email) {
-        crate::ai::keys::clear(CREDENTIAL_ID);
-        return Err(format!("The sign-in could not be saved: {e}"));
+    let id = client.credential_id();
+    if let Err(e) = sync::store_credential(id, cred) {
+        // the server already issued it: do not leave an orphan device behind
+        if let Ok(base) = server_url() {
+            let _ = signout_at(&base, cred);
+        }
+        return Err(format!("The sign-in could not be stored safely: {e}"));
     }
-    // (not in tests: a background loop would keep running in the other tests' environments)
-    #[cfg(not(test))]
-    sync::start();
-    sync::kick();
+    match client {
+        Client::Desktop => {
+            let cfg = sync::config();
+            if let Err(e) = sync::write_config(&cfg.url, true, &login.email) {
+                sync::forget_credential(id);
+                if let Ok(base) = server_url() {
+                    let _ = signout_at(&base, cred);
+                }
+                return Err(format!("The sign-in could not be saved: {e}"));
+            }
+            // (not in tests: a background loop would keep running in the other tests' environments)
+            #[cfg(not(test))]
+            sync::start();
+            sync::kick();
+        }
+        Client::Cli => {
+            let p = cli_record_path();
+            let r = p.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(&p, json!({"email": login.email}).to_string()));
+            if let Err(e) = r {
+                sync::forget_credential(id);
+                if let Ok(base) = server_url() {
+                    let _ = signout_at(&base, cred);
+                }
+                return Err(format!("The sign-in could not be saved: {e}"));
+            }
+        }
+    }
     Ok(())
 }
 
-/// Forgets the sign-in on this computer: the credential, the e-mail, the switch and the sync status. Chats, memory and
+/// Forgets the desktop sign-in on this computer: the credential, the e-mail, the switch and the sync status. Chats, memory and
 /// personalities stay as they are. (This does not tell the server: see `sign_out`.)
 pub fn clear_login() {
-    crate::ai::keys::clear(CREDENTIAL_ID);
-    let cfg = sync::config();
-    let _ = sync::write_config(&cfg.url, false, "");
-    sync::reset_status();
+    clear_login_as(Client::Desktop)
 }
 
-/// Signs out: the server is told to revoke this device's credential, and the sign-in is forgotten here either way. An `Err` says
-/// that the server could not be told (the device can then be removed in the web app's "signed-in devices").
+pub fn clear_login_as(client: Client) {
+    sync::forget_credential(client.credential_id());
+    match client {
+        Client::Desktop => {
+            let cfg = sync::config();
+            let _ = sync::write_config(&cfg.url, false, "");
+            sync::reset_status();
+        }
+        Client::Cli => {
+            let _ = std::fs::remove_file(cli_record_path());
+        }
+    }
+}
+
+/// Signs the desktop app out: the server is told to revoke this device's credential, and the sign-in is forgotten here either
+/// way. An `Err` says that the server could not be told (the device can then be removed in the web app's "signed-in devices").
 pub fn sign_out() -> Result<(), String> {
-    let cred = sync::token();
+    sign_out_as(Client::Desktop)
+}
+
+pub fn sign_out_as(client: Client) -> Result<(), String> {
+    let cred = credential_of(client);
     let told = match (cred, server_url()) {
         (Some(c), Ok(base)) => signout_at(&base, &c),
         (Some(_), Err(e)) => Err(e),
         (None, _) => Ok(()),
     };
-    clear_login();
+    clear_login_as(client);
     told.map_err(|e| format!("Signed out here, but the server could not be told ({e}). Remove this device in the web app under signed-in devices."))
+}
+
+/// A device set up before sign-in existed (a pasted token, syncing on, no account e-mail) is not "signed in": nothing may be sent
+/// for it. Its credential is forgotten (and the server told, best effort) and the switch turned off. Returns true when it did.
+pub fn drop_legacy_setup() -> bool {
+    let c = sync::config();
+    if !c.enabled || !c.email.is_empty() {
+        return false;
+    }
+    let _ = sign_out_as(Client::Desktop);
+    true
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -996,6 +1105,115 @@ mod tests {
         for k in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZO_AI_KEYS_FILE", "ZO_SERVER_URL"] {
             std::env::remove_var(k);
         }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn env_on(d: &std::path::Path) {
+        std::env::set_var("XDG_CONFIG_HOME", d.join("config"));
+        std::env::set_var("XDG_DATA_HOME", d.join("data"));
+        std::env::set_var("ZO_AI_KEYS_FILE", d.join("keys.json"));
+        std::env::remove_var("ZOAI_KEY_SYNC_TOKEN");
+        std::env::set_var("ZO_SERVER_URL", "http://127.0.0.1:9");
+    }
+    fn env_off() {
+        for k in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZO_AI_KEYS_FILE", "ZO_SERVER_URL"] {
+            std::env::remove_var(k);
+        }
+    }
+
+    #[test]
+    fn the_desktop_and_the_terminal_have_their_own_sign_ins() {
+        let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = sandbox("kinds");
+        env_on(&d);
+        let l = login();
+        save_login_as(Client::Desktop, &l).unwrap();
+        assert_eq!(signed_in_as(Client::Cli), None, "the terminal is not signed in by the app");
+        let cli = Login { credential: format!("zd_{}", "B".repeat(43)), email: "a@b.co".into() };
+        save_login_as(Client::Cli, &cli).unwrap();
+        assert_eq!(credential_of(Client::Cli).as_deref(), Some(cli.credential.as_str()));
+        assert_eq!(credential_of(Client::Desktop).as_deref(), Some(l.credential.as_str()));
+        // signing the terminal out leaves the app signed in, and the other way round
+        let _ = sign_out_as(Client::Cli);
+        assert_eq!(signed_in_as(Client::Cli), None);
+        assert_eq!(signed_in().as_deref(), Some("a@b.co"));
+        save_login_as(Client::Cli, &cli).unwrap();
+        let _ = sign_out();
+        assert_eq!(signed_in(), None);
+        assert_eq!(signed_in_as(Client::Cli).as_deref(), Some("a@b.co"));
+        env_off();
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_old_setup_without_an_account_is_switched_off_and_the_screen_check_needs_no_keyring() {
+        let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = sandbox("legacy");
+        env_on(&d);
+        sync::write_config("", true, "").unwrap();
+        sync::set_token(&format!("zd_{}", "C".repeat(43))).unwrap();
+        assert!(sync::token().is_some());
+        assert_eq!(signed_in_quick(), None);
+        assert!(drop_legacy_setup());
+        assert!(sync::token().is_none() && !sync::config().enabled);
+        assert!(!drop_legacy_setup(), "nothing left to drop");
+        // a real sign-in is left alone
+        save_login(&login()).unwrap();
+        assert!(!drop_legacy_setup());
+        assert_eq!(signed_in_quick().as_deref(), Some("a@b.co"));
+        env_off();
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_credential_the_server_refuses_is_forgotten_here() {
+        let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = sandbox("revoked");
+        env_on(&d);
+        let ln = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = format!("http://{}", ln.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for s in ln.incoming().flatten() {
+                let mut s = s;
+                let mut b = [0u8; 4096];
+                let _ = s.read(&mut b);
+                let _ = s.write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+            }
+        });
+        std::env::set_var("ZO_SERVER_URL", &addr);
+        save_login(&login()).unwrap();
+        assert!(signed_in().is_some());
+        assert!(sync::sync_now().is_err());
+        assert_eq!(signed_in(), None, "the sign-in is gone");
+        assert!(!sync::config().enabled && sync::token().is_none());
+        env_off();
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn without_a_keyring_the_credential_goes_to_a_private_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = sandbox("nokeyring");
+        env_on(&d);
+        std::env::remove_var("ZO_AI_KEYS_FILE");
+        let path = std::env::var_os("PATH");
+        std::env::set_var("PATH", d.join("nothing")); // no secret-tool
+        let l = login();
+        let r = save_login_as(Client::Cli, &l);
+        let got = credential_of(Client::Cli);
+        let f = d.join("config/zo-ai/credentials.json");
+        let mode = std::fs::metadata(&f).map(|m| m.permissions().mode() & 0o777);
+        clear_login_as(Client::Cli);
+        let gone = credential_of(Client::Cli).is_none() && !f.exists();
+        if let Some(p) = path {
+            std::env::set_var("PATH", p);
+        }
+        env_off();
+        r.unwrap();
+        assert_eq!(got.as_deref(), Some(l.credential.as_str()));
+        assert_eq!(mode.unwrap(), 0o600);
+        assert!(gone);
         let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -436,11 +436,70 @@ pub(crate) fn kick() {
 const TOKEN_ID: &str = "sync-token";
 
 pub fn token() -> Option<String> {
-    crate::ai::keys::get(TOKEN_ID)
+    load_credential(TOKEN_ID)
 }
 
 pub fn set_token(token: &str) -> Result<(), String> {
-    crate::ai::keys::set(TOKEN_ID, token)
+    store_credential(TOKEN_ID, token)
+}
+
+/// A device credential lives in the key store. Where there is none (a computer without secret-tool or a session bus, a server
+/// shell) it is kept in a private file (mode 0600) in the config folder instead, so signing in still works there.
+fn fallback_path() -> std::path::PathBuf {
+    crate::audit::config_dir().join("credentials.json")
+}
+
+fn local_fallback_allowed() -> bool {
+    !crate::tenant::multi_tenant() && crate::tenant::current().is_none()
+}
+
+pub(crate) fn load_credential(id: &str) -> Option<String> {
+    if let Some(k) = crate::ai::keys::get(id) {
+        return Some(k);
+    }
+    if !local_fallback_allowed() {
+        return None;
+    }
+    let v: Value = std::fs::read_to_string(fallback_path()).ok().and_then(|s| serde_json::from_str(&s).ok())?;
+    v.get(id).and_then(Value::as_str).filter(|k| !k.is_empty()).map(str::to_string)
+}
+
+pub(crate) fn store_credential(id: &str, cred: &str) -> Result<(), String> {
+    let e = match crate::ai::keys::set(id, cred) {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+    if !local_fallback_allowed() {
+        return Err(e);
+    }
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::io::Write;
+    let p = fallback_path();
+    let mut m: serde_json::Map<String, Value> = std::fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    m.insert(id.to_string(), Value::String(cred.trim().to_string()));
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+    }
+    let tmp = p.with_extension("json.tmp");
+    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).map_err(|e2| format!("{e} ({e2})"))?;
+    f.write_all(Value::Object(m).to_string().as_bytes()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
+}
+
+pub(crate) fn forget_credential(id: &str) {
+    crate::ai::keys::clear(id);
+    if !local_fallback_allowed() {
+        return;
+    }
+    let p = fallback_path();
+    if let Some(mut m) = std::fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str::<serde_json::Map<String, Value>>(&s).ok()) {
+        m.remove(id);
+        if m.is_empty() {
+            let _ = std::fs::remove_file(&p);
+        } else {
+            let _ = std::fs::write(&p, Value::Object(m).to_string());
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -670,6 +729,11 @@ pub fn sync_now() -> Result<(usize, usize, usize), String> {
         (_, None) => Err("Not signed in.".to_string()),
         (Ok(url), Some(t)) => sync_with(&url, &t),
     };
+    // the server no longer knows this credential (removed in the web app): forget the sign-in here, so the person sees the
+    // signed-out screen and nothing is sent any more
+    if matches!(&result, Err(e) if e == TOKEN_REFUSED) {
+        crate::login::clear_login();
+    }
     let mut s = STATUS.lock().unwrap_or_else(|e| e.into_inner());
     s.running = false;
     match &result {
@@ -695,6 +759,8 @@ pub fn start() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         std::thread::spawn(|| {
+            // a setup from before sign-in existed (pasted token, no account) is switched off: nothing is sent for it
+            crate::login::drop_legacy_setup();
             // the first round comes after 5 seconds; a sign-in (`kick`) starts one within a second
             let mut wait = 5;
             loop {
@@ -705,7 +771,8 @@ pub fn start() {
                     std::thread::sleep(Duration::from_secs(1));
                 }
                 wait = 30;
-                if config().enabled && token().is_some() {
+                let c = config();
+                if c.enabled && !c.email.is_empty() && token().is_some() {
                     let _ = sync_now();
                 }
             }

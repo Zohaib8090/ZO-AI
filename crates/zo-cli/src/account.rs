@@ -228,18 +228,13 @@ pub fn email_login(fb: &str, server: &str, name: &str, email: &str, password: &s
             if sent { " A verification message was sent to it." } else { "" }
         )));
     }
-    core::exchange_at(server, &s.id_token, name, "cli").map_err(|e| {
-        if e.to_lowercase().contains("terms") {
-            Fail::Msg(format!("{e}\nOpen the ZO-AI web app once and accept the terms, then run zo login --email again."))
-        } else {
-            Fail::Msg(e)
-        }
-    })
+    // (a message about the terms already says where to accept them)
+    core::exchange_at(server, &s.id_token, name, "cli").map_err(Fail::Msg)
 }
 
 fn finish(l: Result<core::Login, Fail>) -> i32 {
     match l {
-        Ok(l) => match core::save_login(&l) {
+        Ok(l) => match core::save_login_as(core::Client::Cli, &l) {
             Ok(()) => {
                 let who = if l.email.is_empty() { "your account".to_string() } else { crate::proto::clean(&l.email) };
                 println!("Signed in as {who}. Chats, memory and personalities now match the web version.");
@@ -263,7 +258,7 @@ fn finish(l: Result<core::Login, Fail>) -> i32 {
 
 /// `zo login [--email]`. Returns the exit code.
 pub fn cmd_login(email: bool, ints: &(dyn Fn() -> usize + Sync)) -> i32 {
-    if let Some(who) = core::signed_in() {
+    if let Some(who) = core::signed_in_as(core::Client::Cli) {
         println!("Already signed in as {}. Run `zo logout` first to use another account.", crate::proto::clean(&who));
         return 0;
     }
@@ -294,11 +289,11 @@ pub fn cmd_login(email: bool, ints: &(dyn Fn() -> usize + Sync)) -> i32 {
 
 /// `zo logout`.
 pub fn cmd_logout() -> i32 {
-    if core::signed_in().is_none() && zo_core::sync::token().is_none() {
+    if core::signed_in_as(core::Client::Cli).is_none() && core::credential_of(core::Client::Cli).is_none() {
         println!("Not signed in.");
         return 0;
     }
-    match core::sign_out() {
+    match core::sign_out_as(core::Client::Cli) {
         Ok(()) => {
             println!("Signed out. Chats, memory and personalities on this computer stay as they are.");
             0
@@ -312,7 +307,7 @@ pub fn cmd_logout() -> i32 {
 
 /// `zo whoami`: exit 0 and the account when signed in, exit 1 when not.
 pub fn cmd_whoami() -> i32 {
-    match core::signed_in() {
+    match core::signed_in_as(core::Client::Cli) {
         Some(who) => {
             let server = core::server_url().unwrap_or_else(|e| format!("({e})"));
             println!("{}\nserver  {}", crate::proto::clean(&who), crate::proto::clean(&server));
@@ -331,10 +326,10 @@ pub fn cmd_whoami() -> i32 {
 pub type Saved = Option<(String, String)>;
 
 pub fn saved_login() -> Result<Saved, String> {
-    if core::signed_in().is_none() {
+    if core::signed_in_as(core::Client::Cli).is_none() {
         return Ok(None);
     }
-    let Some(cred) = zo_core::sync::token() else { return Ok(None) };
+    let Some(cred) = core::credential_of(core::Client::Cli) else { return Ok(None) };
     Ok(Some((core::server_url()?, cred)))
 }
 
