@@ -444,7 +444,7 @@ fn for_service(mut v: Value, t: &zo_core::tenant::Tenant) -> Value {
 
 /// The ops that call a model (or its provider) and so take as long as an answer.
 pub fn op_uses_model(name: &str) -> bool {
-    matches!(name, "compact" | "memory_edit" | "personality_generate" | "models")
+    matches!(name, "compact" | "memory_edit" | "personality_generate" | "models" | "model_test")
 }
 
 /// One question, one answer (everything except sending a message).

@@ -12,6 +12,14 @@
 //!   syncctl syncnow            one round with the saved sign-in (what the background loop does)
 //!   syncctl signout            tells the server to revoke this device and forgets the sign-in
 //!   syncctl whoami             the signed-in account, or "not signed in"
+//!
+//! Profiles, MCP servers, preferences and keys (the sync of those kinds):
+//!   syncctl profile NAME PROVIDER MODEL BASE_URL PINS   make a profile (PINS: comma separated models)
+//!   syncctl pin ID MODEL | unpin ID MODEL | rmprofile ID | profiles
+//!   syncctl mcpadd NAME URL | mcplist
+//!   syncctl hidden a,b | hiddenlist                     which providers are hidden in the pickers
+//!   syncctl key PROVIDER VALUE | keyis PROVIDER VALUE   save a key / is the saved key this value (prints true/false)
+//!   syncctl kinds PROFILES MCP KEYS                     what else is synced (true/false each)
 use zo_core::store::{chats, memory};
 
 fn main() {
@@ -59,6 +67,45 @@ fn main() {
         },
         "signout" => println!("{:?}", zo_core::login::sign_out()),
         "whoami" => println!("{}", zo_core::login::signed_in().unwrap_or_else(|| "not signed in".into())),
+        "profile" => {
+            use zo_core::ai::{profiles, Selection};
+            let mut sel = Selection { provider: arg(2), model: arg(3), ..Default::default() };
+            if !arg(4).is_empty() {
+                sel.base_urls.insert(arg(2), arg(4));
+            }
+            match profiles::create(&arg(1), &sel) {
+                Ok(p) => {
+                    for m in arg(5).split(',').filter(|m| !m.is_empty()) {
+                        profiles::pin(&p.id, m);
+                    }
+                    println!("{}", p.id);
+                }
+                Err(e) => println!("failed: {e}"),
+            }
+        }
+        "pin" => zo_core::ai::profiles::pin(&arg(1), &arg(2)),
+        "unpin" => zo_core::ai::profiles::unpin(&arg(1), &arg(2)),
+        "rmprofile" => zo_core::ai::profiles::delete(&arg(1)),
+        "profiles" => {
+            for p in zo_core::ai::profiles::load() {
+                println!("profile {} {} {} {} base={} pinned={}", p.id, p.name, p.provider, p.model, p.base_url.clone().unwrap_or_default(), p.pinned.join(","));
+            }
+        }
+        "mcpadd" => {
+            let mut all = zo_core::mcp_client::load_servers();
+            all.push(zo_core::mcp_client::ServerConfig { name: arg(1), command: arg(2), enabled: true, ..Default::default() });
+            zo_core::mcp_client::save_servers(&all);
+        }
+        "mcplist" => {
+            for s in zo_core::mcp_client::load_servers() {
+                println!("mcp {} {} enabled={}", s.name, s.command, s.enabled);
+            }
+        }
+        "hidden" => println!("{:?}", zo_core::ai::ui_prefs::set_hidden(arg(1).split(',').filter(|h| !h.is_empty()).map(str::to_string).collect()).map(|p| p.hidden_providers)),
+        "hiddenlist" => println!("hidden {}", zo_core::ai::ui_prefs::load().hidden_providers.join(",")),
+        "key" => println!("{:?}", zo_core::ai::keys::set(&arg(1), &arg(2))),
+        "keyis" => println!("{}", zo_core::ai::keys::get(&arg(1)).as_deref() == Some(arg(2).as_str())),
+        "kinds" => println!("{:?}", zo_core::sync::set_kinds(arg(1) == "true", arg(2) == "true", arg(3) == "true")),
         _ => eprintln!("usage: syncctl chat|note|rmchat|forget|list|sync|login|syncnow|signout|whoami"),
     }
 }

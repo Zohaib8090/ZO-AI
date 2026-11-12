@@ -1,7 +1,8 @@
 # Laptop <-> server sync
 
 Chats, memory notes and custom personalities written on the desktop show up on the server (and so in the web app), and the other way
-round. The phone talks to the desktop, so it follows. Built 2026-11-12. Code: `crates/zo-core/src/sync.rs` (planner, documents,
+round. Since 2026-11-12 (later the same day) the same goes for the **profiles** (with their pinned models and model addresses), the
+picker preferences (which providers are hidden), the **remote MCP servers**, and, only if switched on, the **API keys** (see "More kinds" below). The phone talks to the desktop, so it follows. Built 2026-11-12. Code: `crates/zo-core/src/sync.rs` (planner, documents,
 client), `crates/zo-server/src/sync_api.rs` (the server's side), Settings > Web sync in `crates/zo-ai`.
 
 ## Setup (every person)
@@ -36,7 +37,8 @@ turns on sync with the web. Nobody copies or pastes a token (see `LOGIN.md` for 
 * **Safety**: an empty, failing or unreachable server never deletes anything here: only a tombstone deletes. If the server cannot be
   reached or does not accept the credential (revoked: sign in again), the round stops and changes nothing more. An error that belongs to one item (the server refuses
   it, it does not parse) skips that item and goes on; the status text says how many were skipped and the first reason. Manifests that do not look like manifests are errors, not "empty".
-* **Not synced**: API keys and the keys file, the chosen model, the permission mode, projects, artifacts, scheduled tasks, MCP servers,
+* **Not synced**: the keys file and, unless the person switched "Also sync my API keys" on, any API key; the chosen model and provider (they stay per device),
+  the permission mode, projects, artifacts, scheduled tasks, MCP servers that start a program, MCP tokens and sign-ins,
   which personality is in use, and the memory agent's "read N messages" counters. Pinning a note or a chat does not change its `updated`,
   so a pin only travels with the next edit (a chat already on both sides keeps its own local pin).
 * Personalities: only the person's own (built-in ones are in the program). They are never edited, so their time is the one in their id (`p<ms>`).
@@ -52,11 +54,41 @@ turns on sync with the web. Nobody copies or pastes a token (see `LOGIN.md` for 
   way (an edit), the answer is saved as a separate "(copy)" chat. The window of the desktop app is not covered yet: it saves its own chat
   as it holds it.
 
+## More kinds: profiles, preferences, MCP servers, keys
+
+The manifest has four more kinds beside `chats`, `memory` and `personalities` (an older server's manifest without them still reads: they are empty).
+All of them use the same planner, `updated` times and tombstones. The id is the item's name in the store.
+
+| Kind | Item id | Document | Rules |
+|---|---|---|---|
+| `profiles` | the profile id (`p<ms>`) | `{id, name, provider, model, base_url?, effort?, vision?, pinned:[...], updated}` | **no key inside** (unknown fields are dropped when a document comes in); name clashes get " (2)"; max 100; the provider must be known; `base_url` http(s), no spaces; a deletion also unchooses the profile and clears its own key here |
+| `settings` | `main` | `{hidden_providers:[...], provider_prefs:{provider:{...}}, updated}` | one document, never deleted; **not** the current provider/model (those stay per device); file `ui-prefs.json` |
+| `mcp` | the server name as a tool name | `{name, address, enabled, updated}` | **remote servers only** (an address, no user name inside); never a program, env, header, token, client secret or sign-in; this computer's own headers stay when an edit comes in; max 50; a **restricted account never accepts, lists or deletes them** |
+| `keys` | `provider` or `provider@profile-id` | `{id, key, updated}` | **opt-in, off by default**; only provider keys (never Claude Code, the sign-in credential, SSH or MCP tokens); the time of each key is in `keys-times.json` (times only); a key that was there before times were kept has the time 1 (it is copied if the other side has none, and never overwrites a newer one) |
+
+Times for profiles, servers and the preferences are stamped by the store itself when it saves (`profiles::save`, `mcp_client::save_servers`, `ui_prefs`), by comparing with the file
+before: only a real change gets a new time, and a removal leaves a tombstone. The sync writes with the other side's time (`save_as_is`) and never leaves a tombstone of its own.
+A document of these kinds over 64 KB is refused.
+
+**What the person chooses** (desktop: Settings > Account and sync, stored in `sync.json` as `profiles`, `mcp`, `keys`): "Sync my profiles and pinned models" (on; covers `profiles` and `settings`),
+"Sync MCP servers (web addresses only)" (on), "Also sync my API keys" (**off**; the page says plainly that the keys then also live, encrypted with the server's secret, on the server).
+A kind that is switched off is dropped from both sides before the plan is made, so nothing of it is sent, fetched or deleted; switching it on later makes one full round. Keys travel only over the signed-in
+device's HTTPS connection (`clean_url`: https, or plain http for this computer only) to the account's own tenant.
+
+**On the server**: a restricted account's `put`/`delete` of `mcp`, a profile whose `base_url` is not a public https address, and a Claude Code profile are refused with a message that starts
+`Not for this account:`. The desktop remembers the refusal for that version of the item and does not list it as a problem (the item stays on the desktop). Everything else that fails is an item error as before.
+
+**Service ops added for the screens** (desktop and web; `crates/zo-core/src/service.rs`): `select {provider?, model?, effort?, base_url?}` also saves the address (empty = the provider's default; checked; a restricted account only a public https one) and answers `{provider, model, effort, base_url}`;
+`models {provider?, base_url?}` answers `{provider, models, current, efforts, effort, base_url, error?}` and a failed fetch is still ok with `models: []` and a friendly `error` (no key, bad address, 401, timeout, ...); the address in the request is tried without being saved;
+`model_test {provider?, base_url?, model?}` answers `{works, message}` (with a model: one tiny real answer, 15 s at most; without: the model list), counted like an answer for the limits;
+`providers` adds `needs_url`, `default_url`, `base_url`, `hidden` per provider and `hidden_providers`; `profiles` adds `base_url`, `vision`, `updated`; `profile_update {id, base_url?, effort?}`; `settings_get` and `settings_set {hidden_providers?, provider_prefs?}`.
+
+
 ## Server API (all need `Authorization: Bearer <device credential or Firebase ID token>`; bodies up to 20 MB; they act only on the caller's own tenant)
 
 | Call | Body | Answer |
 |---|---|---|
-| `POST /api/sync/manifest` | `{}` | `{ok, chats:{id:ms}, memory:{id:ms}, personalities:{id:ms}, deleted:{"chats:ID":ms}}` |
+| `POST /api/sync/manifest` | `{}` | `{ok, chats:{id:ms}, memory:{id:ms}, personalities:{id:ms}, profiles:{..}, settings:{..}, mcp:{..}, keys:{..}, deleted:{"chats:ID":ms}, now}` |
 | `POST /api/sync/get` | `{kind, id}` | `{ok, doc}` (400 if there is no such item) |
 | `POST /api/sync/put` | `{kind, id, doc}` | `{ok, applied}` |
 | `POST /api/sync/delete` | `{kind, id, at}` | `{ok, deleted}` (the tombstone is recorded either way) |
@@ -72,6 +104,8 @@ Use a private HOME / XDG_* / XDG_RUNTIME_DIR for it (the server shares the app's
 
 ## Tested / not tested
 
+Tested (profiles, preferences, MCP, keys): planner tests with every new kind, document tests (no key in a profile or server document, unknown fields dropped, wrong documents refused, newest wins, tombstones, a key's time is not moved by the sync), restricted-account refusals (mcp, private address, Claude Code, oversize), the service ops over a real socket (address saved and echoed, friendly model errors, the connection test, hidden providers, profile_update), and an HTTP round trip with the desktop driver `syncctl` against the server with the fake sign-in: a desktop profile with pins and a custom address appears for the account on the web, an edit on either side reaches the other, deleting a profile deletes it on the other side, a remote MCP server (never the program) and the hidden providers arrive, keys only travel after the toggle is switched on (and stop when it is switched off), and a restricted account gets no MCP server and no private address.
+
 Tested: unit tests of the planner (copy, newest wins, ties, tombstones, resurrection by a later edit, empty server), of the tombstone
 hooks, `put`/`apply_delete`, manifests and address checks (zo-core), and of the four calls (zo-server). An integration run with a
 local test server in one sandbox and `syncctl` in another, over HTTP on 127.0.0.1 (with the earlier token set-up; the sign-in itself is tested separately, see `LOGIN.md`): chat and note created in B appear in A; an edit in A
@@ -82,3 +116,7 @@ Not tested: against Render or a real Firestore, with the Firebase token (a devic
 the 30-second background loop and the switch in a running app (only `sync_with` was driven), the keyring storage of the credential
 (`secret-tool`; tests used `ZOAI_KEY_SYNC_TOKEN`), big chats (megabytes), two computers syncing at once, the `ZO_BIND` listen address.
 The open chat list in the app is not refreshed live when a sync brings something: it shows after the list is rebuilt (new chat, switching view).
+
+Not tested for the new kinds: a real Firestore round trip (the in-memory database stands in), adding an MCP server on the web against a live server (the web
+connects to it first; the save itself is the same code that the toggle test covers), the desktop Account and sync page on a real display beyond a headless look, and the
+connection test against real providers (only a local stand-in model server). The connection test with a model sends one small real request to the provider.

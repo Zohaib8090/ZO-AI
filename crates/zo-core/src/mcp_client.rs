@@ -36,6 +36,13 @@ pub struct ServerConfig {
     /// Scopes to ask for at sign-in, instead of the ones the server suggests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
+    /// When a remote server (an address) was added or changed (ms); the sync compares it between computers. Set by `save_servers`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub updated: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 fn yes() -> bool {
@@ -50,7 +57,33 @@ pub fn load_servers() -> Vec<ServerConfig> {
     std::fs::read_to_string(file()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
 }
 
+/// Saves the list. A remote server (an address) that is new or changed gets the time now; one that was removed leaves a tombstone
+/// for the sync.
 pub fn save_servers(all: &[ServerConfig]) {
+    let old = load_servers();
+    let now = crate::store::chats::now_millis();
+    let mut out = all.to_vec();
+    for s in out.iter_mut().filter(|s| is_url(&s.command)) {
+        s.updated = match old.iter().find(|o| o.name == s.name) {
+            Some(o) => {
+                let mut same = o.clone();
+                same.updated = s.updated;
+                if same == *s { o.updated.max(1) } else { now.max(o.updated.saturating_add(1)) }
+            }
+            None => now,
+        };
+    }
+    for o in old.iter().filter(|o| is_url(&o.command)) {
+        if !all.iter().any(|s| s.name == o.name) {
+            crate::sync::tombstone("mcp", &clean_name(&o.name), o.updated.max(1));
+        }
+    }
+    save_servers_as_is(&out);
+}
+
+/// Saves the list exactly as given (the sync stores a server with the time it was changed on the other side).
+pub(crate) fn save_servers_as_is(all: &[ServerConfig]) {
+    let all = &all[..];
     let _ = std::fs::create_dir_all(audit::config_dir());
     let tmp = file().with_extension("json.tmp");
     if let Ok(s) = serde_json::to_string_pretty(all) {
@@ -134,6 +167,7 @@ pub fn import_json(text: &str) -> Result<Vec<ServerConfig>, String> {
             client_secret: oauth["clientSecret"].as_str().or_else(|| d["clientSecret"].as_str()).map(str::to_string),
             callback_port: oauth["callbackPort"].as_u64().or_else(|| d["callbackPort"].as_u64()).and_then(|p| u16::try_from(p).ok()),
             scope: oauth["scopes"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" ")).or_else(|| oauth["scope"].as_str().map(str::to_string)),
+            updated: 0,
         })
     };
     let mut out = Vec::new();

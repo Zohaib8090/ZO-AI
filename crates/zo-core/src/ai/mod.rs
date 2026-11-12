@@ -7,8 +7,10 @@ pub mod keys;
 pub mod memory_agent;
 pub mod personality_gen;
 pub mod models;
+pub mod probe;
 pub mod profiles;
 pub mod providers;
+pub mod ui_prefs;
 pub mod wire;
 
 use providers::Provider;

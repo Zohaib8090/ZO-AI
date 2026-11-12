@@ -719,7 +719,7 @@ fn sync_refuses_ids_the_database_cannot_hold_and_never_lets_a_chat_name_a_file_o
 
 #[test]
 fn a_client_that_sends_a_body_too_slowly_is_let_go_and_model_ops_take_a_place_like_an_answer() {
-    assert!(["compact", "memory_edit", "personality_generate", "models"].iter().all(|o| op_uses_model(o)) && !op_uses_model("chats"));
+    assert!(["compact", "memory_edit", "personality_generate", "models", "model_test"].iter().all(|o| op_uses_model(o)) && !op_uses_model("chats"));
     let u = uniq("slow");
     let r = rig(&[("tok-s", &u, "s@x.test")], "", 200, 600);
     use std::io::{Read, Write};
@@ -1196,6 +1196,137 @@ mod end_to_end {
         assert!(web_ids(&r, "tok-a", "chats", "chats").contains(&"c-desk".to_string()));
         let left = call(&r, "tok-a", "/api/account/devices_list", json!({}));
         assert!(left.body["devices"].as_array().unwrap().is_empty(), "{:?}", left.body);
+    }
+
+    /// Signs a desktop device in to the account of the Firebase token `tok` (the browser sign-in the web page approves).
+    fn sign_in(r: &Rig, tok: &str, dev: &Device, name: &str) {
+        let (child, out, code) = dev.login("desktop", name);
+        assert_eq!(call(r, tok, "/api/auth/device_approve", json!({"user_code": code, "approve": true})).status, 200);
+        assert!(finish(child, out).starts_with("LOGGED_IN"));
+    }
+
+    fn op(r: &Rig, tok: &str, v: Value) -> Value {
+        let a = call(r, tok, "/api/op", v);
+        assert_eq!(a.status, 200, "{:?}", a.body);
+        a.body
+    }
+
+    #[test]
+    fn profiles_pins_addresses_mcp_preferences_and_keys_sync_between_the_desktop_and_the_web() {
+        let bin = syncctl();
+        let (a_uid, r_uid) = (uniq("pk-a"), uniq("pk-r"));
+        let r = rig(&[("tok-a", &a_uid, "a@x.test"), ("tok-r", &r_uid, "r@x.test")], "a@x.test", 200, 600);
+        let desk = Device::new("pdesk", &r.base, &bin);
+        sign_in(&r, "tok-a", &desk, "Desk");
+        let secret = "sk-desktop-secret-value-123";
+
+        // the desktop has a profile with a pin and an address of its own, an MCP server, a hidden provider and a key
+        let pid = desk.run(&["profile", "Work", "custom", "m1", "https://models.example.com/v1", "m1,m2"]);
+        desk.run(&["mcpadd", "docs", "https://docs.example.com/mcp"]);
+        desk.run(&["mcpadd", "files", "npx -y some-local-server"]);
+        desk.run(&["hidden", "groq,mistral"]);
+        desk.run(&["key", "custom", secret]);
+        let s = desk.run(&["syncnow"]);
+        println!("first sync: {s}");
+        assert!(s.starts_with("synced"), "{s}");
+
+        // the web (the admin, with the Firebase token) sees the profile with its address and pins, the server, the preference
+        let list = op(&r, "tok-a", json!({"op": "profiles"}));
+        let p = list["profiles"].as_array().unwrap().iter().find(|p| p["id"] == pid.as_str()).unwrap_or_else(|| panic!("{list}")).clone();
+        println!("web sees profile: {} base_url={} pinned={}", p["name"], p["base_url"], p["pinned"]);
+        assert_eq!((p["base_url"].clone(), p["pinned"].clone(), p["provider"].clone()), (json!("https://models.example.com/v1"), json!(["m1", "m2"]), json!("custom")));
+        let mcp = op(&r, "tok-a", json!({"op": "mcp_list"}));
+        assert_eq!(mcp["servers"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect::<Vec<_>>(), ["docs"], "the remote one only, never the program: {mcp}");
+        assert_eq!(op(&r, "tok-a", json!({"op": "settings_get"}))["hidden_providers"], json!(["groq", "mistral"]));
+        // keys are OFF: no key on the server, none in the manifest, and the secret is nowhere in what the server says
+        let prov = op(&r, "tok-a", json!({"op": "providers"}));
+        assert_eq!(prov["providers"].as_array().unwrap().iter().find(|p| p["id"] == "custom").unwrap()["has_key"], false);
+        let cred = desk.credential().unwrap();
+        let man = call(&r, &cred, "/api/sync/manifest", json!({})).body;
+        assert!(man["keys"].as_object().unwrap().is_empty(), "{man}");
+        for text in [list.to_string(), mcp.to_string(), man.to_string(), prov.to_string()] {
+            assert!(!text.contains(secret) && !text.contains("some-local-server"), "{text}");
+        }
+
+        // an edit on the web (a pin) reaches the desktop; an edit on the desktop (another pin) reaches the web
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        op(&r, "tok-a", json!({"op": "profile_pin", "id": pid, "model": "m3", "on": true}));
+        assert!(desk.run(&["syncnow"]).contains("pulled"), "the web's pin comes to the desktop");
+        assert!(desk.run(&["profiles"]).contains("m1,m2,m3"), "{}", desk.run(&["profiles"]));
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        desk.run(&["unpin", &pid, "m1"]);
+        desk.run(&["syncnow"]);
+        let list = op(&r, "tok-a", json!({"op": "profiles"}));
+        assert_eq!(list["profiles"][0]["pinned"], json!(["m2", "m3"]), "{list}");
+        // switching an MCP server off on the web reaches the desktop (adding one on the web connects to it first, which needs a live
+        // server; it is saved by the same code); hiding a provider on the web too
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        op(&r, "tok-a", json!({"op": "mcp_toggle", "name": "docs", "enabled": false}));
+        op(&r, "tok-a", json!({"op": "settings_set", "hidden_providers": ["groq"]}));
+        desk.run(&["syncnow"]);
+        let m = desk.run(&["mcplist"]);
+        assert!(m.contains("mcp docs https://docs.example.com/mcp enabled=false") && m.contains("npx -y some-local-server"), "{m}");
+        assert_eq!(desk.run(&["hiddenlist"]), "hidden groq");
+        // deleting the profile on the desktop deletes it on the web
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        desk.run(&["rmprofile", &pid]);
+        desk.run(&["syncnow"]);
+        assert!(op(&r, "tok-a", json!({"op": "profiles"}))["profiles"].as_array().unwrap().is_empty());
+        // and a profile made on the web arrives on the desktop
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        op(&r, "tok-a", json!({"op": "select", "provider": "custom", "model": "web-m"}));
+        let web_id = op(&r, "tok-a", json!({"op": "profile_create", "name": "FromWeb"}))["id"].as_str().unwrap().to_string();
+        desk.run(&["syncnow"]);
+        assert!(desk.run(&["profiles"]).contains(&format!("profile {web_id} FromWeb")));
+
+        // keys only travel once the toggle is on, here
+        assert_eq!(desk.run(&["keyis", "custom", secret]), "true");
+        desk.run(&["kinds", "true", "true", "true"]);
+        let s = desk.run(&["syncnow"]);
+        println!("sync with keys on: {s}");
+        let prov = op(&r, "tok-a", json!({"op": "providers"}));
+        assert_eq!(prov["providers"].as_array().unwrap().iter().find(|p| p["id"] == "custom").unwrap()["has_key"], true, "the web has the key now: {prov}");
+        assert!(!prov.to_string().contains(secret), "the key itself is never in an answer");
+        let man = call(&r, &cred, "/api/sync/manifest", json!({})).body;
+        assert!(man["keys"].as_object().unwrap().contains_key("custom") && !man["keys"].as_object().unwrap().keys().any(|k| k.contains("sync-token")), "{man}");
+        // a key saved on the web (for the profile it is using there) comes to the desktop, under that profile
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert_eq!(call(&r, "tok-a", "/api/op", json!({"op": "set_key", "provider": "custom", "key": "sk-web-new-key-456"})).status, 200);
+        desk.run(&["syncnow"]);
+        assert_eq!(desk.run(&["keyis", &format!("custom@{web_id}"), "sk-web-new-key-456"]), "true");
+        // switching keys off again stops the traffic: a new desktop key stays on the desktop
+        desk.run(&["kinds", "true", "true", "false"]);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        desk.run(&["key", "custom", "sk-desktop-only-789"]);
+        desk.run(&["syncnow"]);
+        let a = call(&r, &cred, "/api/sync/get", json!({"kind": "keys", "id": "custom"}));
+        assert_eq!(a.body["doc"]["key"], secret, "the server has the key the desktop sent");
+        let a = call(&r, &cred, "/api/sync/get", json!({"kind": "keys", "id": &format!("custom@{web_id}")}));
+        assert_eq!(a.body["doc"]["key"], "sk-web-new-key-456", "the server still has the old one");
+
+        // a restricted person: no MCP server, no private address, but a public https profile and the pins arrive
+        let rd = Device::new("rdesk", &r.base, &bin);
+        sign_in(&r, "tok-r", &rd, "R desk");
+        rd.run(&["profile", "Local", "custom", "m", "http://127.0.0.1:8000/v1", ""]);
+        rd.run(&["profile", "Cloud", "custom", "m", "https://8.8.8.8/v1", "m,n"]);
+        rd.run(&["mcpadd", "docs", "https://docs.example.com/mcp"]);
+        let s = rd.run(&["syncnow"]);
+        println!("restricted desktop sync: {s}");
+        assert!(s.starts_with("synced"), "{s}");
+        let rl = op(&r, "tok-r", json!({"op": "profiles"}));
+        let names: Vec<&str> = rl["profiles"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["Cloud"], "the private address stayed on the desktop: {rl}");
+        assert_eq!(rl["profiles"][0]["pinned"], json!(["m", "n"]));
+        let rc = rd.credential().unwrap();
+        let rman = call(&r, &rc, "/api/sync/manifest", json!({})).body;
+        assert!(rman["mcp"].as_object().unwrap().is_empty(), "{rman}");
+        assert_eq!(call(&r, &rc, "/api/sync/get", json!({"kind": "mcp", "id": "docs"})).status, 400);
+        let put = call(&r, &rc, "/api/sync/put", json!({"kind": "mcp", "id": "docs", "doc": {"name": "docs", "address": "https://docs.example.com/mcp", "updated": 5}}));
+        assert_eq!(put.status, 400, "{:?}", put.body);
+        let ml = call(&r, "tok-r", "/api/op", json!({"op": "mcp_list"}));
+        assert!(ml.body.to_string().contains("not available"), "the web refuses it too: {:?}", ml.body);
+        assert!(rd.run(&["mcplist"]).contains("docs"), "it stays on the desktop");
+        assert!(rd.run(&["profiles"]).contains("Local"), "so does the private profile");
     }
 }
 
