@@ -33,12 +33,28 @@ fn rig(people: &[(&str, &str, &str)], admins: &str, max_users: usize, per_min: u
         legal: Default::default(),
         require_terms: std::sync::atomic::AtomicBool::new(false),
         accepted: Mutex::new(Default::default()),
+        link: link::Link::new(fast_link()),
     });
     let server = Server::http("127.0.0.1:0").unwrap();
     let base = format!("http://{}", server.server_addr().to_ip().unwrap());
     let a = app.clone();
     std::thread::spawn(move || serve(a, server));
     Rig { app, base, db }
+}
+
+/// The desktop link with short times, so that expiry and presence can be tried in seconds instead of minutes.
+fn fast_link() -> link::Config {
+    link::Config {
+        poll_wait: Duration::from_millis(400),
+        online_window: Duration::from_millis(1800),
+        job_expiry: Duration::from_millis(1500),
+        job_max: Duration::from_secs(3600),
+        lost_after: Duration::from_secs(5),
+        op_wait: Duration::from_secs(4),
+        stop_grace: Duration::from_millis(700),
+        ping_every: Duration::from_millis(300),
+        tick: Duration::from_millis(25),
+    }
 }
 
 struct Answer {
@@ -119,8 +135,14 @@ fn the_scope_matrix_every_route_for_every_kind_of_credential() {
     let acct = Cred::Account { uid: "u".into(), email: "e".into() };
     let full = Cred::Device { scope: Scope::Full, id: "d".into() };
     let sync = Cred::Device { scope: Scope::Sync, id: "d".into() };
-    let routes = [Route::Op, Route::Send, Route::Reply, Route::Sync, Route::Account, Route::Auth, Route::Signout];
-    let table: [(&Cred, [bool; 7]); 3] = [(&acct, [true; 7]), (&full, [true, true, true, true, false, false, true]), (&sync, [false, false, false, true, false, false, true])];
+    let routes = [Route::Op, Route::Send, Route::Reply, Route::Sync, Route::Account, Route::Auth, Route::Signout, Route::LinkDevice, Route::LinkStatus, Route::ClaudeToken];
+    // a web session is never a linked computer and never hands over the Claude token; the terminal client is neither; the desktop app's
+    // credential may sync, sign out, link and send the token (and ask which computers are linked)
+    let table: [(&Cred, [bool; 10]); 3] = [
+        (&acct, [true, true, true, true, true, true, true, false, true, false]),
+        (&full, [true, true, true, true, false, false, true, false, true, false]),
+        (&sync, [false, false, false, true, false, false, true, true, true, true]),
+    ];
     for (cred, want) in table {
         for (r, w) in routes.iter().zip(want) {
             assert_eq!(permits(cred, *r), w, "{cred:?} on {r:?}");
@@ -131,6 +153,13 @@ fn the_scope_matrix_every_route_for_every_kind_of_credential() {
     for (p, r) in [("/api/op", Route::Op), ("/api/send", Route::Send), ("/api/reply", Route::Reply), ("/api/sync/manifest", Route::Sync), ("/api/sync/get", Route::Sync), ("/api/sync/put", Route::Sync), ("/api/sync/delete", Route::Sync)] {
         assert_eq!(route_of(&post, p), Some(r), "{p}");
     }
+    for (p, r) in [("/api/link/poll", Route::LinkDevice), ("/api/link/events", Route::LinkDevice), ("/api/link/status", Route::LinkStatus), ("/api/sync/claude_token", Route::ClaudeToken)] {
+        assert_eq!(route_of(&post, p), Some(r), "{p}");
+    }
+    for p in ["/api/link", "/api/link/", "/api/link/other", "/api/sync/claude", "/api/sync/claude_token/x"] {
+        assert_eq!(route_of(&post, p), None, "{p}");
+    }
+    assert_eq!(route_of(&Method::Get, "/api/link/poll"), None);
     for n in account::CALLS {
         assert_eq!(route_of(&post, &format!("/api/account/{n}")), Some(Route::Account));
     }
@@ -484,7 +513,7 @@ fn the_web_page_the_policy_pages_and_the_headers() {
 fn the_no_login_test_mode_uses_one_fixed_restricted_person_and_only_answers_its_own_page() {
     let root = testenv::service();
     let tenants = Arc::new(TenantMap::new(root, None, testenv::SECRET.into(), 200, 8));
-    let app = Arc::new(App { no_auth: true, noauth_admin: false, verifier: None, policy: Policy::default(), tenants, devices: None, login: DeviceLogin::new(Default::default()), public_url: None, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1), conns: AtomicUsize::new(0), legal: Default::default(), require_terms: std::sync::atomic::AtomicBool::new(false), accepted: Mutex::new(Default::default()) });
+    let app = Arc::new(App { no_auth: true, noauth_admin: false, verifier: None, policy: Policy::default(), tenants, devices: None, login: DeviceLogin::new(Default::default()), public_url: None, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1), conns: AtomicUsize::new(0), legal: Default::default(), require_terms: std::sync::atomic::AtomicBool::new(false), accepted: Mutex::new(Default::default()), link: link::Link::default() });
     let server = Server::http("127.0.0.1:0").unwrap();
     let base = format!("http://{}", server.server_addr().to_ip().unwrap());
     let a = app.clone();
@@ -1112,4 +1141,555 @@ fn the_two_public_calls_refuse_web_pages_and_give_no_cross_site_permission() {
     // the web app's own calls keep theirs
     let w = ureq::request("OPTIONS", &format!("{}/api/op", r.base)).call().unwrap();
     assert_eq!(w.header("Access-Control-Allow-Origin"), Some("*"));
+}
+
+// ===========================================================================================================================
+// the desktop link (link.rs) and the Claude token (account.rs): see docs/LINK.md
+
+/// A streaming call (`/api/send`) that runs in a thread: its status and every line it received (pings left out).
+fn stream_in_thread(r: &Rig, token: &str, body: Value) -> std::thread::JoinHandle<(u16, Vec<Value>)> {
+    let (base, token) = (r.base.clone(), token.to_string());
+    std::thread::spawn(move || {
+        let res = match ureq::post(&format!("{base}/api/send")).set("Authorization", &format!("Bearer {token}")).timeout(Duration::from_secs(30)).send_string(&body.to_string()) {
+            Ok(r) => r,
+            Err(ureq::Error::Status(_, r)) => r,
+            Err(e) => panic!("{e}"),
+        };
+        let status = res.status();
+        let text = res.into_string().unwrap_or_default();
+        (status, text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter(|v| v["event"] != "ping").collect())
+    })
+}
+
+fn caps(approvals: bool) -> Value {
+    json!({"claude_code": true, "version": "0.9.1", "os": "linux", "approvals_from_web": approvals})
+}
+
+/// One poll of the desktop (waits up to the link's poll time): the jobs it got.
+fn dpoll(r: &Rig, cred: &str, name: &str, c: Value) -> Vec<Value> {
+    let a = call(r, cred, "/api/link/poll", json!({"name": name, "caps": c}));
+    assert_eq!(a.status, 200, "{:?}", a.body);
+    a.body["jobs"].as_array().cloned().unwrap_or_default()
+}
+
+/// Polls until something arrives (a few seconds at most).
+fn dpoll_for(r: &Rig, cred: &str, name: &str, c: Value, want_type: &str) -> Value {
+    let t0 = Instant::now();
+    loop {
+        for j in dpoll(r, cred, name, c.clone()) {
+            if j["type"] == want_type {
+                return j;
+            }
+        }
+        assert!(t0.elapsed() < Duration::from_secs(10), "no {want_type} job arrived");
+    }
+}
+
+fn post_events(r: &Rig, cred: &str, job: &str, events: Value, done: bool) -> Answer {
+    call(r, cred, "/api/link/events", json!({"job_id": job, "events": events, "done": done}))
+}
+
+fn evs(lines: &[Value]) -> Vec<String> {
+    lines.iter().map(|l| format!("{}:{}", l["event"].as_str().unwrap_or("?"), l["text"].as_str().or(l["error"].as_str()).unwrap_or(""))).collect()
+}
+
+#[test]
+fn presence_a_polling_desktop_is_online_a_silent_one_is_not_and_what_it_says_about_itself_is_cleaned() {
+    let u = uniq("lk-pres");
+    let r = rig(&[("tok", &u, "p@x.test")], "", 200, 600);
+    let (cred, id) = make_device(&r, "tok", "Laptop-p", "desktop");
+    let st = |r: &Rig| call(r, "tok", "/api/link/status", json!({}));
+    // signed in, never polled: listed, offline
+    let a = st(&r);
+    assert_eq!(a.status, 200, "{:?}", a.body);
+    let d = &a.body["devices"][0];
+    assert_eq!((d["id"].as_str(), d["name"].as_str(), d["online"].as_bool()), (Some(id.as_str()), Some("Laptop-p"), Some(false)));
+    // a poll (here one that waits in a thread) makes it online while it is open
+    let (base, c2) = (r.base.clone(), cred.clone());
+    let waiting = std::thread::spawn(move || ureq::post(&format!("{base}/api/link/poll")).set("Authorization", &format!("Bearer {c2}")).send_string(&json!({"name": "My Laptop", "caps": {"claude_code": true, "approvals_from_web": false, "version": "1.2", "os": "linux", "evil": "<script>", "extra": {"a": 1}}}).to_string()).unwrap().status());
+    std::thread::sleep(Duration::from_millis(150));
+    let d = st(&r).body["devices"][0].clone();
+    assert_eq!(d["online"], true, "{d}");
+    assert_eq!(d["name"], "My Laptop");
+    assert_eq!(d["caps"], json!({"claude_code": true, "approvals_from_web": false, "version": "1.2", "os": "linux"}), "unknown fields are dropped");
+    assert!(d["last_seen"].as_u64().unwrap() > 1_000_000_000);
+    assert_eq!(waiting.join().unwrap(), 200);
+    // it stays online for a short while after the poll, then it is offline
+    assert_eq!(st(&r).body["devices"][0]["online"], true);
+    std::thread::sleep(Duration::from_millis(2000));
+    assert_eq!(st(&r).body["devices"][0]["online"], false);
+    // a CLI credential is not a computer: it never shows
+    make_device(&r, "tok", "terminal-p", "cli");
+    assert_eq!(st(&r).body["devices"].as_array().unwrap().len(), 1);
+    // revoking the desktop removes it
+    assert_eq!(call(&r, "tok", "/api/account/device_revoke", json!({"id": id})).status, 200);
+    assert_eq!(st(&r).body["devices"].as_array().unwrap().len(), 0);
+    assert_eq!(call(&r, &cred, "/api/link/poll", json!({})).status, 401);
+}
+
+#[test]
+fn a_message_goes_to_the_computer_its_events_come_back_in_order_and_the_stream_ends_with_done() {
+    let u = uniq("lk-life");
+    let r = rig(&[("tok", &u, "l@x.test")], "", 200, 600);
+    let (cred, _) = make_device(&r, "tok", "Desk", "desktop");
+    assert!(dpoll(&r, &cred, "Desk", caps(false)).is_empty(), "nothing to do yet");
+    let t = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "open the calendar", "chat": "c-1", "attachments": [{"name": "a.txt"}], "mode": "bypass", "evil": "x", "tenant": {"id": "x"}}));
+    let job = dpoll_for(&r, &cred, "Desk", caps(false), "send");
+    // the job carries the whitelisted fields only, with its age (the desktop refuses anything older than two minutes)
+    assert_eq!(job["text"], "open the calendar");
+    assert_eq!((job["chat"].as_str(), job["mode"].as_str()), (Some("c-1"), Some("bypass")));
+    assert!(job.get("evil").is_none() && job.get("tenant").is_none() && job["attachments"][0]["name"] == "a.txt");
+    assert!(job["age_secs"].as_u64().unwrap() < 5 && job["expires_in_secs"].as_u64().unwrap() <= 2);
+    let id = job["id"].as_str().unwrap();
+    // events arrive in posting order, across posts; stream and done lines of the desktop are ignored (the server writes them)
+    let a = post_events(&r, &cred, id, json!([{"event": "delta", "text": "one"}, {"event": "stream", "id": 999}, {"event": "delta", "text": "two"}]), false);
+    assert_eq!((a.status, a.body["cancel"].clone()), (200, json!(false)), "{:?}", a.body);
+    assert_eq!(post_events(&r, &cred, id, json!([{"event": "delta", "text": "three"}, {"event": "done"}]), true).body["cancel"], false, "the post that ends the job is an ordinary one");
+    let (status, lines) = t.join().unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(lines[0]["event"], "stream");
+    assert_eq!((lines[0]["target"].as_str(), lines[0]["device"].as_str()), (Some("desktop"), Some("Desk")));
+    assert!(lines[0]["id"].as_u64().is_some() && lines[0]["id"] != 999);
+    assert_eq!(evs(&lines[1..]), ["delta:one", "delta:two", "delta:three", "done:"], "{lines:?}");
+    // the job is over: a desktop that still posts is told to stop, and nothing is left behind
+    let a = post_events(&r, &cred, id, json!([{"event": "delta", "text": "late"}]), false);
+    assert_eq!(a.body["cancel"], true);
+    let (_, jobs, streams) = r.app.link.counts();
+    assert_eq!((jobs, streams), (0, 0));
+}
+
+#[test]
+fn without_an_online_computer_the_answer_is_an_immediate_clear_error_and_done() {
+    let u = uniq("lk-off");
+    let r = rig(&[("tok", &u, "o@x.test")], "", 200, 600);
+    // no desktop at all
+    let (status, lines) = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "hi"})).join().unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!((lines[0]["event"].as_str(), lines[0]["error"].as_str()), (Some("error"), Some("desktop_offline")));
+    assert!(lines[0]["message"].as_str().unwrap().contains("Your computer is not reachable") && lines[0]["message"].as_str().unwrap().contains("Control this computer from the web"));
+    assert_eq!(lines[1]["event"], "done");
+    // a desktop that polled a while ago
+    let (cred, id) = make_device(&r, "tok", "Old", "desktop");
+    dpoll(&r, &cred, "Old", caps(false));
+    std::thread::sleep(Duration::from_millis(2100));
+    let (_, lines) = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "hi", "device": id})).join().unwrap();
+    assert_eq!(lines[0]["error"], "desktop_offline");
+    // the settings questions say the same
+    let a = call(&r, "tok", "/api/op", json!({"op": "desktop_op", "inner": {"op": "status"}}));
+    assert_eq!((a.status, a.body["error"].as_str()), (503, Some("desktop_offline")), "{:?}", a.body);
+    // bad requests are ordinary errors
+    assert_eq!(call(&r, "tok", "/api/send", json!({"target": "desktop", "text": "  "})).status, 400);
+    assert_eq!(call(&r, "tok", "/api/send", json!({"target": "desktop", "text": "x".repeat(link::MAX_TEXT_CHARS + 1)})).status, 413);
+    assert_eq!(call(&r, "tok", "/api/send", json!({"target": "desktop", "text": "hi", "chat": {"a": 1}})).status, 400);
+    assert_eq!(call(&r, "tok", "/api/send", json!({"target": "desktop", "text": "hi", "attachments": "x"})).status, 400);
+}
+
+#[test]
+fn only_one_web_request_runs_on_a_computer_at_a_time() {
+    let u = uniq("lk-busy");
+    let r = rig(&[("tok", &u, "b@x.test")], "", 200, 600);
+    let (cred, _) = make_device(&r, "tok", "Busy", "desktop");
+    dpoll(&r, &cred, "Busy", caps(false));
+    let first = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "long task"}));
+    let job = dpoll_for(&r, &cred, "Busy", caps(false), "send");
+    let (_, second) = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "another"})).join().unwrap();
+    assert_eq!(second[0]["error"], "desktop_busy", "{second:?}");
+    assert_eq!(second.last().unwrap()["event"], "done");
+    // a settings question is not a job: it may go while the task runs
+    let (base, c2) = (r.base.clone(), cred.clone());
+    let op = {
+        let (b, t) = (base.clone(), "tok".to_string());
+        std::thread::spawn(move || ureq::post(&format!("{b}/api/op")).set("Authorization", &format!("Bearer {t}")).send_string(&json!({"op": "desktop_op", "inner": {"op": "status"}}).to_string()).unwrap().into_string().unwrap())
+    };
+    let _ = c2;
+    let opjob = dpoll_for(&r, &cred, "Busy", caps(false), "op");
+    assert_eq!(post_events(&r, &cred, opjob["id"].as_str().unwrap(), json!([{"event": "op_result", "reply": {"provider": "claude-code"}}]), true).status, 200);
+    assert_eq!(serde_json::from_str::<Value>(&op.join().unwrap()).unwrap(), json!({"ok": true, "result": {"provider": "claude-code"}}));
+    post_events(&r, &cred, job["id"].as_str().unwrap(), json!([]), true);
+    assert_eq!(first.join().unwrap().1.last().unwrap()["event"], "done");
+    // and when it is over the computer takes the next one
+    let next = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "next"}));
+    let j2 = dpoll_for(&r, &cred, "Busy", caps(false), "send");
+    post_events(&r, &cred, j2["id"].as_str().unwrap(), json!([{"event": "delta", "text": "ok"}]), true);
+    assert!(evs(&next.join().unwrap().1).contains(&"delta:ok".to_string()));
+}
+
+#[test]
+fn a_job_nobody_picks_up_expires_is_told_and_is_never_delivered_later() {
+    let u = uniq("lk-exp");
+    let r = rig(&[("tok", &u, "e@x.test")], "", 200, 600);
+    let (cred, id) = make_device(&r, "tok", "Slow", "desktop");
+    dpoll(&r, &cred, "Slow", caps(false)); // online, then it stops polling
+    let t0 = Instant::now();
+    let (_, lines) = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "hello?"})).join().unwrap();
+    assert!(t0.elapsed() >= Duration::from_millis(1400) && t0.elapsed() < Duration::from_secs(6), "{:?}", t0.elapsed());
+    assert_eq!(lines[0]["event"], "stream");
+    assert_eq!(lines[1]["error"], "desktop_timeout", "{lines:?}");
+    assert!(lines[1]["message"].as_str().unwrap().contains("not run"));
+    assert_eq!(lines.last().unwrap()["event"], "done");
+    // the desktop comes back later: nothing is waiting for it, the job is never run
+    assert!(dpoll(&r, &cred, "Slow", caps(false)).is_empty());
+    assert_eq!(r.app.link.queued(&tenant_of(&u), &id), 0);
+    // the same for a job that waited in the queue longer than the limit before the desktop's next poll
+    let t = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "late"}));
+    std::thread::sleep(Duration::from_millis(1700)); // longer than the expiry, shorter than nothing: the relay already gave up
+    assert!(dpoll(&r, &cred, "Slow", caps(false)).iter().all(|j| j["type"] != "send"), "an expired job is not delivered");
+    assert_eq!(t.join().unwrap().1[1]["error"], "desktop_timeout");
+}
+
+#[test]
+fn stop_reaches_the_computer_the_events_answer_says_cancel_and_the_page_is_told_it_stopped() {
+    let u = uniq("lk-stop");
+    let r = rig(&[("tok", &u, "s@x.test")], "", 200, 600);
+    let (cred, _) = make_device(&r, "tok", "Stoppable", "desktop");
+    dpoll(&r, &cred, "Stoppable", caps(false));
+    let t = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "forever"}));
+    let job = dpoll_for(&r, &cred, "Stoppable", caps(false), "send");
+    let id = job["id"].as_str().unwrap().to_string();
+    let stream = r.app.link.counts(); // (devices, jobs, streams)
+    assert_eq!((stream.1, stream.2), (1, 1));
+    let sid = loop {
+        // the stream number is in the first line: ask the server through the reply route until it is accepted
+        let n = (1..200u64).find(|n| call(&r, "tok", "/api/reply", json!({"stream": n, "op": "stop"})).status == 200);
+        if let Some(n) = n {
+            break n;
+        }
+    };
+    assert!(sid > 0);
+    // the stop comes with the next poll, and the next events answer says cancel
+    let stop = dpoll_for(&r, &cred, "Stoppable", caps(false), "stop");
+    assert_eq!(stop["job_id"], id.as_str());
+    assert_eq!(post_events(&r, &cred, &id, json!([{"event": "delta", "text": "partial"}]), false).body["cancel"], true);
+    // the desktop ends it
+    post_events(&r, &cred, &id, json!([{"event": "stopped"}]), true);
+    let (_, lines) = t.join().unwrap();
+    assert!(evs(&lines).contains(&"delta:partial".to_string()) && evs(&lines).contains(&"stopped:".to_string()), "{lines:?}");
+    assert_eq!(lines.last().unwrap()["event"], "done");
+    // a desktop that does not end it is overruled after a short grace: the page gets "stopped" and done
+    dpoll(&r, &cred, "Stoppable", caps(false));
+    let t = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "stuck"}));
+    dpoll_for(&r, &cred, "Stoppable", caps(false), "send");
+    let sid = (1..400u64).find(|n| call(&r, "tok", "/api/reply", json!({"stream": n, "op": "stop"})).status == 200).expect("a running stream");
+    assert!(sid > 0);
+    let (_, lines) = t.join().unwrap();
+    assert_eq!(evs(&lines[1..]), ["stopped:", "done:"], "{lines:?}");
+}
+
+#[test]
+fn approvals_from_the_web_are_forwarded_only_when_the_computer_said_it_takes_them() {
+    let u = uniq("lk-appr");
+    let r = rig(&[("tok", &u, "a@x.test")], "", 200, 600);
+    let (cred, _) = make_device(&r, "tok", "Appr", "desktop");
+    // 1) approvals stay on the computer
+    dpoll(&r, &cred, "Appr", caps(false));
+    let t = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "do it"}));
+    let job = dpoll_for(&r, &cred, "Appr", caps(false), "send");
+    let jid = job["id"].as_str().unwrap().to_string();
+    post_events(&r, &cred, &jid, json!([{"event": "approval", "id": "ap-1", "summary": "Run ls"}]), false);
+    let sid = (1..400u64).find(|n| call(&r, "tok", "/api/reply", json!({"stream": *n, "op": "approve", "id": "ap-1", "yes": true})).status == 409).expect("refused for a running stream");
+    let a = call(&r, "tok", "/api/reply", json!({"stream": sid, "op": "approve", "id": "ap-1", "yes": true}));
+    assert_eq!((a.status, a.body["error"].as_str()), (409, Some("approvals_on_computer")), "{:?}", a.body);
+    assert!(dpoll(&r, &cred, "Appr", caps(false)).iter().all(|j| j["type"] != "approval_reply"), "nothing was forwarded");
+    // 2) the computer announces it takes web approvals: the answer is forwarded, once, with the job and the approval it is for
+    let a = call(&r, "tok", "/api/link/status", json!({}));
+    assert_eq!(a.body["devices"][0]["caps"]["approvals_from_web"], false);
+    dpoll(&r, &cred, "Appr", caps(true));
+    let a = call(&r, "tok", "/api/reply", json!({"stream": sid, "op": "approve", "id": "ap-1", "yes": false}));
+    assert_eq!(a.status, 200, "{:?}", a.body);
+    let fwd = dpoll_for(&r, &cred, "Appr", caps(true), "approval_reply");
+    assert_eq!((fwd["job_id"].as_str(), fwd["approval_id"].as_str(), fwd["approval"].as_str(), fwd["yes"].as_bool()), (Some(jid.as_str()), Some("ap-1"), Some("ap-1"), Some(false)));
+    // the desktop's own ids are numbers
+    assert_eq!(call(&r, "tok", "/api/reply", json!({"stream": sid, "op": "approve", "id": 7, "yes": true})).status, 200);
+    assert_eq!(dpoll_for(&r, &cred, "Appr", caps(true), "approval_reply")["approval"], 7);
+    // malformed answers and other ops are refused
+    assert_eq!(call(&r, "tok", "/api/reply", json!({"stream": sid, "op": "approve", "id": {"x": 1}, "yes": true})).status, 400);
+    assert_eq!(call(&r, "tok", "/api/reply", json!({"stream": sid, "op": "approve", "id": "ap-2"})).status, 400);
+    assert_eq!(call(&r, "tok", "/api/reply", json!({"stream": sid, "op": "shell", "cmd": "rm -rf /"})).status, 400);
+    post_events(&r, &cred, &jid, json!([]), true);
+    t.join().unwrap();
+}
+
+#[test]
+fn settings_questions_for_the_computer_are_whitelisted_cleaned_and_answered() {
+    let u = uniq("lk-op");
+    let r = rig(&[("tok", &u, "w@x.test")], "", 200, 600);
+    let (cred, _) = make_device(&r, "tok", "Ops", "desktop");
+    dpoll(&r, &cred, "Ops", caps(false));
+    for bad in [json!({"op": "shell"}), json!({"op": "set_key", "provider": "x", "key": "k"}), json!({"op": "send"}), json!({"op": "desktop_op"}), json!({"op": "mode", "set": "bypass"}), json!({"op": "mode", "set": "BYPASS"}), json!({"op": "mode", "set": 5}), json!({}), json!("status")] {
+        let a = call(&r, "tok", "/api/op", json!({"op": "desktop_op", "inner": bad}));
+        assert_eq!((a.status, a.body["error"].as_str()), (400, Some("not_allowed")), "{bad}: {:?}", a.body);
+    }
+    // the question that is allowed arrives with its known fields only
+    let (base, ) = (r.base.clone(), );
+    let ask = std::thread::spawn(move || ureq::post(&format!("{base}/api/op")).set("Authorization", "Bearer tok").send_string(&json!({"op": "desktop_op", "inner": {"op": "select", "provider": "claude-code", "model": "opus", "effort": "high", "cmd": "rm -rf /", "tenant": {"id": "x"}}}).to_string()).unwrap().into_string().unwrap());
+    let job = dpoll_for(&r, &cred, "Ops", caps(false), "op");
+    assert_eq!(job["inner"], json!({"op": "select", "provider": "claude-code", "model": "opus", "effort": "high"}));
+    post_events(&r, &cred, job["id"].as_str().unwrap(), json!([{"event": "result", "result": {"ok": true, "model": "opus"}}]), true);
+    assert_eq!(serde_json::from_str::<Value>(&ask.join().unwrap()).unwrap()["result"]["model"], "opus");
+    // every name on the list passes the check
+    for op in link::OPS {
+        assert!(link::clean_inner(&json!({"op": op})).is_ok(), "{op}");
+    }
+    assert_eq!(link::clean_inner(&json!({"op": "mode", "set": "Manual"})).unwrap(), json!({"op": "mode", "set": "manual"}));
+    // a desktop that never answers: the page is told, and the question is taken back so that it is not run later
+    let t0 = Instant::now();
+    let a = call(&r, "tok", "/api/op", json!({"op": "desktop_op", "inner": {"op": "providers"}}));
+    assert_eq!((a.status, a.body["error"].as_str()), (503, Some("desktop_timeout")), "{:?}", a.body);
+    assert!(t0.elapsed() < Duration::from_secs(9));
+    assert!(dpoll(&r, &cred, "Ops", caps(false)).is_empty());
+    // a desktop that answers with an error event: the page gets that as the error
+    let base = r.base.clone();
+    let ask = std::thread::spawn(move || {
+        let res = match ureq::post(&format!("{base}/api/op")).set("Authorization", "Bearer tok").send_string(&json!({"op": "desktop_op", "inner": {"op": "models"}}).to_string()) {
+            Ok(r) => r,
+            Err(ureq::Error::Status(_, r)) => r,
+            Err(e) => panic!("{e}"),
+        };
+        (res.status(), serde_json::from_str::<Value>(&res.into_string().unwrap()).unwrap())
+    });
+    let job = dpoll_for(&r, &cred, "Ops", caps(false), "op");
+    post_events(&r, &cred, job["id"].as_str().unwrap(), json!([{"event": "error", "error": "No provider is chosen on the computer."}]), true);
+    let (status, body) = ask.join().unwrap();
+    assert_eq!((status, body["error"].as_str(), body["message"].as_str()), (503, Some("desktop_error"), Some("No provider is chosen on the computer.")));
+}
+
+#[test]
+fn nobody_can_reach_another_persons_computers_jobs_or_streams() {
+    let (ua, ub) = (uniq("lk-iso-a"), uniq("lk-iso-b"));
+    let r = rig(&[("tok-a", &ua, "a@x.test"), ("tok-b", &ub, "b@x.test")], "", 200, 600);
+    let (ca, ida) = make_device(&r, "tok-a", "A-desk", "desktop");
+    let (cb, idb) = make_device(&r, "tok-b", "B-desk", "desktop");
+    dpoll(&r, &ca, "A-desk", caps(true));
+    dpoll(&r, &cb, "B-desk", caps(true));
+    // B sees only B's computer
+    let sb = call(&r, "tok-b", "/api/link/status", json!({}));
+    assert_eq!(sb.body["devices"].as_array().unwrap().len(), 1);
+    assert_eq!(sb.body["devices"][0]["id"], idb.as_str());
+    assert!(!sb.body.to_string().contains("A-desk") && !sb.body.to_string().contains(&ida));
+    // B names A's computer: it is "offline" (nothing about it leaks), and nothing reaches it
+    let (_, lines) = stream_in_thread(&r, "tok-b", json!({"target": "desktop", "text": "hi A", "device": ida})).join().unwrap();
+    assert_eq!(lines[0]["error"], "desktop_offline");
+    let a = call(&r, "tok-b", "/api/op", json!({"op": "desktop_op", "device": ida, "inner": {"op": "status"}}));
+    assert_eq!(a.body["error"], "desktop_offline");
+    assert!(dpoll(&r, &ca, "A-desk", caps(true)).is_empty(), "A's computer got nothing");
+    // A runs a job; B's credential cannot post events for it, B cannot stop or approve it, and A's credential cannot post for B's job
+    let ta = stream_in_thread(&r, "tok-a", json!({"target": "desktop", "text": "A's secret task"}));
+    let job_a = dpoll_for(&r, &ca, "A-desk", caps(true), "send");
+    let ja = job_a["id"].as_str().unwrap();
+    let forged = post_events(&r, &cb, ja, json!([{"event": "delta", "text": "FORGED"}]), true);
+    assert_eq!((forged.status, forged.body["cancel"].clone()), (404, json!(true)), "{:?}", forged.body);
+    for n in 1..100u64 {
+        for op in [json!({"stream": n, "op": "stop"}), json!({"stream": n, "op": "approve", "id": "x", "yes": true})] {
+            assert_eq!(call(&r, "tok-b", "/api/reply", op).status, 404, "B cannot reach stream {n}");
+        }
+    }
+    let tb = stream_in_thread(&r, "tok-b", json!({"target": "desktop", "text": "B's task"}));
+    let job_b = dpoll_for(&r, &cb, "B-desk", caps(true), "send");
+    assert_eq!(post_events(&r, &ca, job_b["id"].as_str().unwrap(), json!([{"event": "delta", "text": "FORGED"}]), true).status, 404);
+    assert_eq!(post_events(&r, &cb, ja, json!([]), true).status, 404, "not even an empty post for A's job");
+    // an unknown job is a 404 as well, and A's real job still works
+    assert_eq!(post_events(&r, &ca, "0123456789abcdef", json!([]), false).status, 404);
+    post_events(&r, &ca, ja, json!([{"event": "delta", "text": "A's answer"}]), true);
+    post_events(&r, &cb, job_b["id"].as_str().unwrap(), json!([{"event": "delta", "text": "B's answer"}]), true);
+    let (la, lb) = (ta.join().unwrap().1, tb.join().unwrap().1);
+    assert!(evs(&la).contains(&"delta:A's answer".to_string()) && !evs(&la).iter().any(|e| e.contains("FORGED") || e.contains("B's")), "{la:?}");
+    assert!(evs(&lb).contains(&"delta:B's answer".to_string()) && !evs(&lb).iter().any(|e| e.contains("FORGED") || e.contains("A's")), "{lb:?}");
+}
+
+#[test]
+fn which_credential_may_call_the_link_routes_over_http() {
+    let u = uniq("lk-scope");
+    let r = rig(&[("tok", &u, "c@x.test")], "owner@x.test", 200, 600);
+    let (dt, _) = make_device(&r, "tok", "scope-desk", "desktop");
+    let (ft, _) = make_device(&r, "tok", "scope-term", "cli");
+    // the desktop credential: the link, the Claude token route (which then decides by the person), the sync; not the API
+    assert_eq!(call(&r, &dt, "/api/link/poll", json!({})).status, 200);
+    assert_eq!(call(&r, &dt, "/api/link/events", json!({"job_id": "nope"})).status, 404);
+    assert_eq!(call(&r, &dt, "/api/link/status", json!({})).status, 200);
+    assert_eq!(call(&r, &dt, "/api/sync/claude_token", json!({"action": "status"})).status, 403, "reached, and refused because the person is not the owner");
+    assert_eq!(call(&r, &dt, "/api/op", json!({"op": "desktop_op", "inner": {"op": "status"}})).status, 403);
+    assert_eq!(call(&r, &dt, "/api/op", json!({"op": "chats"})).status, 403);
+    assert_eq!(call(&r, &dt, "/api/send", json!({"target": "desktop", "text": "x"})).status, 403);
+    assert_eq!(call(&r, &dt, "/api/reply", json!({"stream": 1, "op": "stop"})).status, 403);
+    assert_eq!(call(&r, &dt, "/api/account/claude_status", json!({})).status, 403);
+    // a web session cannot be a computer and cannot hand over a token
+    for p in ["/api/link/poll", "/api/link/events", "/api/sync/claude_token"] {
+        assert_eq!(call(&r, "tok", p, json!({"job_id": "x", "action": "status"})).status, 403, "{p}");
+    }
+    assert_eq!(call(&r, "tok", "/api/link/status", json!({})).status, 200);
+    // the terminal client is not a computer either, but may ask which are linked
+    for p in ["/api/link/poll", "/api/link/events", "/api/sync/claude_token"] {
+        assert_eq!(call(&r, &ft, p, json!({})).status, 403, "{p}");
+    }
+    assert_eq!(call(&r, &ft, "/api/link/status", json!({})).status, 200);
+    // nobody at all
+    for p in ["/api/link/poll", "/api/link/events", "/api/link/status", "/api/sync/claude_token"] {
+        assert_eq!(call(&r, "", p, json!({})).status, 401, "{p}");
+        assert_eq!(call(&r, &format!("zd_{}", "B".repeat(43)), p, json!({})).status, 401, "{p}");
+    }
+}
+
+#[test]
+fn what_a_computer_posts_and_polls_is_size_and_rate_checked() {
+    let u = uniq("lk-lim");
+    let r = rig(&[("tok", &u, "z@x.test")], "", 200, 600);
+    let (cred, _) = make_device(&r, "tok", "Limits", "desktop");
+    dpoll(&r, &cred, "Limits", caps(false));
+    let t = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "go"}));
+    let job = dpoll_for(&r, &cred, "Limits", caps(false), "send");
+    let id = job["id"].as_str().unwrap();
+    // malformed posts
+    assert_eq!(call(&r, &cred, "/api/link/events", json!({"events": []})).status, 400, "no job");
+    assert_eq!(post_events(&r, &cred, id, json!("x"), false).status, 400);
+    assert_eq!(post_events(&r, &cred, id, json!([1, 2]), false).status, 400);
+    assert_eq!(post_events(&r, &cred, id, json!((0..=link::EVENTS_PER_POST).map(|_| json!({"event": "delta"})).collect::<Vec<_>>()), false).status, 400);
+    // a post over one megabyte is refused before it is read
+    let huge = json!([{"event": "delta", "text": "x".repeat(1_100_000)}]);
+    assert_eq!(post_events(&r, &cred, id, huge, false).status, 413);
+    // a poll body is small
+    assert_eq!(call(&r, &cred, "/api/link/poll", json!({"name": "x".repeat(20_000)})).status, 413);
+    post_events(&r, &cred, id, json!([]), true);
+    t.join().unwrap();
+}
+
+#[test]
+fn a_deleted_account_takes_its_computers_and_running_jobs_with_it() {
+    let u = uniq("lk-del");
+    let r = rig(&[("tok", &u, "d@x.test")], "", 200, 600);
+    let (cred, _) = make_device(&r, "tok", "Gone", "desktop");
+    dpoll(&r, &cred, "Gone", caps(false));
+    let t = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "go"}));
+    dpoll_for(&r, &cred, "Gone", caps(false), "send");
+    assert_eq!(call(&r, "tok", "/api/account/delete", json!({"confirm": "DELETE"})).status, 200);
+    let (_, lines) = t.join().unwrap();
+    assert_eq!(lines.last().unwrap()["event"], "done");
+    assert!(lines.iter().any(|l| l["error"] == "account_deleted"), "{lines:?}");
+    assert_eq!(r.app.link.counts().0, 0, "the computers are forgotten");
+    assert_eq!(call(&r, &cred, "/api/link/poll", json!({})).status, 401);
+}
+
+// ---- Claude Code on the server for the owner ------------------------------------------------------------------------------
+
+const OWNER_TOKEN: &str = "sk-ant-oat01-OWNER-token-for-the-tests-0123456789abcdef";
+
+#[test]
+fn the_claude_token_is_for_the_owners_desktop_only_stored_encrypted_and_never_shown() {
+    let (uo, ur) = (uniq("ct-owner"), uniq("ct-restr"));
+    let r = rig(&[("tok-o", &uo, "owner@x.test"), ("tok-r", &ur, "guest@x.test")], "owner@x.test", 200, 600);
+    let (od, _) = make_device(&r, "tok-o", "owner-desk", "desktop");
+    let (rd, _) = make_device(&r, "tok-r", "guest-desk", "desktop");
+    // nothing yet
+    let s = call(&r, "tok-o", "/api/account/claude_status", json!({}));
+    assert_eq!((s.status, s.body["present"].clone(), s.body["admin"].clone()), (200, json!(false), json!(true)), "{:?}", s.body);
+    // a restricted person's desktop: refused, with the reason; nothing is stored
+    let a = call(&r, &rd, "/api/sync/claude_token", json!({"action": "set", "token": OWNER_TOKEN}));
+    assert_eq!(a.status, 403, "{:?}", a.body);
+    assert!(a.body["error"].as_str().unwrap().contains("owner"));
+    assert!(!tenant_dir(&ur).join("config").join("keys.enc").exists());
+    let s = call(&r, "tok-r", "/api/account/claude_status", json!({}));
+    assert_eq!((s.body["present"].clone(), s.body["admin"].clone()), (json!(false), json!(false)));
+    // the owner's desktop: garbage is refused, a token is stored
+    for bad in [json!({"action": "set"}), json!({"action": "set", "token": "hello"}), json!({"action": "set", "token": "sk-ant-has space in it 01234567890123456789"}), json!({"action": "nope"}), json!({})] {
+        assert_eq!(call(&r, &od, "/api/sync/claude_token", bad.clone()).status, 400, "{bad}");
+    }
+    let a = call(&r, &od, "/api/sync/claude_token", json!({"token": OWNER_TOKEN}));
+    assert_eq!(a.status, 200, "{:?}", a.body);
+    assert!(a.body["set_at"].as_u64().unwrap() > 1_000_000_000);
+    assert!(!a.body.to_string().contains("sk-ant"), "the answer never repeats the token");
+    let s = call(&r, "tok-o", "/api/account/claude_status", json!({}));
+    assert_eq!((s.body["present"].clone(), s.body["source"].clone(), s.body["admin"].clone()), (json!(true), json!("own"), json!(true)));
+    assert_eq!(s.body["set_at"], a.body["set_at"]);
+    assert!(!s.body.to_string().contains("sk-ant"));
+    assert_eq!(call(&r, &od, "/api/sync/claude_token", json!({"action": "status"})).body["present"], true);
+    // at rest: encrypted in the person's key store, and the same ciphertext is all that goes to Firestore
+    let raw = std::fs::read(tenant_dir(&uo).join("config").join("keys.enc")).unwrap();
+    assert!(!String::from_utf8_lossy(&raw).contains("sk-ant-oat01"));
+    let map = zo_core::ai::keys::decrypt_map(testenv::SECRET, &tenant_of(&uo), &raw).unwrap();
+    assert_eq!(map["claude-code-token"], OWNER_TOKEN);
+    r.app.tenants.push_all();
+    let docs: String = r.db.docs.lock().unwrap().iter().map(|((c, i), t)| format!("{c}/{i}={t}")).collect();
+    assert!(!docs.contains("sk-ant-oat01") && !docs.contains(OWNER_TOKEN), "Firestore never holds the token in clear");
+    assert!(docs.contains("keys_enc"), "the encrypted key file is what is kept");
+    // not in any export, listing, sync answer or provider list
+    for (tok, path, body) in [("tok-o", "/api/account/export", json!({})), ("tok-o", "/api/account/whoami", json!({})), ("tok-o", "/api/account/devices_list", json!({})), ("tok-o", "/api/op", json!({"op": "providers"})), ("tok-o", "/api/op", json!({"op": "status"}))] {
+        let a = call(&r, tok, path, body);
+        assert!(!a.body.to_string().contains("sk-ant"), "{path}: {:?}", a.body);
+    }
+    for (tok, path, body) in [(&od, "/api/sync/manifest", json!({})), (&od, "/api/sync/get", json!({"kind": "files", "id": "keys_enc"})), (&od, "/api/sync/get", json!({"kind": "keys", "id": "claude-code-token"}))] {
+        let a = call(&r, tok, path, body);
+        assert!(!a.body.to_string().contains("sk-ant") && !a.body.to_string().contains("keys_enc") || path.ends_with("manifest") && !a.body.to_string().contains("sk-ant"), "{path}: {:?}", a.body);
+    }
+    // the owner sees Claude Code as a provider now (never the restricted person)
+    let p = call(&r, "tok-o", "/api/op", json!({"op": "providers"}));
+    let cc = p.body["providers"].as_array().unwrap().iter().find(|x| x["id"] == "claude-code").cloned().expect("listed for the owner with a token");
+    assert_eq!(cc["name"], "Claude Code (your subscription)");
+    let p = call(&r, "tok-r", "/api/op", json!({"op": "providers"}));
+    assert!(p.body["providers"].as_array().unwrap().iter().all(|x| x["id"] != "claude-code"));
+    // remove it: gone from the store, the status and the provider list
+    assert_eq!(call(&r, &od, "/api/sync/claude_token", json!({"delete": true})).status, 200);
+    let s = call(&r, "tok-o", "/api/account/claude_status", json!({}));
+    assert_eq!(s.body["present"], false);
+    let raw = std::fs::read(tenant_dir(&uo).join("config").join("keys.enc")).unwrap();
+    assert!(!zo_core::ai::keys::decrypt_map(testenv::SECRET, &tenant_of(&uo), &raw).unwrap().contains_key("claude-code-token"));
+    let p = call(&r, "tok-o", "/api/op", json!({"op": "providers"}));
+    assert!(p.body["providers"].as_array().unwrap().iter().all(|x| x["id"] != "claude-code"));
+    // a restricted person's desktop cannot remove the owner's token either: it only ever sees its own tenant
+    assert_eq!(call(&r, &rd, "/api/sync/claude_token", json!({"action": "delete"})).status, 403);
+}
+
+fn tenant_dir(uid: &str) -> std::path::PathBuf {
+    testenv::env().join(tenant_of(uid))
+}
+
+#[test]
+fn a_restricted_person_never_gets_claude_code_on_the_server_whatever_they_try() {
+    let (uo, ur) = (uniq("rc-owner"), uniq("rc-guest"));
+    let r = rig(&[("tok-o", &uo, "owner@x.test"), ("tok-r", &ur, "guest@x.test")], "owner@x.test", 200, 600);
+    // the guest tries to pick Claude Code, store a key for it, use it for a chat and send a token as a "key"
+    for op in [json!({"op": "select", "provider": "claude-code"}), json!({"op": "set_key", "provider": "claude-code", "key": OWNER_TOKEN}), json!({"op": "models", "provider": "claude-code"})] {
+        let a = call(&r, "tok-r", "/api/op", op.clone());
+        assert_eq!(a.body["ok"], false, "{op}: {:?}", a.body);
+        assert!(a.body["error"].as_str().unwrap_or("").contains("not available"), "{op}: {:?}", a.body);
+    }
+    // even when the owner's token exists on the server (the global fallback), the guest cannot use it
+    zo_core::ai::claude_code::set_global_token(Some(OWNER_TOKEN.into()));
+    let p = call(&r, "tok-r", "/api/op", json!({"op": "providers"}));
+    assert!(p.body["providers"].as_array().unwrap().iter().all(|x| x["id"] != "claude-code"));
+    let s = call(&r, "tok-r", "/api/account/claude_status", json!({}));
+    assert_eq!((s.body["present"].clone(), s.body["source"].clone()), (json!(false), json!("none")), "{:?}", s.body);
+    let (rd, _) = make_device(&r, "tok-r", "guest-d", "desktop");
+    assert_eq!(call(&r, &rd, "/api/sync/claude_token", json!({"action": "set", "token": OWNER_TOKEN})).status, 403);
+    zo_core::ai::claude_code::set_global_token(None);
+}
+
+#[test]
+fn claude_code_runs_for_the_owner_on_the_server_with_the_owners_token_in_a_minimal_environment() {
+    let uo = uniq("run-owner");
+    let r = rig(&[("tok-o", &uo, "owner@x.test")], "owner@x.test", 200, 600);
+    let (od, _) = make_device(&r, "tok-o", "run-desk", "desktop");
+    assert_eq!(call(&r, &od, "/api/sync/claude_token", json!({"action": "set", "token": OWNER_TOKEN})).status, 200);
+    // a stand-in for the claude program that records its environment
+    let dir = std::path::PathBuf::from(format!("/tmp/claude-1000/zsrv-fake-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("claude");
+    std::fs::write(&script, format!("#!/bin/sh\nenv > {d}/env\nprintf '%s\\n' \"$@\" > {d}/args\necho '{{\"type\":\"system\",\"session_id\":\"s-9\"}}'\necho '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"hello from claude\"}}]}}}}'\n", d = dir.display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::env::set_var("ZOAI_CLAUDE_BIN", &script);
+    std::env::set_var("FIREBASE_SERVICE_ACCOUNT", "must-not-leak-firebase");
+    let sel = call(&r, "tok-o", "/api/op", json!({"op": "select", "provider": "claude-code", "model": "sonnet"}));
+    assert_eq!(sel.status, 200, "{:?}", sel.body);
+    let (status, lines) = stream_in_thread(&r, "tok-o", json!({"text": "say hello"})).join().unwrap();
+    std::env::remove_var("ZOAI_CLAUDE_BIN");
+    std::env::remove_var("FIREBASE_SERVICE_ACCOUNT");
+    assert_eq!(status, 200);
+    assert!(lines.iter().any(|l| l["text"].as_str().is_some_and(|t| t.contains("hello from claude"))), "{lines:?}");
+    let env = std::fs::read_to_string(dir.join("env")).unwrap();
+    assert!(env.contains(&format!("CLAUDE_CODE_OAUTH_TOKEN={OWNER_TOKEN}")), "the owner's own token is passed");
+    assert!(!env.contains("must-not-leak-firebase") && !env.contains(testenv::SECRET), "{env}");
+    assert!(env.contains(&format!("HOME={}", tenant_dir(&uo).join("config").join("claude-home").display())));
+    let args = std::fs::read_to_string(dir.join("args")).unwrap();
+    assert!(args.contains("--tools\n\n"), "Claude's built-in tools are off: {args}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

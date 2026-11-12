@@ -159,12 +159,16 @@ pub fn handle(app: &App, name: &str, v: &Value, who: &Who, ip: &str) -> Result<V
             // a device signs itself out: its own credential stops working at once
             Cred::Device { id, .. } => {
                 let revoked = devs.revoke(&who.tenant, id).map_err(storage)?;
+                app.link.purge_device(&who.tenant, id);
                 json!({"ok": true, "revoked": revoked})
             }
             // a person signed in with Firebase can name one of their own devices; without one there is nothing to revoke
             Cred::Account { .. } => {
                 let id = text(v, "id");
                 let revoked = !id.is_empty() && devs.revoke(&who.tenant, id).map_err(storage)?;
+                if revoked {
+                    app.link.purge_device(&who.tenant, id);
+                }
                 json!({"ok": true, "revoked": revoked})
             }
         },

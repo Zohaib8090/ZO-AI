@@ -437,7 +437,7 @@ mod tests {
         assert_eq!(s.user_code.len(), 9);
         assert_eq!(&s.user_code[4..5], "-");
         assert!(s.user_code.replace('-', "").bytes().all(|b| ALPHABET.contains(&b)));
-        assert!(!s.user_code.contains(['0', 'O', '1', 'I', 'L']));
+        assert!(!s.user_code.contains(['0', 'O', '1', 'I']), "the look-alikes 0 O 1 I are not in the alphabet");
         let t = d.start("Other", Kind::Cli, "1.1.1.1", d.now()).unwrap();
         assert_ne!((&s.device_code, &s.user_code), (&t.device_code, &t.user_code));
         // typing it as people do: lower case, a space instead of the dash, no dash

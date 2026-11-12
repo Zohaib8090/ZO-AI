@@ -45,7 +45,9 @@ Render address (for example `zo-ai-server.onrender.com`), or the Google pop-up r
 | `POST /api/send` | `{"text": "...", "chat": "id or empty"}`; the answer streams as one JSON object per line; the first line is `{"event":"stream","id":N}` |
 | `POST /api/auth/device_start`, `/device_poll`, `/device_lookup`, `/device_approve`, `/exchange`, `/signout` | the sign-in of the desktop app and `zo`, see `LOGIN.md`; `GET /device` is the approval page |
 | `POST /api/sync/manifest`, `/get`, `/put`, `/delete` | the desktop sync, see `SYNC.md` |
-| `POST /api/reply` | `{"stream": N, ...}`: a line for a running answer (stop it, approve a step) |
+| `POST /api/reply` | `{"stream": N, ...}`: a line for a running answer (stop it, approve a step), also for a job running on the person's computer |
+| `POST /api/send` with `"target":"desktop"`, `POST /api/op` with `desktop_op`, `POST /api/link/poll`, `/events`, `/status` | run the message on the person's own computer through the desktop app's long poll; protocol, limits and security in `LINK.md` |
+| `POST /api/sync/claude_token` | the owner's desktop sends (or removes) the Claude sign-in token (admin accounts only), stored encrypted; `POST /api/account/claude_status` says whether it is there |
 
 ## Setting it up on Render (owner)
 
@@ -53,7 +55,7 @@ Full steps, free-plan facts and the Claude Code token: `docs/DEPLOY.md`. Short v
 
 1. Render > New > Blueprint > this repository (`render.yaml`).
 2. Fill in `FIREBASE_SERVICE_ACCOUNT` (paste the whole JSON key file) and `ZO_ADMIN_EMAILS` (your Google address). After the first deploy set `ZO_PUBLIC_URL` to the service's own address (below; it is the base of the approval link, and without it, or `RENDER_EXTERNAL_URL`, the server refuses to start).
-   `ZO_SERVER_SECRET` is made by Render; `ZO_MAX_USERS`, `ZO_MAX_RUNS`, `ZO_TENANT_ROOT` are in the blueprint. `CLAUDE_CODE_OAUTH_TOKEN` is optional (from `claude setup-token`).
+   `ZO_SERVER_SECRET` is made by Render; `ZO_MAX_USERS`, `ZO_MAX_RUNS`, `ZO_TENANT_ROOT` are in the blueprint. `CLAUDE_CODE_OAUTH_TOKEN` is optional (from `claude setup-token`): only a fallback for admins; the normal way is to send the token from the desktop app (see `LINK.md`). The three secrets (`FIREBASE_SERVICE_ACCOUNT`, `ZO_SERVER_SECRET`, `CLAUDE_CODE_OAUTH_TOKEN`) are read at start and removed from the process environment.
 3. In Firebase: Authentication > Google **and Email/Password** sign-in on; Firestore created. The server uses the service account, so Firestore's
    rules can stay closed to everyone else (`allow read, write: if false;`).
 

@@ -29,13 +29,17 @@ the vendors' pages read on 2026-11-12 (sources at the end); the per-user usage n
 | Restricted users cannot | Why |
 |---|---|
 | use any tool except `zohara_web_search`, `zohara_web_fetch`, `zohara_memory_search`, `zohara_memory_save`, `zohara_memory_forget` | shell, files, screenshots and SSH on the server would be remote code execution for strangers. The tools are removed from the list the model sees and refused again in `tools::call` |
-| use Claude Code mode | it runs a program with the owner's login on the server |
+| use Claude Code mode | it runs a program with the owner's login on the server (no operator switch gives it to others; they use their own computer through the desktop link, `LINK.md`) |
 | load MCP servers (stdio or remote) | stdio means running programs; remote means arbitrary outbound calls |
 | use custom or local provider addresses unless they are public `https` hosts | SSRF: `localhost`, private networks and the cloud metadata address must be unreachable (same host check as the fetch tool) |
 | add machines, schedules, projects with paths, or pick Bypass mode | server-side execution, background work and unattended approval |
 
 Quotas: message text up to 20,000 characters, tenant data folder up to 25 MB (writes beyond it are refused with a clear message),
 8 tool steps per answer, 120 seconds per answer.
+
+## The desktop link and Claude Code (see `LINK.md`)
+
+A person's own computer can run what they write on the web ("My computer"): the desktop app polls the server (`/api/link/*`), the server relays jobs and events per tenant, nothing is stored, and the desktop asks its owner before it acts. The server's secrets (`FIREBASE_SERVICE_ACCOUNT`, `ZO_SERVER_SECRET`, `CLAUDE_CODE_OAUTH_TOKEN`) are removed from its environment at start so no child process or `/proc/<pid>/environ` shows them.
 
 ## Threat model
 
@@ -128,7 +132,7 @@ where the law requires, the data protection authority within 72 hours. (5) Write
 
 Bring-your-own-key matches Anthropic's rule that each end user authenticates with their own API key and the operator does not resell or
 intermediate usage (Commercial Terms A.1 and D.4, code.claude.com/docs/en/legal-and-compliance). The service must never accept, store or
-route a Claude.ai login or subscription token for other people: Claude Code mode stays admin-only on the owner's own token. Anthropic asks
+route a Claude.ai login or subscription token for other people: Claude Code mode stays admin-only on the owner's own token. The owner sends it once from the desktop app (`claude setup-token`, see `LINK.md`); it is stored encrypted for that account only and `claude` runs on the server with a minimal environment. Everybody else signs in to Claude Code on their own computer and the web page reaches it through the desktop link ("My computer"), so no other person's subscription is ever on the server. Anthropic asks
 that users are told outputs may be wrong (D.3): the Terms say it. OpenRouter requires users to be 18+ and makes the key holder responsible
 for charges (openrouter.ai/terms). OpenAI forbids sharing or reselling keys (3.1, 3.3(g)); a user pasting their own key is not clearly
 addressed, so the consent wording is "ZO-AI may use your key only for your own requests".

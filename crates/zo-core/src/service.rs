@@ -249,8 +249,8 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             let sel = Selection::load();
             Ok(json!({
                 "current": sel.provider,
-                "providers": providers::all().iter().filter(|p| !(tenant::is_restricted() && p.protocol == providers::Protocol::ClaudeCode)).map(|p| json!({
-                    "id": p.id, "name": p.name, "local": p.local,
+                "providers": providers::all().iter().filter(|p| p.protocol != providers::Protocol::ClaudeCode || !tenant::multi_tenant() || claude_code::usable_here()).map(|p| json!({
+                    "id": p.id, "name": if tenant::multi_tenant() && p.protocol == providers::Protocol::ClaudeCode { "Claude Code (your subscription)" } else { p.name }, "local": p.local,
                     "has_key": p.local || p.protocol == crate::ai::providers::Protocol::ClaudeCode || crate::ai::profiles::get_key(&sel, p.id).is_some(),
                 })).collect::<Vec<_>>(),
             }))
@@ -1008,8 +1008,14 @@ mod tenant_tests {
         assert_eq!(r[0]["ok"], true);
         let r = talk(with_tenant(json!({"op": "providers"}), &t), true);
         assert!(r[0]["providers"].as_array().unwrap().iter().all(|p| p["id"] != "claude-code"));
+        // an admin sees Claude Code on the server only once their own token is stored
         let r = talk(with_tenant(json!({"op": "providers"}), &admin), true);
-        assert!(r[0]["providers"].as_array().unwrap().iter().any(|p| p["id"] == "claude-code"));
+        assert!(r[0]["providers"].as_array().unwrap().iter().all(|p| p["id"] != "claude-code"), "no token, no Claude Code");
+        crate::tenant::scope(&admin, || crate::ai::claude_code::store_token("sk-ant-oat01-test-token-0123456789abcdefghijklmnop").unwrap());
+        let r = talk(with_tenant(json!({"op": "providers"}), &admin), true);
+        let cc = r[0]["providers"].as_array().unwrap().iter().find(|p| p["id"] == "claude-code").cloned().expect("listed with a token");
+        assert_eq!(cc["name"], "Claude Code (your subscription)");
+        crate::tenant::scope(&admin, || crate::ai::claude_code::clear_token().unwrap());
     }
 
     #[test]
