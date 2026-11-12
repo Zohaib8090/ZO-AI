@@ -351,8 +351,11 @@ pub fn apply_delete(kind: &str, id: &str, at: u64) -> Result<bool, String> {
 /// ~/.config/zo-ai/sync.json: where the server is and whether to sync.
 #[derive(Clone, Debug, Default)]
 pub struct Config {
+    /// A server address chosen by hand (empty = the default one, see `login::server_url`).
     pub url: String,
     pub enabled: bool,
+    /// The signed-in account (see `login`); empty when nobody is signed in. Never a secret.
+    pub email: String,
 }
 
 fn config_path() -> std::path::PathBuf {
@@ -361,7 +364,8 @@ fn config_path() -> std::path::PathBuf {
 
 pub fn config() -> Config {
     let v: Value = std::fs::read_to_string(config_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
-    Config { url: v.get("url").and_then(Value::as_str).unwrap_or("").to_string(), enabled: v.get("enabled").and_then(Value::as_bool).unwrap_or(false) }
+    let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    Config { url: text("url"), enabled: v.get("enabled").and_then(Value::as_bool).unwrap_or(false), email: text("email") }
 }
 
 /// The server address in its clean form (no trailing slash). The device token goes with every call, so only https is accepted
@@ -401,9 +405,31 @@ pub fn clean_url(url: &str) -> Result<String, String> {
 
 pub fn save_config(url: &str, enabled: bool) -> Result<(), String> {
     let url = if url.trim().is_empty() && !enabled { String::new() } else { clean_url(url)? };
+    write_config(&url, enabled, &config().email)
+}
+
+/// Writes sync.json as it is (the caller has checked the address). The credential is never in this file.
+pub(crate) fn write_config(url: &str, enabled: bool, email: &str) -> Result<(), String> {
     let p = config_path();
-    std::fs::create_dir_all(p.parent().unwrap_or(&p)).map_err(|e| e.to_string())?;
-    std::fs::write(&p, json!({"url": url, "enabled": enabled}).to_string()).map_err(|e| e.to_string())
+    let dir = p.parent().unwrap_or(&p);
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, json!({"url": url, "enabled": enabled, "email": email}).to_string()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
+}
+
+/// Forgets what the last rounds said (after signing out): the status line, the skipped items and the refused pushes.
+pub fn reset_status() {
+    *STATUS.lock().unwrap_or_else(|e| e.into_inner()) = Status::default();
+    SKIPPED.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    REFUSED.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// Asks the background loop to run a round within a second (set when a person signs in).
+static KICK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn kick() {
+    KICK.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
 const TOKEN_ID: &str = "sync-token";
@@ -440,11 +466,11 @@ pub fn status() -> Status {
 /// The status as the `sync_status` service op answers it. The token itself is never in it.
 pub fn status_json() -> Value {
     let (c, s) = (config(), status());
-    json!({"enabled": c.enabled, "url": c.url, "last_ok": s.last_ok, "error": s.error, "pulled": s.pulled, "pushed": s.pushed, "deleted": s.deleted, "running": s.running})
+    json!({"enabled": c.enabled, "url": c.url, "email": c.email, "last_ok": s.last_ok, "error": s.error, "pulled": s.pulled, "pushed": s.pushed, "deleted": s.deleted, "running": s.running})
 }
 
 /// What the server says for a 401: a device token that is wrong or was revoked.
-pub const TOKEN_REFUSED: &str = "The token is wrong or was revoked: make a new one in the web app, Settings > Account.";
+pub const TOKEN_REFUSED: &str = "This device is no longer signed in (it was removed from your account, or the sign-in is wrong). Sign in again.";
 
 /// Checks the shape of a device token (made on the web app's Account page): it starts with `zd_` and is 20..200 characters long,
 /// without spaces. Returns the trimmed token, or a friendly message.
@@ -638,11 +664,10 @@ pub fn sync_with(base: &str, token: &str) -> Result<(usize, usize, usize), Strin
 pub fn sync_now() -> Result<(usize, usize, usize), String> {
     let Ok(_run) = RUN.try_lock() else { return Err("A sync is already running.".into()) };
     STATUS.lock().unwrap_or_else(|e| e.into_inner()).running = true;
-    let cfg = config();
-    let result = match (cfg.url.is_empty(), token()) {
-        (true, _) => Err("No server address is set.".to_string()),
-        (_, None) => Err("No device token is saved.".to_string()),
-        (false, Some(t)) => sync_with(&cfg.url, &t),
+    let result = match (crate::login::server_url(), token()) {
+        (Err(e), _) => Err(e),
+        (_, None) => Err("Not signed in.".to_string()),
+        (Ok(url), Some(t)) => sync_with(&url, &t),
     };
     let mut s = STATUS.lock().unwrap_or_else(|e| e.into_inner());
     s.running = false;
@@ -669,12 +694,19 @@ pub fn start() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         std::thread::spawn(|| {
-            std::thread::sleep(Duration::from_secs(5));
+            // the first round comes after 5 seconds; a sign-in (`kick`) starts one within a second
+            let mut wait = 5;
             loop {
-                if config().enabled {
+                for _ in 0..wait {
+                    if KICK.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+                wait = 30;
+                if config().enabled && token().is_some() {
                     let _ = sync_now();
                 }
-                std::thread::sleep(Duration::from_secs(30));
             }
         });
     });

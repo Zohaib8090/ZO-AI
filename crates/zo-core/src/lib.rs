@@ -5,6 +5,7 @@ pub mod ai;
 pub mod approval;
 pub mod audit;
 pub mod exec;
+pub mod login;
 pub mod mcp;
 pub mod mcp_client;
 pub mod mcp_oauth;
