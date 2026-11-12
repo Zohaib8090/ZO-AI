@@ -17,7 +17,7 @@ The same brain as the desktop app, on a server that is always on, behind a Fireb
   `ZO_BLOCKED_EMAILS` and once `ZO_MAX_USERS` (200) is reached. Addresses in `ZO_ADMIN_EMAILS` are **admins** (all tools, Claude Code, SSH
   machines, Bypass); everybody else is **restricted** (web search, page fetch and memory tools only, no MCP servers, provider addresses must be public https, quotas).
 * **Tenant**: first 32 hex characters of `sha256("zo-tenant:" + uid)`. Disk `$ZO_TENANT_ROOT/<tenant>/{config,data}`; no raw uid or e-mail in any path.
-* **Limits**: 60 requests/minute and 2 concurrent `/api/send` per user, `ZO_MAX_RUNS` (8) answers at once, bodies 1 MB (`/api/op`, `/api/send`) and 20 MB (`/api/sync/*`); over the limit: 429 with `Retry-After`.
+* **Limits**: 60 requests/minute and 2 concurrent `/api/send` per user, `ZO_MAX_RUNS` (8) answers at once, bodies 1 MB (`/api/op`, `/api/reply`), 14 MB (`/api/send`, it may carry attachments: see PUBLIC.md) and 20 MB (`/api/sync/*`); over the limit: 429 with `Retry-After`.
 * **Firestore**: Render's disk is lost on every redeploy, so at start everything is fetched from Firestore and every change is
   sent back within about 3 seconds. One sync manager per tenant (pulled on its first request, idle ones are evicted from disk after 30 minutes with nothing unsynced). Layout under `users/<tenant>`: `chats/{id}`, `memory/{id}`, `files/{name}` (model choice,
   profiles, personalities, projects, ...). A text over 700 KB is cut into several documents.
@@ -42,7 +42,7 @@ Render address (for example `zo-ai-server.onrender.com`), or the Google pop-up r
 |---|---|
 | `GET /healthz` | `ok`, no login |
 | `POST /api/op` | one operation of the service, for example `{"op":"chats"}`, `{"op":"memory"}`; answers JSON |
-| `POST /api/send` | `{"text": "...", "chat": "id or empty"}`; the answer streams as one JSON object per line; the first line is `{"event":"stream","id":N}` |
+| `POST /api/send` | `{"text": "...", "chat": "id or empty", "attachments": [...] (optional, see PUBLIC.md)}`; the answer streams as one JSON object per line; the first line is `{"event":"stream","id":N}` |
 | `POST /api/auth/device_start`, `/device_poll`, `/device_lookup`, `/device_approve`, `/exchange`, `/signout` | the sign-in of the desktop app and `zo`, see `LOGIN.md`; `GET /device` is the approval page |
 | `POST /api/sync/manifest`, `/get`, `/put`, `/delete` | the desktop sync, see `SYNC.md` |
 | `POST /api/reply` | `{"stream": N, ...}`: a line for a running answer (stop it, approve a step) |

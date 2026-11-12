@@ -54,6 +54,20 @@ impl ImageRef {
     }
 }
 
+/// A picture that came with a message from the web app: its bytes (base64) are in the request itself. Never saved: after the answer
+/// the turn becomes plain text with the picture's name (`agent::forget_inline_images`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InlineImage {
+    pub mime: String,
+    pub b64: String,
+    pub name: String,
+}
+
+fn inline_pairs(imgs: &[InlineImage]) -> Vec<(String, String)> {
+    // only the four kinds the model APIs take, whatever the turn says
+    imgs.iter().filter(|i| matches!(i.mime.as_str(), "image/png" | "image/jpeg" | "image/webp" | "image/gif")).map(|i| (i.mime.clone(), i.b64.clone())).collect()
+}
+
 /// The largest picture that is sent (the model APIs refuse about 5 MB and more).
 pub const MAX_IMAGE_BYTES: u64 = 4_500_000;
 
@@ -104,6 +118,8 @@ pub enum Turn {
     User(String),
     /// A message that comes with pictures.
     UserImages(String, Vec<ImageRef>),
+    /// A message with pictures that were sent along as data (from the web app): they are used for this question only.
+    UserInline(String, Vec<InlineImage>),
     Assistant { text: String, calls: Vec<ToolCall> },
     Results(Vec<ToolResult>),
 }
@@ -181,6 +197,11 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
                     c.push(json!({ "type": "text", "text": s }));
                     json!({ "role": "user", "content": c })
                 }
+                Turn::UserInline(s, imgs) => {
+                    let mut c: Vec<Value> = inline_pairs(imgs).into_iter().map(|(m, d)| json!({ "type": "image", "source": { "type": "base64", "media_type": m, "data": d } })).collect();
+                    c.push(json!({ "type": "text", "text": s }));
+                    json!({ "role": "user", "content": c })
+                }
                 Turn::Assistant { text, calls } => {
                     let mut c = Vec::new();
                     if !text.is_empty() {
@@ -225,6 +246,11 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
                         c.extend(imgs.iter().filter_map(encoded).map(|(m, d)| json!({ "type": "image_url", "image_url": { "url": format!("data:{m};base64,{d}") } })));
                         messages.push(json!({ "role": "user", "content": c }));
                     }
+                    Turn::UserInline(s, imgs) => {
+                        let mut c = vec![json!({ "type": "text", "text": s })];
+                        c.extend(inline_pairs(imgs).into_iter().map(|(m, d)| json!({ "type": "image_url", "image_url": { "url": format!("data:{m};base64,{d}") } })));
+                        messages.push(json!({ "role": "user", "content": c }));
+                    }
                     Turn::Assistant { text, calls } => {
                         let mut m = json!({ "role": "assistant", "content": if text.is_empty() { Value::Null } else { json!(text) } });
                         if !calls.is_empty() {
@@ -266,6 +292,11 @@ pub fn build(p: &Provider, base_url: &str, key: Option<&str>, model: &str, syste
                 Turn::UserImages(s, imgs) => {
                     let mut parts = vec![json!({ "text": s })];
                     parts.extend(imgs.iter().filter_map(encoded).map(|(m, d)| json!({ "inlineData": { "mimeType": m, "data": d } })));
+                    vec![json!({ "role": "user", "parts": parts })]
+                }
+                Turn::UserInline(s, imgs) => {
+                    let mut parts = vec![json!({ "text": s })];
+                    parts.extend(inline_pairs(imgs).into_iter().map(|(m, d)| json!({ "inlineData": { "mimeType": m, "data": d } })));
                     vec![json!({ "role": "user", "parts": parts })]
                 }
                 Turn::Assistant { text, calls } => {
@@ -815,6 +846,66 @@ mod stream_tests {
         let old: Vec<Turn> = serde_json::from_str(r#"[{"User":"hi"},{"Results":[{"id":"1","name":"n","content":"c","is_error":false}]}]"#).unwrap();
         assert!(matches!(&old[1], Turn::Results(r) if r[0].images.is_empty()));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pictures_that_came_in_the_request_are_mapped_for_every_provider_and_are_never_read_from_disk() {
+        let img = |n: &str, m: &str| InlineImage { mime: m.into(), b64: "QUJD".into(), name: n.into() };
+        let turns = vec![Turn::User("earlier".into()), Turn::Assistant { text: "ok".into(), calls: vec![] }, Turn::UserInline("what is this?".into(), vec![img("a.png", "image/png"), img("b.jpg", "image/jpeg"), img("evil", "text/html")])];
+        // Anthropic: base64 sources, images first, then the text; a mime that is not a picture is left out
+        let a = build(crate::ai::providers::find("anthropic").unwrap(), "https://x", Some("k"), "m", "", &turns, &[]).body;
+        let c = &a["messages"][2]["content"];
+        assert_eq!(c.as_array().unwrap().len(), 3);
+        assert_eq!(c[0], json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "QUJD"}}));
+        assert_eq!(c[1]["source"]["media_type"], "image/jpeg");
+        assert_eq!(c[2], json!({"type": "text", "text": "what is this?"}));
+        // OpenAI-compatible: the text, then image_url data addresses
+        let o = build(crate::ai::providers::find("openai").unwrap(), "https://x", Some("k"), "m", "", &turns, &[]).body;
+        let c = &o["messages"][2]["content"];
+        assert_eq!(c[0], json!({"type": "text", "text": "what is this?"}));
+        assert_eq!(c[1], json!({"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}}));
+        assert_eq!(c[2]["image_url"]["url"], "data:image/jpeg;base64,QUJD");
+        assert_eq!(c.as_array().unwrap().len(), 3);
+        // Gemini: inlineData parts after the text
+        let g = build(crate::ai::providers::find("gemini").unwrap(), "https://x", Some("k"), "m", "", &turns, &[]).body;
+        let parts = &g["contents"][2]["parts"];
+        assert_eq!(parts[0], json!({"text": "what is this?"}));
+        assert_eq!(parts[1], json!({"inlineData": {"mimeType": "image/png", "data": "QUJD"}}));
+        assert_eq!(parts.as_array().unwrap().len(), 3);
+        assert_eq!(g["contents"][2]["role"], "user");
+        // a turn that came back from disk with a path-based picture is read for nobody who is restricted
+        let dir = std::env::temp_dir().join(format!("zo-wire-restricted-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("secret.png");
+        std::fs::write(&f, b"SECRET-BYTES").unwrap();
+        let by_path = vec![Turn::UserImages("look".into(), vec![ImageRef::from_path(&f.to_string_lossy()).unwrap()])];
+        assert!(build(crate::ai::providers::find("openai").unwrap(), "https://x", Some("k"), "m", "", &by_path, &[]).body.to_string().contains("data:image/png"));
+        let t = crate::tenant::testkit::fresh(true);
+        crate::tenant::scope(&t, || {
+            let body = build(crate::ai::providers::find("openai").unwrap(), "https://x", Some("k"), "m", "", &by_path, &[]).body.to_string();
+            assert!(!body.contains("image_url") && !body.contains("U0VDUkVU"), "{body}");
+            // but a picture that is in the request itself is fine for them
+            let body = build(crate::ai::providers::find("openai").unwrap(), "https://x", Some("k"), "m", "", &turns, &[]).body.to_string();
+            assert!(body.contains("data:image/png;base64,QUJD"));
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inline_pictures_are_dropped_from_the_conversation_after_the_answer_and_leave_their_names() {
+        let img = |n: &str| InlineImage { mime: "image/png".into(), b64: "QUJD".into(), name: n.into() };
+        let mut h = vec![Turn::User("a".into()), Turn::UserInline("b".into(), vec![img("x.png"), img("y.png")])];
+        crate::ai::agent::forget_inline_images(&mut h);
+        assert_eq!(h[1], Turn::User("b\n[image: x.png]\n[image: y.png]".into()));
+        assert!(!serde_json::to_string(&h).unwrap().contains("QUJD"));
+        // a request that fails because the model takes no pictures drops them too
+        let mut h = vec![Turn::UserInline("b".into(), vec![img("x.png")])];
+        assert!(crate::ai::agent::has_images(&h));
+        crate::ai::agent::strip_images(&mut h);
+        assert!(matches!(&h[0], Turn::User(t) if t.contains("1 picture(s) left out")));
+        // the turn is saved and loaded like the others
+        let t = Turn::UserInline("q".into(), vec![img("z.png")]);
+        assert_eq!(serde_json::from_str::<Turn>(&serde_json::to_string(&t).unwrap()).unwrap(), t);
     }
 
     #[test]

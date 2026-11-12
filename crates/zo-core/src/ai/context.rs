@@ -19,6 +19,7 @@ pub fn turn_tokens(t: &Turn) -> u64 {
     match t {
         Turn::User(s) => tokens(s) + 4,
         Turn::UserImages(s, imgs) => tokens(s) + 4 + imgs.len() as u64 * IMAGE_TOKENS,
+        Turn::UserInline(s, imgs) => tokens(s) + 4 + imgs.len() as u64 * IMAGE_TOKENS,
         Turn::Assistant { text, calls } => tokens(text) + calls.iter().map(|c| tokens(&c.name) + tokens(&c.args.to_string()) + 8).sum::<u64>() + 4,
         Turn::Results(rs) => rs.iter().map(|r| tokens(&r.content) + tokens(&r.name) + 8 + r.images.len() as u64 * IMAGE_TOKENS).sum(),
     }

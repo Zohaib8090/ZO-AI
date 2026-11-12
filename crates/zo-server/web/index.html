@@ -225,6 +225,30 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
   .pagebox,.pagebox.narrow{padding-left:16px;padding-right:16px}.page-head{margin-top:16px;flex-wrap:wrap}.page-title{font-size:26px}
   .composer-wrap{padding:0 12px}.thread{width:calc(100% - 32px)}.settings-row{flex-wrap:wrap}.settings-row .col{flex:1 1 200px}.pc-meta2{max-width:none}
 }
+/* ---- attachments ---- */
+.att-strip{display:flex;flex-wrap:wrap;gap:8px;padding:2px 2px 8px}.att-strip:empty{display:none}
+.att-chip{position:relative;display:flex;align-items:center;gap:8px;max-width:260px;min-height:40px;background:var(--card2);border:1px solid var(--line2);border-radius:10px;padding:6px 30px 6px 9px;font-size:12.5px;color:var(--text2);outline-offset:2px}
+.att-chip:focus-visible,.att-thumb:focus-visible{outline:2px solid var(--accent)}
+.att-chip.img{padding:0;width:58px;height:58px;min-height:0;max-width:none;overflow:visible}
+.att-chip.img img{width:100%;height:100%;object-fit:cover;display:block;border-radius:9px;cursor:zoom-in}
+.att-chip .x{position:absolute;top:-6px;right:-6px;width:20px;height:20px;min-width:20px;min-height:20px;padding:0;border-radius:99px;background:var(--pop);border:1px solid var(--line2);color:var(--text2);box-shadow:0 1px 4px var(--shadow)}
+.att-chip:not(.img) .x{top:50%;right:6px;transform:translateY(-50%);border:none;background:none;box-shadow:none}
+.att-chip .x:hover{background:var(--hov);color:var(--text)}.att-chip .x svg{width:12px;height:12px}
+.att-chip .ic{color:var(--dim);display:flex}.att-chip .n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.att-chip .s{color:var(--dim);font-size:11.5px;white-space:nowrap}
+.att-chip.busy .spin{width:13px;height:13px;color:var(--accent)}
+.att-chip.link .n{max-width:150px}
+.att-chip.bubble{padding-right:10px;min-height:34px;background:var(--user);border-color:var(--line)}
+.att-row{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-bottom:4px;max-width:100%}
+.att-thumb{width:84px;height:84px;border-radius:12px;overflow:hidden;border:1px solid var(--line2);padding:0;background:var(--user)}
+.att-thumb img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in}
+.att-big{display:block;max-width:100%;max-height:70vh;margin:0 auto;border-radius:8px;background:var(--card2)}
+.att-text{margin:0;max-height:60vh;overflow:auto;font:12.5px ui-monospace,"DejaVu Sans Mono",monospace;white-space:pre-wrap;word-break:break-word;background:var(--card2);border-radius:8px;padding:10px 12px}
+.att-drop{position:fixed;inset:0;z-index:50;background:var(--scrim);display:flex;align-items:center;justify-content:center;pointer-events:none;padding:24px}
+.att-drop .box{border:2px dashed var(--accent);border-radius:20px;background:var(--sheet);padding:34px 44px;text-align:center;font-size:18px;display:flex;flex-direction:column;align-items:center;gap:8px;max-width:100%}
+.att-drop .box svg{width:30px;height:30px;color:var(--accent)}.att-drop .s{font-size:13px;color:var(--dim)}
+.pop-row [data-i]{color:var(--dim);display:flex}
+@media(max-width:860px){.att-chip{max-width:100%}.att-thumb{width:72px;height:72px}}
 </style>
 </head>
 <body>
@@ -417,8 +441,8 @@ function greet() {
 
 /* ---------- the composer (home and chat share it) ---------- */
 function composerHTML() {
-  return `<div class="composer"><textarea id="text" rows="1" placeholder="How can I help you today?"></textarea>
-    <div class="row"><button class="tool-btn" id="plus" title="Attach (not on the web yet)" data-i="plus" disabled></button><span class="grow"></span>
+  return `<div class="composer"><div class="att-strip" id="attStrip" aria-label="Attachments"></div><textarea id="text" rows="1" placeholder="How can I help you today?"></textarea>
+    <div class="row"><button class="tool-btn" id="plus" title="Add pictures, files or a link" aria-label="Add pictures, files or a link" data-i="plus"></button><span class="grow"></span>
     <button class="tool-btn send" id="send" title="Send" data-i="up"></button><button class="tool-btn stop hide" id="stop" title="Stop" data-i="stop"></button></div></div>
     <div class="pills"><button class="pill" id="pModel"><span id="pModelT">…</span><i data-i="down"></i></button><button class="pill pill-muted" id="pMode">${esc(mode)}</button></div>
     <div class="foot-note">ZO-AI can make mistakes. Check what it did.</div>`;
@@ -429,6 +453,7 @@ function wireComposer() {
   t.addEventListener("input", size);
   t.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
   $("send").onclick = send;
+  aWire();
   $("stop").onclick = () => { if (stream) api("/api/reply", { stream, op: "stop" }).catch(() => {}); };
   $("pModel").onclick = e => modelPopover(e.currentTarget);
   $("pMode").onclick = e => modePopover(e.currentTarget);
@@ -456,11 +481,12 @@ function showThread(title) {
 const scrollEnd = () => { const s = $("scroller"); if (s) s.scrollTop = s.scrollHeight; };
 const thread = () => $("thread");
 
-function addUser(text) {
+function addUser(text, att) {
   const d = document.createElement("div"); d.className = "msg-user-wrap";
-  d.innerHTML = `<div class="msg-user">${esc(text)}</div><div class="msg-actions"><button title="Copy" data-copytext>${icon("copy")}</button></div>`;
+  d.innerHTML = `${text ? `<div class="msg-user">${esc(text)}</div>` : ""}<div class="msg-actions"><button title="Copy" data-copytext>${icon("copy")}</button></div>`;
+  if (att && att.length) d.insertBefore(aBubble(att), d.firstChild);
   d.querySelector("[data-copytext]").onclick = () => { navigator.clipboard?.writeText(text); toast("Copied"); };
-  thread().appendChild(d); scrollEnd();
+  thread().appendChild(d); scrollEnd(); return d;
 }
 function aiBox() { const d = document.createElement("div"); d.className = "msg-ai-wrap"; d.innerHTML = '<div class="msg-ai"></div><div class="msg-actions"><button title="Copy" data-copytext>' + icon("copy") + "</button></div>"; thread().appendChild(d); return d; }
 function setAi(d, text) { d.querySelector(".msg-ai").innerHTML = md(text); d.querySelector("[data-copytext]").onclick = () => { navigator.clipboard?.writeText(text); toast("Copied"); }; scrollEnd(); }
@@ -489,21 +515,23 @@ async function openChat(id) {
       const k = e.kind || "";
       if (k === "msg-tool" || k === "msg-tool-out") { if (!g) g = newGroup(false); k === "msg-tool" ? groupAdd(g, e.text) : groupOut(g, e.text); return; }
       g = null;
-      if (k === "msg-user") addUser(e.text); else if (k === "msg-error") addError(e.text); else setAi(aiBox(), e.text);
+      if (k === "msg-user") addUser(e.text, e.attach); else if (k === "msg-error") addError(e.text); else setAi(aiBox(), e.text);
     });
   } catch (e) { addError(e.message); }
   scrollEnd(); markList();
 }
 
 async function send() {
-  const t = $("text"); const text = t.value.trim(); if (!text || busy) return;
+  const t = $("text"); const text0 = t.value.trim(); if ((!text0 && !aHas()) || busy) return;
+  if (aBusy()) return toast("Still reading your attachments. One moment.");
+  const taken = aTake(), text = [text0, aLinkText(taken.links)].filter(Boolean).join("\n\n");
   if (!$("thread")) showThread("New chat");
   const first = !chatId;
   t.value = ""; t.style.height = "auto";
-  addUser(text); setBusy(true);
-  let ai = null, acc = "", group = null;
+  const bubble = addUser(text, taken.meta); setBusy(true);
+  let ai = null, acc = "", group = null, began = false;
   try {
-    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId }) });
+    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId, ...(taken.attachments.length ? { attachments: taken.attachments } : {}) }) });
     if (r.status === 429) { const m = limitMsg(r); toast(m); throw new Error(m); }
     if (!r.ok || !r.body) { let j = {}; try { j = await r.json(); } catch {} throw new Error(j.error || "Error " + r.status); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
@@ -515,7 +543,7 @@ async function send() {
         let ev; try { ev = JSON.parse(line); } catch { continue; }
         switch (ev.event) {
           case "stream": stream = ev.id; break;
-          case "chat": chatId = ev.id; setTitle(ev.title || "Chat"); break;
+          case "chat": chatId = ev.id; began = true; setTitle(ev.title || "Chat"); break;
           case "delta": endGroup(group); group = null; if (!ai) { ai = aiBox(); acc = ""; } acc += ev.text; setAi(ai, acc); break;
           case "text": if (!acc) { if (!ai) ai = aiBox(); acc = ev.text; setAi(ai, acc); } break;
           case "tool_start": ai = null; acc = ""; if (!group) group = newGroup(true); groupAdd(group, ev.summary || ev.name); scrollEnd(); break;
@@ -526,7 +554,11 @@ async function send() {
         }
       }
     }
-  } catch (e) { addError(e.message); }
+  } catch (e) {
+    // nothing reached the model: the message and its attachments go back into the box
+    if (!began) { bubble.remove(); /* before the chat began: */ aRestore(taken); if ($("text") && !$("text").value) $("text").value = text0; }
+    addError(e.message);
+  }
   endGroup(group); stream = 0; setBusy(false); $("text")?.focus(); refreshChats();
 }
 function ask(ev) {
@@ -578,6 +610,451 @@ function popover(anchor, html) {
   setTimeout(() => document.addEventListener("mousedown", function h(e) { if (!p.contains(e.target)) { p.remove(); document.removeEventListener("mousedown", h); } }), 0);
   return p;
 }
+/* ---- attachments: paste, "+" menu, drag and drop, pictures, files, links ---- */
+/* Everything is prepared in the browser (pictures shrunk, PDF and ZIP read, text files decoded); nothing leaves the page until Send. */
+Object.assign(P, {
+  aImg: '<rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M4 17l5-5 4 4 3-3 4 4"/>',
+  aFile: '<path d="M7 4h7l4 4v12H7z"/><path d="M14 4v4h4"/>',
+  aZip: '<path d="M7 4h10v16H7z"/><path d="M12 4v7M10.5 7h3M10.5 9.5h3"/><rect x="10.5" y="12" width="3" height="3.5" rx=".8"/>',
+  aCam: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  aLink: '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>',
+  aX: '<path d="M6 6l12 12M18 6L6 18"/>',
+});
+const A_LIM = { img: 4, txt: 6, each: 200 * 1024, total: 400 * 1024, side: 1600, thumbSide: 160, thumbChars: 20000, imgBytes: 3 * 1024 * 1024, imgTotal: 9 * 1024 * 1024, imgFile: 40 * 1024 * 1024, pdfFile: 30 * 1024 * 1024, zipFile: 25 * 1024 * 1024, zipEntries: 200, zipTotal: 2 * 1024 * 1024, zipEntry: 100 * 1024, links: 5 };
+const A_CDN = {
+  pdf: { src: "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js", sri: "sha512-q+4liFwdPC/bNdhUpZx6aXDx/h77yEQtn4I1slHydcbZK34nLaR3cAeYSJshoxIOq3mjEf7xJE8YWIUHMn+oCQ==" },
+  pdfWorker: { src: "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js", sri: "sha512-BbrZ76UNZq5BhH7LL7pn9A4TKQpQeNCHOo65/akfelcIBbcVvYWOFQKPXIrykE3qZxYjmDX573oa4Ywsc7rpTw==" },
+  zip: { src: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js", sri: "sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" },
+};
+const A_TEXT_EXT = new Set("txt md markdown rst json jsonl ndjson csv tsv log xml yaml yml toml ini cfg conf properties env html htm xhtml css scss sass less js mjs cjs jsx ts tsx vue svelte py pyi rs go java kt kts scala c h cc cpp cxx hpp hh cs rb php pl pm sh bash zsh fish ps1 bat cmd sql lua swift m mm r jl dart ex exs erl hs clj ml fs tex bib srt vtt diff patch gradle cmake make mk dockerfile gitignore editorconfig lock svg gql graphql proto tf hcl nix".split(" "));
+const A_TEXT_NAMES = new Set(["dockerfile", "makefile", "readme", "license", "changelog", "notice", "authors", "cmakelists.txt", "gemfile", "rakefile", "procfile"]);
+const ATT = { items: [], seq: 0, queue: Promise.resolve(), previews: new Map(), libs: {}, restore: null };
+const aEnc = new TextEncoder();
+const aBytes = s => aEnc.encode(s).length;
+const aKB = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B";
+const aTxtBytes = () => ATT.items.reduce((n, i) => n + (i.kind === "text" ? i.bytes : 0), 0);
+const aCount = k => ATT.items.filter(i => i.kind === k || (k === "busy" && i.kind === "busy")).length;
+const aBusy = () => ATT.items.some(i => i.kind === "busy");
+const aHas = () => ATT.items.length > 0;
+const aWellFormed = s => s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD");
+/* the server refuses control characters other than tab and line breaks (and a lone half of an emoji cannot be sent as JSON) */
+const aClean = s => aWellFormed(String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, " "));
+function aCut(s, max) {
+  if (aBytes(s) <= max) return s;
+  let lo = 0, hi = Math.min(s.length, max);
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (aBytes(s.slice(0, mid)) <= max) lo = mid; else hi = mid - 1; }
+  return aWellFormed(s.slice(0, lo));
+}
+function aName(n) { return String(n || "file").replace(/[\u0000-\u001F\u007F-\u009F\/\\"<>&`]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120) || "file"; }
+function aExt(n) { const m = /\.([A-Za-z0-9]{1,12})$/.exec(n || ""); return m ? m[1].toLowerCase() : ""; }
+const aSafeThumb = u => typeof u === "string" && u.length <= A_LIM.thumbChars && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+\/]+={0,2}$/.test(u);
+
+/* what a file is, from its type and name; null means it cannot be attached */
+function aKind(f) {
+  const t = (f.type || "").toLowerCase(), e = aExt(f.name), n = (f.name || "").toLowerCase();
+  if (t === "application/pdf" || e === "pdf") return "pdf";
+  if (/^application\/(x-)?zip(-compressed)?$/.test(t) || e === "zip") return "zip";
+  if (/^image\/(png|jpe?g|webp|gif|bmp|avif)$/.test(t) || (!t && /^(png|jpe?g|webp|gif|bmp|avif)$/.test(e))) return "image";
+  if (t.startsWith("text/") || /^application\/(json|xml|x-yaml|yaml|toml|x-sh|javascript|x-javascript|sql)$/.test(t) || A_TEXT_EXT.has(e) || A_TEXT_NAMES.has(n)) return "text";
+  return null;
+}
+function aRefusal(f) {
+  const t = (f.type || ""), e = aExt(f.name), name = aName(f.name);
+  let what = e ? "." + e : (t || "this kind of");
+  if (/^image\/(heic|heif)$/.test(t) || /^hei[cf]$/.test(e)) return `"${name}" is a HEIC picture, which browsers cannot read. Save it as JPEG or PNG and add it again.`;
+  if (t.startsWith("video/") || /^(mp4|mov|mkv|avi|webm)$/.test(e)) what = "video";
+  else if (t.startsWith("audio/") || /^(mp3|wav|ogg|m4a|flac)$/.test(e)) what = "audio";
+  else if (/^(docx?|xlsx?|pptx?|odt|ods|odp)$/.test(e)) what = "." + e + " (Office)";
+  else if (/^(exe|msi|dll|so|bin|apk|dmg|iso|deb|rpm)$/.test(e)) what = "program";
+  else if (/^(7z|rar|tar|gz|tgz|bz2|xz)$/.test(e)) what = "." + e + " archive";
+  return `"${name}" cannot be attached: ${what} files are not supported. You can attach pictures, PDF, ZIP and text or code files.`;
+}
+
+function aLoadScript(c) {
+  return ATT.libs[c.src] || (ATT.libs[c.src] = new Promise((res, rej) => {
+    const s = document.createElement("script"); s.src = c.src; s.integrity = c.sri; s.crossOrigin = "anonymous"; s.referrerPolicy = "no-referrer";
+    s.onload = res; s.onerror = () => { delete ATT.libs[c.src]; s.remove(); rej(new Error("The reader for this kind of file could not be loaded. Check your connection and try again.")); };
+    document.head.appendChild(s);
+  }));
+}
+async function aPdfLib() {
+  await aLoadScript(A_CDN.pdf);
+  const lib = window.pdfjsLib; if (!lib) throw new Error("The PDF reader did not start.");
+  if (!ATT.workerUrl) {
+    // the worker script is fetched with its checksum and started from a local blob, so nothing unchecked ever runs
+    const r = await fetch(A_CDN.pdfWorker.src, { integrity: A_CDN.pdfWorker.sri, mode: "cors", referrerPolicy: "no-referrer" });
+    if (!r.ok) throw new Error("The PDF reader could not be loaded.");
+    ATT.workerUrl = URL.createObjectURL(new Blob([await r.text()], { type: "text/javascript" }));
+  }
+  lib.GlobalWorkerOptions.workerSrc = ATT.workerUrl;
+  return lib;
+}
+
+/* ----- the list of things attached, and the chips above the composer ----- */
+function aRender() {
+  const strip = $("attStrip"); if (!strip) return;
+  strip.textContent = "";
+  const add = (it, det) => strip.appendChild(aChip(it, det));
+  ATT.items.forEach(it => add(it, false));
+  aDetected().forEach(it => add(it, true));
+  const send = $("send"); if (send) send.title = aBusy() ? "Wait for the attachments to be read" : "Send";
+}
+function aChip(it, det) {
+  const c = document.createElement("div"); c.className = "att-chip " + (it.kind === "image" ? "img" : it.kind); c.tabIndex = 0; c.dataset.id = it.id;
+  const label = it.kind === "link" ? "link " + (it.title || it.host) : it.kind === "busy" ? it.name : (it.kind === "image" ? "picture " : "file ") + it.name;
+  c.setAttribute("role", "group"); c.setAttribute("aria-label", label);
+  const x = document.createElement("button"); x.type = "button"; x.className = "x"; x.innerHTML = icon("aX"); x.title = "Remove"; x.setAttribute("aria-label", "Remove " + label);
+  const remove = () => { if (det) aRemoveFromText(it.url); else aRemove(it.id); $("text")?.focus(); };
+  x.onclick = e => { e.stopPropagation(); remove(); };
+  c.onkeydown = e => { if (e.key === "Escape" || e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); e.stopPropagation(); remove(); } };
+  if (it.kind === "image") {
+    const im = document.createElement("img"); im.src = it.thumb; im.alt = it.name; im.title = it.name; im.draggable = false;
+    im.onclick = () => aPreview(it);
+    c.append(im, x);
+  } else if (it.kind === "busy") {
+    const sp = document.createElement("span"); sp.className = "spin";
+    const n = document.createElement("span"); n.className = "n"; n.textContent = it.name;
+    const s = document.createElement("span"); s.className = "s"; s.textContent = it.note || "Reading…";
+    c.append(sp, n, s, x);
+  } else if (it.kind === "link") {
+    const i = document.createElement("span"); i.className = "ic"; i.innerHTML = icon("aLink");
+    const n = document.createElement("span"); n.className = "n"; n.textContent = it.title || it.host; n.title = it.url;
+    const s = document.createElement("span"); s.className = "s"; s.textContent = it.title ? it.host : (det ? "in your message" : "will be read");
+    c.append(i, n, s, x);
+    c.style.cursor = "default";
+  } else {
+    const i = document.createElement("span"); i.className = "ic"; i.innerHTML = icon(it.zip ? "aZip" : "aFile");
+    const n = document.createElement("span"); n.className = "n"; n.textContent = it.name; n.title = it.name + (it.note ? " (" + it.note + ")" : "");
+    const s = document.createElement("span"); s.className = "s"; s.textContent = it.note || aKB(it.bytes);
+    c.append(i, n, s, x);
+    c.onclick = e => { if (!e.target.closest(".x")) aPreview(it); };
+  }
+  return c;
+}
+function aRemove(id) {
+  const it = ATT.items.find(i => i.id === id); if (!it) return;
+  if (it.url && it.kind === "image") URL.revokeObjectURL(it.url);
+  ATT.items = ATT.items.filter(i => i.id !== id); aRender();
+}
+function aClear(keepUrls) {
+  if (!keepUrls) ATT.items.forEach(i => { if (i.kind === "image" && i.url) URL.revokeObjectURL(i.url); });
+  ATT.items = []; aRender();
+}
+function aPreview(it) {
+  const w = document.createElement("div");
+  if (it.kind === "image") {
+    const im = document.createElement("img"); im.src = it.url || it.thumb; im.alt = it.name; im.className = "att-big";
+    w.appendChild(im);
+    const m = document.createElement("div"); m.className = "pc-meta"; m.textContent = [it.w && it.h ? it.w + " × " + it.h : "", aKB(it.size || 0)].filter(Boolean).join(" · "); w.appendChild(m);
+  } else {
+    const pre = document.createElement("pre"); pre.className = "att-text"; pre.textContent = it.text ? it.text.slice(0, 4000) + (it.text.length > 4000 ? "\n…" : "") : "(no preview)"; w.appendChild(pre);
+  }
+  const sh = sheet(it.name, w, [btn("Close", "", () => sh.close())], true);
+  const off = e => { if (e.key === "Escape") { sh.close(); document.removeEventListener("keydown", off, true); } };
+  document.addEventListener("keydown", off, true);
+  new MutationObserver((_, o) => { if (!sh.el.isConnected) { document.removeEventListener("keydown", off, true); o.disconnect(); } }).observe(document.body, { childList: true });
+}
+
+/* ----- adding: one at a time, so the limits are checked in order ----- */
+function aAddFiles(files) {
+  files = [...files].filter(Boolean); if (!files.length) return;
+  for (const f of files) ATT.queue = ATT.queue.then(() => aAddFile(f)).catch(() => {});
+}
+async function aAddFile(file) {
+  const kind = aKind(file), name = aName(file.name && !/^image\.(png|jpe?g|webp|gif)$/i.test(file.name) ? file.name : (file.type.startsWith("image/") ? "pasted-picture-" + (++ATT.seq) + "." + (file.type.split("/")[1] || "png").replace("jpeg", "jpg") : file.name));
+  if (!kind) return toast(aRefusal(file));
+  if (kind === "image" ? aCount("image") + aBusyOf("image") >= A_LIM.img : aCount("text") + aBusyOf("text") >= A_LIM.txt)
+    return toast(kind === "image" ? "You can attach up to " + A_LIM.img + " pictures to one message." : "You can attach up to " + A_LIM.txt + " files to one message.");
+  const it = { id: ++ATT.seq, kind: "busy", as: kind === "image" ? "image" : "text", name, note: "Reading…" };
+  ATT.items.push(it); aRender();
+  try {
+    const done = await ({ image: aProcImage, pdf: aProcPdf, zip: aProcZip, text: aProcText }[kind])(file, it, name);
+    if (done.kind === "image" && ATT.items.reduce((n, x) => n + (x.kind === "image" ? x.size : 0), 0) + done.size > A_LIM.imgTotal) { URL.revokeObjectURL(done.url); throw new Error("These pictures are too big together (at most " + A_LIM.imgTotal / 1048576 + " MB). Remove one or use smaller pictures."); }
+    const i = ATT.items.indexOf(it);
+    if (i < 0) { if (done.url) URL.revokeObjectURL(done.url); return; } // removed while it was being read
+    done.id = it.id; ATT.items[i] = done;
+  } catch (e) {
+    ATT.items = ATT.items.filter(x => x !== it);
+    toast(e && e.message ? e.message : `"${name}" could not be read.`);
+  }
+  aRender();
+}
+const aBusyOf = as => ATT.items.filter(i => i.kind === "busy" && i.as === as).length;
+function aTextRoom(extra) {
+  const room = Math.min(A_LIM.each, A_LIM.total - aTxtBytes()) - extra;
+  return room;
+}
+function aTextItem(name, body, o = {}) {
+  const head = "Attached file: " + name + "\n";
+  const room = aTextRoom(aBytes(head));
+  if (room < 200) throw new Error(`There is no room left for "${name}": the files of one message can hold up to ${A_LIM.total / 1024} KB of text.`);
+  let text = aClean(body), note = o.note || "", cut = false;
+  if (aBytes(text) > room) { text = aCut(text, room - 60) + "\n[… cut: the rest does not fit]"; cut = true; }
+  const full = head + text;
+  return { kind: "text", name, text: full, bytes: aBytes(full), note: cut ? "cut to fit" : note, zip: !!o.zip };
+}
+
+async function aProcText(file, it, name) {
+  if (file.size > A_LIM.each) throw new Error(`"${name}" is too big (${aKB(file.size)}). Text files can be up to ${A_LIM.each / 1024} KB.`);
+  const buf = new Uint8Array(await file.arrayBuffer());
+  if (buf.includes(0)) throw new Error(`"${name}" is not a text file.`);
+  let s; try { s = new TextDecoder("utf-8", { fatal: true }).decode(buf); } catch { throw new Error(`"${name}" is not UTF-8 text.`); }
+  s = s.replace(/^\uFEFF/, "");
+  // a plain text file is added whole or not at all (a PDF or ZIP, which are long, may be cut to fit)
+  if (aBytes(aClean(s)) > aTextRoom(aBytes("Attached file: " + name + "\n"))) throw new Error(`"${name}" does not fit: the files of one message can hold up to ${A_LIM.total / 1024} KB of text in all (${Math.round(aTxtBytes() / 1024)} KB are used).`);
+  return aTextItem(name, s);
+}
+
+async function aProcPdf(file, it, name) {
+  if (file.size > A_LIM.pdfFile) throw new Error(`"${name}" is too big (${aKB(file.size)}). PDFs can be up to ${A_LIM.pdfFile / 1048576} MB.`);
+  it.note = "Loading the PDF reader…"; aRender();
+  const lib = await aPdfLib();
+  const data = new Uint8Array(await file.arrayBuffer());
+  let doc;
+  try { doc = await lib.getDocument({ data, isEvalSupported: false, disableFontFace: true, verbosity: 0 }).promise; }
+  catch (e) { throw new Error(e && e.name === "PasswordException" ? `"${name}" is password protected.` : `"${name}" could not be read as a PDF.`); }
+  const room = aTextRoom(aBytes("Attached file: " + name + "\n")) - 120, pages = doc.numPages;
+  let out = "", read = 0;
+  try {
+    for (let p = 1; p <= pages && p <= 500; p++) {
+      if (!ATT.items.includes(it)) break; // removed meanwhile
+      it.note = "Page " + p + " of " + pages; aRender();
+      const tc = await (await doc.getPage(p)).getTextContent();
+      let line = ""; for (const x of tc.items) line += x.str + (x.hasEOL ? "\n" : " ");
+      out += "\n[Page " + p + "]\n" + line.replace(/[ \t]+\n/g, "\n").replace(/ {2,}/g, " ").trim() + "\n"; read = p;
+      if (aBytes(out) > room) break;
+    }
+  } finally { doc.destroy(); }
+  if (!out.replace(/\[Page \d+\]/g, "").trim()) throw new Error(`"${name}" has no text that can be read (it may be a scan or pictures only).`);
+  const it2 = aTextItem(name, out.trim() + (read < pages ? `\n[… only ${read} of ${pages} pages are included]` : ""), { note: pages + (pages === 1 ? " page" : " pages") });
+  if (read < pages) it2.note = read + " of " + pages + " pages";
+  return it2;
+}
+
+const A_ARCHIVE = /\.(zip|jar|apk|7z|rar|tar|gz|tgz|bz2|xz|docx|xlsx|pptx|odt|ods|epub|whl)$/i;
+function aZipRead(entry, cap) {
+  // counts what really comes out, whatever the archive says about itself
+  return new Promise((res, rej) => {
+    const parts = []; let n = 0; const s = entry.internalStream("uint8array");
+    s.on("data", d => { n += d.length; if (n > cap) { s.pause(); rej(new Error("entry too big")); return; } parts.push(d); });
+    s.on("error", rej);
+    s.on("end", () => { const o = new Uint8Array(n); let at = 0; for (const p of parts) { o.set(p, at); at += p.length; } res(o); });
+    s.resume();
+  });
+}
+async function aProcZip(file, it, name) {
+  if (file.size > A_LIM.zipFile) throw new Error(`"${name}" is too big (${aKB(file.size)}). ZIP files can be up to ${A_LIM.zipFile / 1048576} MB.`);
+  it.note = "Loading the ZIP reader…"; aRender();
+  await aLoadScript(A_CDN.zip);
+  let zip; try { zip = await window.JSZip.loadAsync(file); } catch { throw new Error(`"${name}" could not be read as a ZIP file.`); }
+  const all = Object.values(zip.files).filter(e => !e.dir);
+  if (Object.keys(zip.files).length > A_LIM.zipEntries) throw new Error(`"${name}" has more than ${A_LIM.zipEntries} entries, which is too many to read.`);
+  const declared = e => (e._data && e._data.uncompressedSize) || 0;
+  const total = all.reduce((n, e) => n + declared(e), 0);
+  if (total > A_LIM.zipTotal) throw new Error(`"${name}" would unpack to ${aKB(total)}, more than the ${A_LIM.zipTotal / 1048576} MB that can be read.`);
+  let list = "", body = "", done = 0, used = 0, skipped = 0;
+  const nice = p => aClean(p).slice(0, 160);
+  for (const e of all) {
+    const path = nice(e.name), size = declared(e), ext = aExt(e.name);
+    it.note = "Entry " + (++done) + " of " + all.length; if (done % 5 === 0) aRender();
+    if (A_ARCHIVE.test(e.name)) { list += `- ${path} (${aKB(size)}, archive inside: not opened)\n`; skipped++; continue; }
+    const texty = A_TEXT_EXT.has(ext) || A_TEXT_NAMES.has(path.split("/").pop().toLowerCase());
+    if (!texty) { list += `- ${path} (${aKB(size)}, not text: name only)\n`; skipped++; continue; }
+    if (size > A_LIM.zipEntry || used + size > A_LIM.zipTotal) { list += `- ${path} (${aKB(size)}, too big to include)\n`; skipped++; continue; }
+    let bytes; try { bytes = await aZipRead(e, A_LIM.zipEntry); } catch { list += `- ${path} (too big to include)\n`; skipped++; continue; }
+    if (bytes.includes(0)) { list += `- ${path} (${aKB(bytes.length)}, not text: name only)\n`; skipped++; continue; }
+    let s; try { s = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { list += `- ${path} (${aKB(bytes.length)}, not UTF-8: name only)\n`; skipped++; continue; }
+    used += bytes.length; list += `- ${path} (${aKB(bytes.length)})\n`; body += `\n--- ${path} ---\n${s.replace(/^\uFEFF/, "")}\n`;
+  }
+  const text = `ZIP archive with ${all.length} file${all.length === 1 ? "" : "s"}. Contents:\n${list}${body ? "\nText files from the archive:" + body : ""}`;
+  return aTextItem(name, text, { zip: true, note: all.length + (all.length === 1 ? " file" : " files") });
+}
+
+/* pictures: shrunk to 1600 px, re-drawn (which drops EXIF and location data), JPEG, or PNG/WebP when they have transparency */
+const aBlob = (cv, type, q) => new Promise(r => cv.toBlob(r, type, q));
+async function aDecode(file) {
+  if (window.createImageBitmap) { try { return await createImageBitmap(file); } catch {} }
+  const u = URL.createObjectURL(file);
+  try { return await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("decode")); i.src = u; }); }
+  finally { setTimeout(() => URL.revokeObjectURL(u), 4000); }
+}
+function aDraw(src, w, h, white) {
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const g = cv.getContext("2d");
+  if (white) { g.fillStyle = "#fff"; g.fillRect(0, 0, w, h); }
+  g.imageSmoothingQuality = "high"; g.drawImage(src, 0, 0, w, h); return cv;
+}
+function aTransparent(src) {
+  const cv = aDraw(src, Math.min(64, src.width), Math.min(64, src.height), false), d = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] < 250) return true; return false;
+}
+const aToB64 = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.onerror = rej; r.readAsDataURL(blob); });
+async function aProcImage(file, it, name) {
+  if (file.size > A_LIM.imgFile) throw new Error(`"${name}" is too big (${aKB(file.size)}). Pictures can be up to ${A_LIM.imgFile / 1048576} MB.`);
+  let src; try { src = await aDecode(file); } catch { throw new Error(`"${name}" could not be read as a picture.`); }
+  const sw = src.width, sh = src.height; if (!sw || !sh) throw new Error(`"${name}" could not be read as a picture.`);
+  let scale = Math.min(1, A_LIM.side / Math.max(sw, sh)), blob = null, alpha = file.type !== "image/jpeg" && aTransparent(src);
+  for (let k = 0; k < 4 && !blob; k++, scale *= 0.75) {
+    const w = Math.max(1, Math.round(sw * scale)), h = Math.max(1, Math.round(sh * scale));
+    let b = null;
+    if (alpha) {
+      b = await aBlob(aDraw(src, w, h, false), "image/png");
+      if (b && b.size > 1024 * 1024) { const wp = await aBlob(aDraw(src, w, h, false), "image/webp", 0.85); if (wp && wp.type === "image/webp") b = wp; }
+      if (b && b.size > A_LIM.imgBytes) b = await aBlob(aDraw(src, w, h, true), "image/jpeg", 0.85);
+    } else b = await aBlob(aDraw(src, w, h, true), "image/jpeg", 0.85);
+    if (b && b.size <= A_LIM.imgBytes) blob = b;
+  }
+  if (!blob) throw new Error(`"${name}" is too big to send even after shrinking it.`);
+  // a small preview that is kept in the saved chat (at most 20 KB as text)
+  let thumb = "";
+  for (const [side, q] of [[A_LIM.thumbSide, 0.72], [A_LIM.thumbSide, 0.5], [120, 0.5], [96, 0.4], [64, 0.4]]) {
+    const k = Math.min(1, side / Math.max(sw, sh)), cv = aDraw(src, Math.max(1, Math.round(sw * k)), Math.max(1, Math.round(sh * k)), true), u = cv.toDataURL("image/jpeg", q);
+    if (u.length <= A_LIM.thumbChars) { thumb = u; break; }
+  }
+  if (src.close) src.close();
+  const ext = { "image/png": "png", "image/webp": "webp", "image/jpeg": "jpg" }[blob.type] || "jpg";
+  const out = { kind: "image", name: name.replace(/\.[A-Za-z0-9]{1,5}$/, "") + "." + ext, mime: blob.type, b64: await aToB64(blob), thumb, size: blob.size, url: URL.createObjectURL(blob) };
+  const dim = await new Promise(r => { const i = new Image(); i.onload = () => r([i.naturalWidth, i.naturalHeight]); i.onerror = () => r([0, 0]); i.src = out.url; });
+  out.w = dim[0]; out.h = dim[1];
+  return out;
+}
+
+/* ----- links ----- */
+function aUrl(raw) {
+  let s = String(raw || "").trim(); if (!s || /\s/.test(s) || s.length > 2000) return null;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) { if (!/^[^\/?#:]+\.[a-z]{2,}([\/?#:]|$)/i.test(s)) return null; s = "https://" + s; }
+  let u; try { u = new URL(s); } catch { return null; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  if (u.username || u.password || !/\.[a-z]{2,}$|^\d+\.\d+\.\d+\.\d+$|^\[/i.test(u.hostname)) return null;
+  return u.href;
+}
+function aAddLink(raw) {
+  const url = aUrl(raw); if (!url) return toast("That does not look like a web address.");
+  if (ATT.items.some(i => i.kind === "link" && i.url === url)) return toast("That link is already added.");
+  if (aCount("link") >= A_LIM.links) return toast("You can add up to " + A_LIM.links + " links to one message.");
+  ATT.items.push({ id: ++ATT.seq, kind: "link", url, host: new URL(url).hostname.replace(/^www\./, "") }); aRender(); aTitle(url);
+}
+/* the page's title for the chip: nice to have, never needed to send */
+async function aTitle(url) {
+  if (ATT.previews.has(url)) return;
+  ATT.previews.set(url, null);
+  try { const r = await op("link_preview", { url }); ATT.previews.set(url, (r.title || "").trim()); } catch { ATT.previews.set(url, ""); }
+  ATT.items.forEach(i => { if (i.kind === "link" && i.url === url) i.title = ATT.previews.get(url) || ""; }); aRender();
+}
+/* web addresses typed or pasted into the message show as chips too (they stay in the text; the chip's x removes them from it) */
+function aDetected() {
+  const t = $("text"); if (!t) return [];
+  const found = [], seen = new Set(ATT.items.filter(i => i.kind === "link").map(i => i.url));
+  for (const m of t.value.matchAll(/https?:\/\/[^\s<>"')\]]+/gi)) {
+    const raw = m[0].replace(/[.,;:!?]+$/, ""), url = aUrl(raw); if (!url || seen.has(url)) continue;
+    seen.add(url); found.push({ id: "d" + found.length, kind: "link", url, raw, host: new URL(url).hostname.replace(/^www\./, ""), title: ATT.previews.get(url) || "" });
+    if (found.length >= A_LIM.links) break;
+  }
+  return found;
+}
+function aRemoveFromText(url) {
+  const t = $("text"); if (!t) return;
+  t.value = t.value.replace(/https?:\/\/[^\s<>"')\]]+/gi, m => { const u = aUrl(m.replace(/[.,;:!?]+$/, "")); return u === url ? "" : m; }).replace(/[ \t]{2,}/g, " ").trim();
+  t.dispatchEvent(new Event("input")); aRender();
+}
+let aTimer = 0;
+function aTextChanged() {
+  aRender(); clearTimeout(aTimer);
+  aTimer = setTimeout(() => aDetected().forEach(d => { if (!ATT.previews.has(d.url)) aTitle(d.url); }), 900);
+}
+
+/* ----- the "+" menu, paste, drag and drop ----- */
+function aPick(accept, capture) {
+  const i = document.createElement("input"); i.type = "file"; i.multiple = !capture; i.accept = accept; if (capture) i.setAttribute("capture", "environment");
+  i.style.cssText = "position:fixed;left:-9999px;opacity:0"; document.body.appendChild(i);
+  i.onchange = () => { const f = [...i.files]; i.remove(); aAddFiles(f); };
+  i.addEventListener("cancel", () => i.remove());
+  i.click();
+}
+function aMenu(anchor) {
+  const touch = matchMedia("(pointer:coarse)").matches || navigator.maxTouchPoints > 0;
+  const row = (id, ic, t, s) => `<button class="pop-row" data-a="${id}" role="menuitem"><i data-i="${ic}"></i><div class="c"><div class="pop-title">${t}</div><div class="pop-sub">${s}</div></div></button>`;
+  const p = popover(anchor, '<div role="menu" aria-label="Add to your message">' + row("files", "aFile", "Upload images or files", "Pictures, PDF, ZIP, text and code") + (touch ? row("photo", "aCam", "Take a photo", "Use the camera") : "") + row("link", "aLink", "Add a link", "ZO-AI reads the page for you") + "</div>");
+  p.style.right = "auto"; const r = anchor.getBoundingClientRect(); p.style.left = Math.max(8, Math.min(r.left, innerWidth - p.offsetWidth - 8)) + "px";
+  const first = p.querySelector("button"); if (first) first.focus();
+  p.onkeydown = e => { if (e.key === "Escape") { p.remove(); anchor.focus(); } };
+  p.querySelector('[data-a="files"]').onclick = () => { p.remove(); aPick("image/*,application/pdf,.pdf,.zip,text/*,.md,.json,.csv,.log,.xml,.yaml,.yml,.toml,.js,.ts,.py,.rs,.go,.java,.c,.h,.cpp,.sh,.sql,.html,.css,.svg"); };
+  const ph = p.querySelector('[data-a="photo"]'); if (ph) ph.onclick = () => { p.remove(); aPick("image/*", true); };
+  p.querySelector('[data-a="link"]').onclick = () => { p.remove(); aLinkSheet(); };
+}
+function aLinkSheet() {
+  const w = document.createElement("div");
+  w.innerHTML = '<div class="field-label">Web address</div><input class="field-input" id="aLinkIn" type="url" inputmode="url" placeholder="https://example.com/page" autocomplete="off" spellcheck="false" aria-label="Web address"><div class="field-hint">ZO-AI reads the page with its web tool after you send the message.</div>';
+  const go = () => { aAddLink(inp.value); if (aUrl(inp.value)) sh.close(); };
+  const sh = sheet("Add a link", w, [btn("Cancel", "", () => sh.close()), btn("Add", "primary", go)]);
+  const inp = w.querySelector("#aLinkIn"); inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); go(); } else if (e.key === "Escape") sh.close(); }; inp.focus();
+}
+function aDropOverlay(on) {
+  let o = $("attDrop");
+  if (on && !o) { o = document.createElement("div"); o.id = "attDrop"; o.className = "att-drop"; o.setAttribute("aria-hidden", "true"); o.innerHTML = '<div class="box">' + icon("aFile") + '<div>Drop to attach</div><div class="s">Pictures, PDF, ZIP, text and code files</div></div>'; document.body.appendChild(o); }
+  else if (!on && o) o.remove();
+}
+function aWire() {
+  const plus = $("plus"); if (plus) { plus.disabled = false; plus.title = "Add pictures, files or a link"; plus.setAttribute("aria-label", "Add pictures, files or a link"); plus.setAttribute("aria-haspopup", "menu"); plus.onclick = () => aMenu(plus); }
+  const t = $("text"); if (t) t.addEventListener("input", aTextChanged);
+  aRender();
+}
+let aDrag = 0;
+const aFilesIn = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files");
+addEventListener("dragenter", e => { if (!aFilesIn(e)) return; e.preventDefault(); aDrag++; if ($("text")) aDropOverlay(true); });
+addEventListener("dragover", e => { if (aFilesIn(e)) { e.preventDefault(); e.dataTransfer.dropEffect = $("text") ? "copy" : "none"; } });
+addEventListener("dragleave", e => { if (!aFilesIn(e)) return; aDrag = Math.max(0, aDrag - 1); if (!aDrag) aDropOverlay(false); });
+addEventListener("drop", e => {
+  const files = e.dataTransfer && [...e.dataTransfer.files];
+  if (files && files.length) { e.preventDefault(); aDrag = 0; aDropOverlay(false); if ($("text") && !document.querySelector(".scrim")) aAddFiles(files); else toast("Open a chat to attach files."); return; }
+  const uri = e.dataTransfer && e.dataTransfer.getData("text/uri-list");
+  if (uri && $("text")) { e.preventDefault(); const u = uri.split("\n").find(l => l && !l.startsWith("#")); if (u) aAddLink(u); }
+});
+addEventListener("mousemove", () => { if (aDrag) { aDrag = 0; aDropOverlay(false); } }); // a drag that was cancelled leaves no overlay behind
+addEventListener("keydown", e => { if (e.key === "Escape" && aDrag) { aDrag = 0; aDropOverlay(false); } });
+addEventListener("paste", e => {
+  if (!$("text") || document.querySelector(".scrim")) return;
+  const tg = e.target; if (tg && tg !== document.body && tg.id !== "text" && !tg.closest?.(".composer, .att-strip, .main")) return;
+  if (tg && tg.matches && tg.matches("input, textarea, select") && tg.id !== "text") return;
+  const cd = e.clipboardData; if (!cd) return;
+  let files = [...(cd.files || [])];
+  if (!files.length) files = [...(cd.items || [])].filter(i => i.kind === "file").map(i => i.getAsFile()).filter(Boolean);
+  if (files.length) { e.preventDefault(); aAddFiles(files); return; }
+  const text = (cd.getData("text/plain") || "").trim();
+  if (text && !/\s/.test(text) && /^https?:\/\//i.test(text) && aUrl(text)) { e.preventDefault(); aAddLink(text); }
+});
+
+/* what send() takes: the payload for /api/send, and what the message bubble shows */
+function aTake() {
+  const items = ATT.items.slice(), links = items.filter(i => i.kind === "link").map(i => i.url);
+  const attachments = items.filter(i => i.kind === "image" || i.kind === "text").map(i => i.kind === "image" ? { kind: "image", mime: i.mime, name: i.name, data_b64: i.b64, thumb: i.thumb } : { kind: "text", name: i.name, text: i.text });
+  const meta = items.filter(i => i.kind === "image" || i.kind === "text").map(i => ({ kind: i.kind, name: i.name, size: i.kind === "image" ? i.size : i.bytes, thumb: i.thumb || "", full: i.url || "", text: i.kind === "text" ? i.text : "" }));
+  ATT.items = []; aRender(); // the picture addresses live on in the bubble
+  return { items, links, attachments, meta };
+}
+function aRestore(taken) { ATT.items = taken.items.concat(ATT.items); aRender(); }
+function aLinkText(links) { return links.length ? "Links to read (use your web tool):\n" + links.map(u => "- " + u).join("\n") : ""; }
+/* the pictures and files shown above a message bubble (live, or from the saved chat) */
+function aBubble(list) {
+  const row = document.createElement("div"); row.className = "att-row";
+  list.forEach(a => {
+    if (a.kind === "image" && (aSafeThumb(a.thumb) || a.full)) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "att-thumb"; b.title = a.name; b.setAttribute("aria-label", "Picture " + a.name + ", click to enlarge");
+      const im = document.createElement("img"); im.src = a.full || a.thumb; im.alt = a.name; b.appendChild(im);
+      b.onclick = () => aPreview({ kind: "image", name: a.name, url: a.full || a.thumb, thumb: a.thumb, size: a.size });
+      row.appendChild(b);
+    } else {
+      const c = document.createElement("div"); c.className = "att-chip bubble"; c.setAttribute("aria-label", (a.kind === "image" ? "Picture " : "File ") + a.name);
+      const i = document.createElement("span"); i.className = "ic"; i.innerHTML = icon(a.kind === "image" ? "aImg" : "aFile");
+      const n = document.createElement("span"); n.className = "n"; n.textContent = a.name; n.title = a.name;
+      const s = document.createElement("span"); s.className = "s"; s.textContent = aKB(a.size || 0);
+      c.append(i, n, s);
+      if (a.text) { c.style.cursor = "pointer"; c.onclick = () => aPreview({ kind: "text", name: a.name, text: a.text, bytes: a.size }); }
+      row.appendChild(c);
+    }
+  });
+  return row;
+}
+
 const modes = () => restricted() ? ["Manual", "Auto"] : ["Manual", "Auto", "Bypass"];
 function modePopover(a) {
   const info = { Manual: "Asks before every change and command.", Auto: "Looking around runs; changes ask first.", Bypass: "Never asks." };

@@ -23,10 +23,70 @@ pub struct Branch {
 }
 
 /// One line of what the person sees in a chat. `kind` is the style it is shown in.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Entry {
     pub kind: String,
     pub text: String,
+    /// What came with a message from the web app: only small facts are kept (never the picture or the file itself).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attach: Vec<Attach>,
+}
+
+/// A picture or a file that was sent with a message: what is shown in the chat afterwards.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Attach {
+    /// `image` or `text`.
+    pub kind: String,
+    pub name: String,
+    /// Bytes of the picture or of the text that was sent.
+    #[serde(default)]
+    pub size: usize,
+    /// A small preview picture as a data address (at most 20 KB); empty for files.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub thumb: String,
+}
+
+impl Attach {
+    /// What a chat that came from somewhere else (the sync) says about attachments is not trusted: the web page shows it, so only
+    /// known kinds, plain names and real small preview pictures are kept.
+    pub fn clean_all(list: &mut Vec<Attach>) {
+        list.retain(|a| a.kind == "image" || a.kind == "text");
+        list.truncate(12);
+        for a in list.iter_mut() {
+            a.name = crate::attach::clean_name(&a.name, "file");
+            a.size = a.size.min(100_000_000);
+            a.thumb = if a.kind == "image" { crate::attach::clean_thumb_str(&a.thumb) } else { String::new() };
+        }
+    }
+}
+
+impl Chat {
+    /// `Attach::clean_all` for every line of the chat, its earlier takes included.
+    pub fn clean_attach(&mut self) {
+        fn branch(b: &mut Branch) {
+            for v in &mut b.versions {
+                v.entries.iter_mut().for_each(|e| Attach::clean_all(&mut e.attach));
+                v.sub.values_mut().for_each(branch);
+            }
+        }
+        self.entries.iter_mut().for_each(|e| Attach::clean_all(&mut e.attach));
+        self.branches.values_mut().for_each(branch);
+    }
+}
+
+impl Entry {
+    /// What a place that only shows text (the desktop window, the terminal, an export) shows for this line: the text, then one
+    /// line for each picture or file that came with it.
+    pub fn display_text(&self) -> String {
+        let mut s = self.text.clone();
+        for a in &self.attach {
+            if !s.is_empty() {
+                s.push('\n');
+            }
+            s.push_str(&if a.kind == "image" { format!("[image: {}]", a.name) } else { format!("[file: {}]", a.name) });
+        }
+        s
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -322,7 +382,7 @@ mod search_tests {
     use super::*;
 
     fn chat(id: &str, title: &str, updated: u64, lines: &[(&str, &str)]) -> Chat {
-        Chat { id: id.into(), title: title.into(), updated, entries: lines.iter().map(|(k, t)| Entry { kind: k.to_string(), text: t.to_string() }).collect(), ..Default::default() }
+        Chat { id: id.into(), title: title.into(), updated, entries: lines.iter().map(|(k, t)| Entry { kind: k.to_string(), text: t.to_string(), ..Default::default() }).collect(), ..Default::default() }
     }
 
     #[test]
@@ -360,7 +420,7 @@ impl Chat {
     /// The entry and turn at which your message number `nth` (counting from 0) starts.
     pub fn tail_start(&self, nth: usize) -> Option<(usize, usize)> {
         let at = self.entries.iter().enumerate().filter(|(_, e)| e.kind == "msg-user").map(|(i, _)| i).nth(nth)?;
-        let turn_at = self.history.iter().enumerate().filter(|(_, t)| matches!(t, Turn::User(_) | Turn::UserImages(..))).map(|(i, _)| i).nth(nth).unwrap_or(self.history.len());
+        let turn_at = self.history.iter().enumerate().filter(|(_, t)| matches!(t, Turn::User(_) | Turn::UserImages(..) | Turn::UserInline(..))).map(|(i, _)| i).nth(nth).unwrap_or(self.history.len());
         Some((at, turn_at))
     }
 
@@ -443,7 +503,7 @@ mod take_tests {
     use super::*;
 
     fn chat() -> Chat {
-        let e = |k: &str, t: &str| Entry { kind: k.into(), text: t.into() };
+        let e = |k: &str, t: &str| Entry { kind: k.into(), text: t.into(), ..Default::default() };
         Chat {
             id: "c".into(),
             entries: vec![e("msg-user", "one"), e("msg-ai", "a1"), e("msg-user", "two"), e("msg-ai", "a2")],
@@ -458,8 +518,8 @@ mod take_tests {
         assert_eq!(c.fork_at(1).as_deref(), Some("two"));
         assert_eq!(c.entries.len(), 2);
         // the new take is answered
-        c.entries.push(Entry { kind: "msg-user".into(), text: "two, edited".into() });
-        c.entries.push(Entry { kind: "msg-ai".into(), text: "a2b".into() });
+        c.entries.push(Entry { kind: "msg-user".into(), text: "two, edited".into(), ..Default::default() });
+        c.entries.push(Entry { kind: "msg-ai".into(), text: "a2b".into(), ..Default::default() });
         c.history.push(Turn::User("two, edited".into()));
         c.history.push(Turn::Assistant { text: "a2b".into(), calls: vec![] });
         c.branches = c.snapshot_branches();

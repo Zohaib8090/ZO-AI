@@ -215,7 +215,7 @@ mod tests {
         assert_eq!(projects::Store::load().projects[0].memory[0].text, "uses metric units");
         assert!(list_projects().unwrap().contains("Atlas"));
 
-        chats::upsert(chats::Chat { id: "c1".into(), title: "disk space".into(), updated: 5, entries: vec![chats::Entry { kind: "msg-user".into(), text: "how full is my disk".into() }], ..Default::default() });
+        chats::upsert(chats::Chat { id: "c1".into(), title: "disk space".into(), updated: 5, entries: vec![chats::Entry { kind: "msg-user".into(), text: "how full is my disk".into(), ..Default::default() }], ..Default::default() });
         assert!(search_chats(&json!({ "query": "disk" })).unwrap().contains("c1"));
         assert!(pin_chat(&json!({ "chat": "disk" })).unwrap().starts_with("Pinned"));
         assert!(chats::load()[0].pinned);

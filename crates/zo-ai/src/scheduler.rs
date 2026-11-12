@@ -17,7 +17,7 @@ use zo_core::ai::Selection;
 use zo_core::store::schedules::{self, Task};
 
 fn entry(kind: &str, text: impl Into<String>) -> Entry {
-    Entry { kind: kind.into(), text: text.into() }
+    Entry { kind: kind.into(), text: text.into(), ..Default::default() }
 }
 
 /// Does one task now and returns the chat it leaves behind.

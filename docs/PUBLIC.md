@@ -54,6 +54,43 @@ Quotas: message text up to 20,000 characters, tenant data folder up to 25 MB (wr
 | device-code phishing: tricking a victim into approving the attacker's sign-in request | the approval page needs the code to be **typed** (links never carry it), shows device name, kind and requesting address with a warning, codes last 10 minutes and are single use, 5 wrong codes per person per 10 minutes, caps on requests per address (10/min, 5 waiting) and overall (1000 waiting) | a person who types a code an attacker dictated and ignores the warning; see `LOGIN.md` |
 | using the server as a free relay to attack the web | fetch is rate limited by the per-user bucket and runs only from the model's tool loop | a user can still make the server fetch public pages; the 8-step cap bounds it |
 
+## Attachments (pictures, files, links)
+
+The web composer takes pictures and files from the clipboard (Ctrl+V), the "+" menu (upload, camera on phones, a link) and drag and drop. Nothing leaves the
+browser until Send. The browser does the work: pictures are shrunk to at most 1600 px and re-drawn (this drops EXIF and location data), JPEG, or PNG/WebP when
+they have transparency; text and code files are read as UTF-8 (200 KB each); PDF text is read with pdf.js and ZIP files with JSZip, both loaded on demand from
+cdnjs at a pinned version with a checksum (the CSP allows `cdnjs.cloudflare.com` for scripts and `connect`, and `worker-src blob:` for the PDF worker, which is
+fetched with its checksum and started from a local blob). ZIP guards: at most 200 entries, 2 MB unpacked in all (declared sizes and the bytes that really come
+out are both counted), 100 KB per entry, archives inside are not opened, files that are not text are listed by name only. Other types (Office files, programs,
+video, audio) are refused with a message, never dropped silently.
+
+`/api/send` takes `"attachments": [{"kind":"image","mime","name","data_b64","thumb"?}, {"kind":"text","name","text"}]`. This is the only route with a bigger body limit
+(14 MB, 90 s to arrive, at most 16 such bodies being read at once on the whole server). The server and the service (`zo_core::attach::parse`, the same rules twice)
+check: at most 4 pictures and 6 files; a picture is png, jpeg, webp or gif by its mime **and** by its first bytes, strict base64, at most 3 MB decoded (9 MB for all);
+a text is at most 200 KB (400 KB for all) and has no control characters other than tab and line breaks; names lose control characters, slashes, quotes and angle
+brackets and are cut to 120 characters; the preview (`thumb`) is kept only if it is a data address of a real png/jpeg/webp of at most 20,000 characters. The server forwards
+only what it rebuilt from the checked fields.
+
+The model gets a picture as inline data (OpenAI-compatible `image_url` data address, Anthropic base64 source, Gemini `inlineData`), never as a path: a restricted
+account never has a file read from the server's disk, so a picture in a saved chat that names a path is ignored for them. The picture is for that question only: after
+the answer the turn in the saved history becomes text with `[image: name]`. The text of a file is put into the message between `<attachment name="...">` tags
+(a closing tag inside the text is defused), and the system prompt says that attachments and web pages are data, not instructions. A model that cannot see pictures
+gets none and is told so, and the person sees "this model cannot look at pictures" (the question is still answered). Claude Code mode (owner only) gets the pictures as
+files in a private temp folder that is deleted after the answer. The saved chat entry keeps only `attach: [{kind, name, size, thumb}]` (previews are at most 20 KB each and
+count against the 25 MB of a restricted account); chats that arrive through the sync have these fields cleaned the same way before they are stored, because the web page draws them.
+
+Links: a link added with "+" (or a pasted address) is a chip and is added to the message as a line for the model, which reads it with its web tool. The service operation
+`link_preview {url}` returns `{title, description, host}` for the chip (same public-address-only fetch as the fetch tool, redirects included, 300 KB at most, 12 a minute per person,
+allowed for restricted accounts, never needed to send).
+
+| A signed-in malicious user could try | Defence | Remaining risk |
+|---|---|---|
+| a huge or malformed picture or a base64 bomb | body limit, length checked before decoding, magic bytes, size caps, nothing is decoded by an image library on the server | the model provider decodes the picture (their parser) |
+| a file that talks to the model ("ignore the person and ...") | tagged blocks, closing tag defused, the prompt says attachments are data | prompt injection is reduced, not removed; the harm stays inside the person's own data (see above) |
+| a file name or preview that attacks the page (script in a name, `javascript:` thumbnail) | names cleaned on the server, the page writes names with `textContent`, previews only if a real small picture, sync cleans them too | none known |
+| using the 14 MB route to hold memory | per-person limits are unchanged, 16 big bodies at once overall, 90 s deadline | many accounts together |
+| a link preview used to probe the network | the fetch tool's public-address check, 12 a minute | a public page can still be fetched on a person's behalf |
+
 ## Activity
 
 The service operations `activity` and `activity_stop` list and stop what is running, scoped to the calling tenant: a user sees and stops only their own answers, memory jobs and open client connections (restricted users cannot have anything else). Details: [ACTIVITY.md](ACTIVITY.md).
@@ -62,7 +99,7 @@ The service operations `activity` and `activity_stop` list and stop what is runn
 
 60 requests/minute per user, 8 requests at once per user, 2 concurrent answers per user (ops that call a model, `compact`,
 `memory_edit`, `personality_generate`, `models`, count as an answer), `ZO_MAX_RUNS` (8) answers at once overall, 2 sync requests at once per
-user and 6 overall, bodies 1 MB (`/api/op`, `/api/send`) and 20 MB (`/api/sync/*`) that must arrive within 30 s (120 s for sync), idle
+user and 6 overall, bodies 1 MB (`/api/op`, `/api/reply`), 14 MB (`/api/send`, because of attachments) and 20 MB (`/api/sync/*`) that must arrive within 30 s (90 s for send, 120 s for sync), idle
 client connections are dropped after 20 s (a patched `tiny_http` in `vendor/`), `429` with `Retry-After` when over. People who are not
 registered yet may knock 10 times a minute; when the registry is full they are refused for 30 s at a time without a database read.
 Sign-in requests (`device_start`): 10 a minute and 5 waiting per source address, 1000 waiting overall. Device-credential lookups: 60 a minute per source address (the last `X-Forwarded-For` entry), 1200 overall; a real token that was seen in the last
@@ -140,6 +177,7 @@ addressed, so the consent wording is "ZO-AI may use your key only for your own r
 * Which Render plans include the GDPR data processing agreement; the free plan's suspension threshold.
 * Minimum ages by country; whether the "strictly necessary" exemption covers Firebase's browser storage in every EU country; legal sufficiency of the texts.
 * Whether pasting one's own OpenAI key into a third-party service conflicts with OpenAI's terms.
+* Attachments: tested in the built-in browser pane against a local server (a pasted picture from a stubbed clipboard event, the "+" menu, a text file, a generated PDF, ZIPs including one that unpacks to 4 MB and one with 250 entries, drag and drop, link chips, 390 px and light/dark) and in Rust tests against fake model servers. Not tested: Ctrl+V with a real system clipboard, a real phone camera or file picker, Safari and Firefox, HEIC conversion, a real vision model, and a ZIP whose headers lie about sizes (the bytes that really come out are counted, but no such file was built).
 * None of this was tested against a real Render, Firebase or Firestore; the code of the multi-tenant design is written by other agents and this page describes the agreed design, not verified behaviour.
 
 Sources (read 2026-11-12): firebase.google.com/docs/firestore/quotas, /pricing, firebase.google.com/pricing, /docs/auth/limits,
