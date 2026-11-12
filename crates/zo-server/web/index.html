@@ -90,6 +90,14 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .side-foot{border-top:1px solid var(--line);padding:10px 6px 2px 6px;margin-top:8px;display:flex;align-items:center;gap:10px}
 .avatar{background:#3A3A3A;color:var(--text);border-radius:999px;min-width:28px;height:28px;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center}
 :root[data-theme=light] .avatar{background:#D3CFC1}
+.user-btn{flex:1;min-width:0;justify-content:flex-start;gap:10px;border-radius:8px;padding:3px 4px;margin:-3px 0 -3px -4px;text-align:left}.user-btn:hover{background:var(--hov)}
+.av-wrap{position:relative;display:inline-flex;flex:none}.av-badge{position:absolute;top:-4px;right:-5px;min-width:16px;height:16px;border-radius:99px;background:var(--accent);color:var(--onaccent);font-size:10px;font-weight:600;line-height:16px;text-align:center;padding:0 4px;border:2px solid var(--bg);box-sizing:content-box}
+.act-pop{position:fixed;left:8px;bottom:56px;width:min(320px,calc(100vw - 16px));min-width:0}
+.act-row{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px}.act-row .c{flex:1;min-width:0}
+.act-row .pop-title,.act-row .pop-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.act-row .btn{padding:4px 11px;font-size:12px}
+.act-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:none;animation:actp 1.4s ease-in-out infinite}@keyframes actp{50%{opacity:.35}}
+.pop-sep{height:1px;background:var(--line);margin:5px 4px}
 .side-user{flex:1;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;position:relative}
@@ -278,7 +286,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
     <button class="nav-item" data-nav="artifacts"><i data-i="list"></i>Artifacts</button>
     <button class="nav-item" data-nav="scheduled"><i data-i="alarm"></i>Scheduled</button>
     <div class="lists" id="lists"></div>
-    <div class="side-foot"><div class="avatar" id="avatar">Z</div><div class="side-user" id="uname"></div><button class="icon-btn" id="gear" title="Settings" data-i="gear"></button></div>
+    <div class="side-foot"><button class="user-btn" id="userBtn" title="Running now, settings and sign out" aria-haspopup="menu"><span class="av-wrap"><span class="avatar" id="avatar">Z</span><span class="av-badge hide" id="avBadge"></span></span><span class="side-user" id="uname"></span></button><button class="icon-btn" id="gear" title="Settings" data-i="gear"></button></div>
   </aside>
   <div class="side-scrim" id="sideScrim"></div>
   <section class="main">
@@ -824,6 +832,50 @@ function go(n) {
 }
 document.querySelectorAll(".nav-item").forEach(b => b.onclick = () => go(b.dataset.nav));
 $("sideScrim").onclick = () => $("side").classList.remove("open");
+/* ---------- running now: the menu in the sidebar footer ---------- */
+const ACT_KIND = { answer: "Chat", claude_code: "Claude Code", command: "Command", memory_job: "Memory", scheduled: "Scheduled", client: "Connected", sync: "Sync", terminal: "Terminal" };
+function actAgo(ms) { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? s + " s" : s < 3600 ? Math.floor(s / 60) + " min" : Math.floor(s / 3600) + " h " + Math.floor(s % 3600 / 60) + " min"; }
+let actItems = [], actPop = null;
+async function actFetch() {
+  try { const r = await op("activity"); actItems = Array.isArray(r.items) ? r.items : []; } catch { return false; }
+  const n = actItems.filter(i => i.kind !== "client").length, b = $("avBadge"); b.textContent = n > 9 ? "9+" : String(n); b.classList.toggle("hide", n === 0);
+  b.title = n + (n === 1 ? " thing is" : " things are") + " running";
+  return true;
+}
+function actHtml() {
+  const run = actItems.filter(i => i.kind !== "client"), cli = actItems.filter(i => i.kind === "client");
+  const row = i => `<div class="act-row"><span class="act-dot"></span><div class="c"><div class="pop-title">${esc(ACT_KIND[i.kind] || "Task")}: ${esc(i.title)}</div><div class="pop-sub">${esc([i.detail, i.started_ms ? actAgo(i.started_ms) : "", i.source].filter(Boolean).join(" · "))}</div></div>${i.can_stop ? `<button class="btn" data-stop="${esc(i.id)}">Stop</button>` : ""}</div>`;
+  return '<div class="pop-head">Running now</div>' + (run.length ? run.map(row).join("") : '<div class="pop-sub" style="padding:4px 10px 8px">Nothing is running.</div>')
+    + (cli.length ? `<div class="pop-sep"></div><div class="pop-sub" style="padding:2px 10px 6px">${cli.length} connection${cli.length === 1 ? "" : "s"} open</div>` : "")
+    + `<div class="pop-sep"></div><button class="pop-row" data-go="settings"><div class="c"><div class="pop-title">Settings</div></div></button>`
+    + `<button class="pop-row" data-go="out"><div class="c"><div class="pop-title">Sign out</div></div></button>`;
+}
+function actPaint() {
+  if (!actPop || !document.body.contains(actPop)) return;
+  const sig = actItems.map(i => i.id).join(); if (actPop.querySelector("[data-stop]:hover") && actPop.dataset.sig === sig) return; actPop.dataset.sig = sig; // do not swap a button under the pointer unless the list changed
+  actPop.innerHTML = actHtml();
+  actPop.querySelectorAll("[data-stop]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await op("activity_stop", { id: Number(b.dataset.stop) }); toast("Stopped."); } catch (e) { toast(e.message); }
+    await actFetch(); actPaint();
+  });
+  actPop.querySelector("[data-go=settings]").onclick = () => { actPop.remove(); $("side").classList.remove("open"); settingsHome(); };
+  actPop.querySelector("[data-go=out]").onclick = () => { actPop.remove(); NOAUTH ? toast("No sign-in in test mode") : signOut(auth); };
+}
+async function actOpen() {
+  document.querySelectorAll(".popover").forEach(p => p.remove());
+  const p = actPop = document.createElement("div"); p.className = "popover act-pop"; p.setAttribute("role", "menu"); document.body.appendChild(p);
+  const r = $("userBtn").getBoundingClientRect(); p.style.left = Math.max(8, r.left) + "px"; p.style.bottom = Math.max(8, innerHeight - r.top + 6) + "px";
+  p.innerHTML = actHtml(); actPaint();
+  const close = () => { p.remove(); document.removeEventListener("mousedown", h); document.removeEventListener("keydown", k); };
+  const h = e => { if (!p.contains(e.target) && !$("userBtn").contains(e.target)) close(); };
+  const k = e => { if (e.key === "Escape") { close(); $("userBtn").focus(); } };
+  document.addEventListener("mousedown", h); document.addEventListener("keydown", k);
+  const t = setInterval(async () => { if (!document.body.contains(p)) { clearInterval(t); return; } if (await actFetch()) actPaint(); }, 3000);
+  if (await actFetch()) actPaint();
+}
+$("userBtn").onclick = () => { if (actPop && document.body.contains(actPop)) { actPop.remove(); actPop = null; } else actOpen(); };
+setInterval(() => { if (!document.hidden && !$("app").classList.contains("hide") && !(actPop && document.body.contains(actPop))) actFetch(); }, 15000);
 $("gear").onclick = () => { $("side").classList.remove("open"); settingsHome(); };
 $("hideSide").onclick = () => { if (innerWidth <= 860) $("side").classList.remove("open"); else $("side").classList.add("closed"); };
 $("showSide").onclick = () => { if (innerWidth <= 860) $("side").classList.toggle("open"); else $("side").classList.remove("closed"); };
@@ -979,7 +1031,7 @@ async function start(u, agreed) {
   try { acct = await acctOp("whoami"); } catch (e) { acct = null; }
   document.querySelectorAll('[data-nav="projects"],[data-nav="artifacts"],[data-nav="scheduled"]').forEach(n => n.classList.toggle("hide", restricted()));
   try { await op("status"); } catch (e) { if (!NOAUTH && e.status === 401) { $("app").classList.add("hide"); $("login").classList.remove("hide"); $("err").textContent = e.message; signOut(auth); return; } }
-  showHome(); refreshChats();
+  showHome(); refreshChats(); actFetch();
   /* chats made on the computer appear here: refresh when the tab comes back, and once a minute */
   if (started) return; started = true;
   const tick = () => { if (!document.hidden) refreshChats(); };
