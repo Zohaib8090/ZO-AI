@@ -852,7 +852,24 @@ fn account_page(ui: &Rc<Ui>, content: &gtk::Box) {
                     });
                 });
             }
-            card.append(&row("Keep in sync", "Every 30 seconds this computer and the server compare chats, memory notes and personalities. The newest change wins; a deleted chat or note is deleted on both. API keys are never sent.", Some(&on)));
+            card.append(&row("Keep in sync", "Every 30 seconds this computer and the server compare chats, memory notes and personalities. The newest change wins; a deleted chat or note is deleted on both. API keys are not sent unless you switch that on below.", Some(&on)));
+            // what else travels: profiles and pinned models, remote MCP servers, and (off by default) API keys
+            let (sp, sm, sk) = (gtk::Switch::new(), gtk::Switch::new(), gtk::Switch::new());
+            sp.set_active(cfg.profiles);
+            sm.set_active(cfg.mcp);
+            sk.set_active(cfg.keys);
+            for sw in [&sp, &sm, &sk] {
+                let (sp, sm, sk, status) = (sp.clone(), sm.clone(), sk.clone(), status.clone());
+                sw.connect_state_set(move |_, _| {
+                    if let Err(e) = sync::set_kinds(sp.is_active(), sm.is_active(), sk.is_active()) {
+                        status.set_text(&e);
+                    }
+                    gtk::glib::Propagation::Proceed
+                });
+            }
+            card.append(&row("Sync my profiles and pinned models", "Your profiles (provider, model, address, effort), the models you pinned and which providers you hide in the pickers. No API key is in them.", Some(&sp)));
+            card.append(&row("Sync MCP servers (web addresses only)", "MCP servers you added by web address, with their on/off switch. Programs that run on this computer, tokens and sign-ins stay here.", Some(&sm)));
+            card.append(&row("Also sync my API keys", "Off by default. When on, your API keys are also sent to the server (over HTTPS, to your own account only) and kept there, encrypted with the server's secret, so the web version can use them. Anyone who runs the server could in principle read them. Switch it off and delete them on the web if you do not want that.", Some(&sk)));
             card.append(&bar);
             status.set_margin_start(16);
             status.set_margin_end(16);
@@ -1334,6 +1351,7 @@ fn add_server_sheet(ui: &Rc<Ui>) {
                 client_secret: nonempty(&client_secret.text()),
                 callback_port: port.text().trim().parse::<u16>().ok(),
                 scope: nonempty(&scopes.text()),
+                updated: 0,
             };
             let typed_token = token.text().to_string();
             if cfg.name.is_empty() || cfg.command.is_empty() {

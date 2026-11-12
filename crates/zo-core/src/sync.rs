@@ -8,16 +8,34 @@
 //!   and carries it out. On any error it stops and changes nothing else; nothing is ever deleted because a server looked empty
 //!   (only a tombstone deletes).
 //!
-//! Item keys are `kind:id` with kind `chats`, `memory` or `personalities`. Memory also has one pseudo item, `memory:_state`
-//! (is the memory on, and how often the agent reads a chat). API keys and the keys file are never synced.
+//! Item keys are `kind:id` with kind `chats`, `memory`, `personalities`, `profiles`, `settings`, `mcp` or `keys`. Memory also has one
+//! pseudo item, `memory:_state` (is the memory on, and how often the agent reads a chat); the person's picker preferences are the
+//! one item `settings:main`. Profiles travel WITHOUT any key. `mcp` carries remote servers only (name, address, on/off), never a
+//! token, a header, a program or an account that is restricted. `keys` (API keys) only travel when the person switched
+//! "Also sync my API keys" on on this computer; they are never in any other document.
 
+use crate::ai::{profiles, providers, ui_prefs};
+use crate::mcp_client;
 use crate::store::{chats, memory, personality};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 use std::time::Duration;
 
-pub const KINDS: [&str; 3] = ["chats", "memory", "personalities"];
+pub const KINDS: [&str; 7] = ["chats", "memory", "personalities", "profiles", "settings", "mcp", "keys"];
+/// The kinds that older servers also know (a manifest must list these).
+const OLD_KINDS: [&str; 3] = ["chats", "memory", "personalities"];
+/// The start of a refusal that is not an error of the item but a rule of the account (a restricted account takes no MCP server and
+/// only public https addresses): the computer does not offer it again for the same version and does not list it as a problem.
+pub const NOT_FOR_ACCOUNT: &str = "Not for this account: ";
+/// The most a document of a settings-like kind (profile, preferences, server, key) may weigh.
+const MAX_SMALL_DOC: usize = 64 * 1024;
+/// How many profiles, MCP servers and keys one side keeps (a document that would go past this is refused).
+const MAX_PROFILES: usize = 100;
+const MAX_MCP: usize = 50;
+/// "The time is not known" (a key or server that was there before times were kept): any real change is newer, and a copy that only
+/// one side has is still copied. Such a time is never moved by a clock difference.
+pub const UNKNOWN_TIME: u64 = 1;
 /// The memory's small state (on/off, how often) travels as a note with this id.
 pub const STATE_ID: &str = "_state";
 /// Tombstones are forgotten after this long (a computer that was off for longer may bring a deleted item back).
@@ -156,33 +174,102 @@ fn tomb_clear(k: &str) {
 // ---------------------------------------------------------------------------------------------------------------------------
 // the documents of this side
 
-/// When each item here last changed, and the tombstones.
+/// When each item here last changed, and the tombstones (every kind).
 pub fn local_side() -> Side {
-    let mut items = Times::new();
-    for c in chats::load() {
-        items.insert(key("chats", &c.id), c.updated);
-    }
-    let m = memory::load();
-    for i in &m.items {
-        items.insert(key("memory", &i.id), i.updated);
-    }
-    if m.state_updated > 0 {
-        items.insert(key("memory", STATE_ID), m.state_updated);
-    }
-    for p in personality::load().items {
-        items.insert(key("personalities", &p.id), personality::made_at(&p));
-    }
-    Side { items, deleted: tombstones() }
+    local_side_of(&KINDS)
 }
 
-/// The manifest the server sends: `{chats:{id:updated}, memory:{..}, personalities:{..}, deleted:{"chats:id":at}}`.
+thread_local! {
+    /// Set while the sync itself changes a key: that must not count as the person's own change (no new time, no tombstone).
+    static APPLYING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn applying<T>(f: impl FnOnce() -> T) -> T {
+    let before = APPLYING.with(|a| a.replace(true));
+    let r = f();
+    APPLYING.with(|a| a.set(before));
+    r
+}
+
+fn mcp_here() -> bool {
+    !crate::tenant::is_restricted()
+}
+
+fn is_simple_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 100 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// The id of a remote MCP server in the sync: its name as a tool name.
+fn mcp_id(name: &str) -> String {
+    mcp_client::clean_name(name)
+}
+
+/// When each item of these kinds last changed here, and the tombstones.
+fn local_side_of(kinds: &[&str]) -> Side {
+    let mut items = Times::new();
+    let want = |k: &str| kinds.contains(&k);
+    if want("chats") {
+        for c in chats::load() {
+            items.insert(key("chats", &c.id), c.updated);
+        }
+    }
+    if want("memory") {
+        let m = memory::load();
+        for i in &m.items {
+            items.insert(key("memory", &i.id), i.updated);
+        }
+        if m.state_updated > 0 {
+            items.insert(key("memory", STATE_ID), m.state_updated);
+        }
+    }
+    if want("personalities") {
+        for p in personality::load().items {
+            items.insert(key("personalities", &p.id), personality::made_at(&p));
+        }
+    }
+    if want("profiles") {
+        for p in profiles::load() {
+            items.insert(key("profiles", &p.id), p.updated.max(UNKNOWN_TIME));
+        }
+    }
+    if want("settings") {
+        let u = ui_prefs::load().updated;
+        if u > 0 {
+            items.insert(key("settings", SETTINGS_ID), u);
+        }
+    }
+    if want("mcp") && mcp_here() {
+        for s in mcp_client::load_servers().iter().filter(|s| mcp_client::is_url(&s.command)) {
+            items.insert(key("mcp", &mcp_id(&s.name)), s.updated.max(UNKNOWN_TIME));
+        }
+    }
+    if want("keys") {
+        let times = key_times();
+        for id in key_candidates() {
+            if crate::ai::keys::get(&id).is_some() {
+                items.insert(key("keys", &id), times.get(&id).copied().unwrap_or(UNKNOWN_TIME));
+            }
+        }
+    }
+    let mut deleted = tombstones();
+    deleted.retain(|k, _| split_key(k).is_some_and(|(kind, _)| want(kind) && (kind != "mcp" || mcp_here())));
+    Side { items, deleted }
+}
+
+/// The one item of the `settings` kind.
+pub const SETTINGS_ID: &str = "main";
+
+/// The manifest the server sends: `{chats:{id:updated}, memory:{..}, ..., deleted:{"chats:id":at}}`.
 pub fn manifest_json() -> Value {
     side_to_json(&local_side())
 }
 
 pub fn side_to_json(s: &Side) -> Value {
     // `now` is this computer's clock: the other side uses it to see how far its own clock is off
-    let mut out = json!({"chats": {}, "memory": {}, "personalities": {}, "deleted": s.deleted, "now": chats::now_millis()});
+    let mut out = json!({"deleted": s.deleted, "now": chats::now_millis()});
+    for kind in KINDS {
+        out[kind] = json!({});
+    }
     for (k, u) in &s.items {
         if let Some((kind, id)) = split_key(k) {
             out[kind][id] = json!(u);
@@ -192,11 +279,18 @@ pub fn side_to_json(s: &Side) -> Value {
 }
 
 /// Reads a manifest. Anything that does not look like one is an error (a broken answer must never look like an empty server).
+/// A kind that an older server does not know is simply empty.
 pub fn side_from_json(v: &Value) -> Result<Side, String> {
     let bad = || "The server's answer is not a sync manifest.".to_string();
     let mut s = Side::default();
     for kind in KINDS {
-        for (id, u) in v.get(kind).and_then(Value::as_object).ok_or_else(bad)? {
+        let Some(o) = v.get(kind) else {
+            if OLD_KINDS.contains(&kind) {
+                return Err(bad());
+            }
+            continue;
+        };
+        for (id, u) in o.as_object().ok_or_else(bad)? {
             s.items.insert(key(kind, id), u.as_u64().ok_or_else(bad)?);
         }
     }
@@ -211,11 +305,81 @@ fn checked<'a>(kind: &'a str, id: &str) -> Result<&'a str, String> {
         return Err("Unknown kind of item.".into());
     }
     // on the server the id comes from a client and becomes a document name in the database: a plain, short, unambiguous name
-    // ("." and ".." are refused by the database, "/" would be lossy, and "__" is how a long document is cut into parts)
-    if crate::tenant::multi_tenant() && (id.len() > 100 || id.contains("__") || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')) {
+    // ("." and ".." are refused by the database, "/" would be lossy, and "__" is how a long document is cut into parts).
+    // A key's id (`provider` or `provider@profile`) is a name in the key store, not a document, and may have the `@`.
+    let extra = |c: char| kind == "keys" && c == '@';
+    if crate::tenant::multi_tenant() && (id.len() > 100 || id.contains("__") || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || extra(c))) {
         return Err("That id is not allowed (letters, digits, - and _ only, at most 100 characters, no double underscore).".into());
     }
+    if kind == "mcp" && !mcp_here() {
+        return Err(format!("{NOT_FOR_ACCOUNT}MCP servers are not available to this account."));
+    }
     Ok(kind)
+}
+
+// ---- keys: which API keys can travel, and when each was last changed here ----
+
+/// Only a provider's own key (`openrouter`) or a profile's (`openrouter@p1700000000000`) may travel: never the Claude Code or
+/// SSH entries, the sign-in credential or an MCP token.
+pub fn syncable_key_id(id: &str) -> bool {
+    let (prov, prof) = match id.split_once('@') {
+        Some((a, b)) => (a, Some(b)),
+        None => (id, None),
+    };
+    providers::find(prov).is_some_and(|p| p.protocol != providers::Protocol::ClaudeCode) && prof.map_or(true, is_simple_id)
+}
+
+fn key_times_path() -> std::path::PathBuf {
+    crate::audit::config_dir().join("keys-times.json")
+}
+
+/// When each syncable key was last set here (only times, never a key).
+fn key_times() -> Times {
+    std::fs::read_to_string(key_times_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+fn key_times_edit(f: impl FnOnce(&mut Times)) {
+    static LOCK: Mutex<()> = Mutex::new(());
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut t = key_times();
+    f(&mut t);
+    let p = key_times_path();
+    let _ = std::fs::create_dir_all(p.parent().unwrap_or(&p));
+    if let Ok(s) = serde_json::to_string(&t) {
+        let tmp = p.with_extension("json.tmp");
+        if crate::tenant::fits(&p, s.len()) && std::fs::write(&tmp, s).is_ok() {
+            let _ = std::fs::rename(&tmp, &p);
+        }
+    }
+}
+
+/// Called by the key store when the person saves or clears a key: the key gets the time now, or leaves a tombstone.
+pub(crate) fn key_touched(id: &str, cleared: bool) {
+    if APPLYING.with(|a| a.get()) || !syncable_key_id(id) {
+        return;
+    }
+    let before = key_times().get(id).copied().unwrap_or(UNKNOWN_TIME);
+    if cleared {
+        key_times_edit(|t| {
+            t.remove(id);
+        });
+        tombstone("keys", id, before);
+    } else {
+        key_times_edit(|t| {
+            t.insert(id.to_string(), chats::now_millis().max(before.saturating_add(1)));
+        });
+    }
+}
+
+/// Every id a key could be stored under here: each provider, and each profile's own.
+fn key_candidates() -> Vec<String> {
+    let mut v: Vec<String> = providers::all().iter().filter(|p| p.protocol != providers::Protocol::ClaudeCode).map(|p| p.id.to_string()).collect();
+    for p in profiles::load() {
+        if is_simple_id(&p.id) && providers::find(&p.provider).is_some_and(|pr| pr.protocol != providers::Protocol::ClaudeCode) {
+            v.push(format!("{}@{}", p.provider, p.id));
+        }
+    }
+    v
 }
 
 /// The document of one item, or None when it is not here.
@@ -228,12 +392,65 @@ pub fn get_doc(kind: &str, id: &str) -> Option<Value> {
         }
         "memory" => memory::load().items.into_iter().find(|i| i.id == id).and_then(|i| serde_json::to_value(i).ok()),
         "personalities" => personality::load().items.into_iter().find(|p| p.id == id).map(|p| json!({"id": p.id, "name": p.name, "prompt": p.prompt, "generated": p.generated})),
+        "profiles" => profiles::load().into_iter().find(|p| p.id == id).map(|mut p| {
+            p.updated = p.updated.max(UNKNOWN_TIME);
+            serde_json::to_value(p).unwrap_or(Value::Null)
+        }),
+        "settings" if id == SETTINGS_ID => {
+            let p = ui_prefs::load();
+            (p.updated > 0).then(|| ui_prefs::doc(&p))
+        }
+        "mcp" if mcp_here() => mcp_client::load_servers()
+            .into_iter()
+            .find(|s| mcp_client::is_url(&s.command) && mcp_id(&s.name) == id)
+            .map(|s| json!({"name": s.name, "address": s.command, "enabled": s.enabled, "updated": s.updated.max(UNKNOWN_TIME)})),
+        "keys" if syncable_key_id(id) => crate::ai::keys::get(id).map(|k| json!({"id": id, "key": k, "updated": key_times().get(id).copied().unwrap_or(UNKNOWN_TIME)})),
         _ => None,
     }
 }
 
 fn local_updated(kind: &str, id: &str) -> Option<u64> {
-    local_side().items.get(&key(kind, id)).copied()
+    if kind == "keys" {
+        return crate::ai::keys::get(id).map(|_| key_times().get(id).copied().unwrap_or(UNKNOWN_TIME));
+    }
+    local_side_of(&[kind]).items.get(&key(kind, id)).copied()
+}
+
+/// A model server address in a profile: http(s), no spaces, at most 500 characters; an account without a computer of its own (a
+/// restricted one) may only name a public https address. Empty is fine (the provider's own).
+fn check_profile_address(base_url: &str) -> Result<(), String> {
+    if base_url.trim().is_empty() {
+        return Ok(());
+    }
+    crate::ai::probe::check_address(base_url)?;
+    if crate::tenant::is_restricted() {
+        crate::ai::agent::check_restricted_provider(providers::find("custom").ok_or("no custom provider")?, base_url).map_err(|e| format!("{NOT_FOR_ACCOUNT}{e}"))?;
+    }
+    Ok(())
+}
+
+/// Checks a profile that came from the other side. Nothing in it is a key.
+fn check_profile(id: &str, p: &mut profiles::Profile) -> Result<(), String> {
+    let text_ok = |t: &str, max: usize| t.chars().count() <= max && !t.chars().any(char::is_control);
+    if p.id != id || !is_simple_id(id) {
+        return Err("The profile's id is not allowed.".into());
+    }
+    p.name = p.name.trim().to_string();
+    if p.name.is_empty() || !text_ok(&p.name, 100) || !text_ok(&p.model, 300) || p.effort.as_deref().is_some_and(|e| !text_ok(e, 20)) {
+        return Err("The profile has a name, model or effort that is not allowed.".into());
+    }
+    let prov = providers::find(&p.provider).ok_or("The profile names a provider this version does not know.")?;
+    if prov.protocol == providers::Protocol::ClaudeCode && crate::tenant::is_restricted() {
+        return Err(format!("{NOT_FOR_ACCOUNT}Claude Code is not available to this account."));
+    }
+    if p.pinned.len() > 200 || p.pinned.iter().any(|m| m.is_empty() || !text_ok(m, 300)) {
+        return Err("The profile's pinned models are not valid.".into());
+    }
+    if let Some(u) = p.base_url.as_deref() {
+        check_profile_address(u)?;
+        p.base_url = Some(u.trim().to_string()).filter(|u| !u.is_empty());
+    }
+    Ok(())
 }
 
 /// Applies a document that came from the other side, only if it is newer than what is here (and than a tombstone).
@@ -241,11 +458,18 @@ fn local_updated(kind: &str, id: &str) -> Option<u64> {
 pub fn put_doc(kind: &str, id: &str, doc: &Value) -> Result<bool, String> {
     checked(kind, id)?;
     let bad = |e: serde_json::Error| format!("The {kind} document is not valid: {e}");
+    if kind != "chats" && kind != "memory" && kind != "personalities" && doc.to_string().len() > MAX_SMALL_DOC {
+        return Err(format!("That {kind} document is too big."));
+    }
     enum Parsed {
         Chat(chats::Chat),
         State(bool, usize),
         Note(memory::Item),
         Person(personality::Personality),
+        Profile(profiles::Profile),
+        Settings(ui_prefs::Prefs),
+        Mcp(mcp_client::ServerConfig),
+        Key(String),
     }
     let (up, parsed) = match kind {
         "chats" => {
@@ -268,6 +492,49 @@ pub fn put_doc(kind: &str, id: &str, doc: &Value) -> Result<bool, String> {
             let i: memory::Item = serde_json::from_value(doc.clone()).map_err(bad)?;
             (i.updated, Parsed::Note(i))
         }
+        "profiles" => {
+            let mut p: profiles::Profile = serde_json::from_value(doc.clone()).map_err(bad)?;
+            check_profile(id, &mut p)?;
+            (p.updated.max(UNKNOWN_TIME), Parsed::Profile(p))
+        }
+        "settings" => {
+            if id != SETTINGS_ID {
+                return Err("Unknown kind of item.".into());
+            }
+            let p: ui_prefs::Prefs = serde_json::from_value(doc.clone()).map_err(bad)?;
+            let p = ui_prefs::clean(p)?;
+            if p.updated == 0 {
+                return Err("The preferences have no time.".into());
+            }
+            (p.updated, Parsed::Settings(p))
+        }
+        "mcp" => {
+            let g = |k: &str| doc.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+            let (name, address) = (g("name"), g("address"));
+            if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) || mcp_id(&name) != id {
+                return Err("The server's name is not valid.".into());
+            }
+            // a remote server by address only: no program to start, no account or token inside the address
+            crate::ai::probe::check_address(&address)?;
+            let authority = address.split("://").nth(1).unwrap_or("").split(['/', '?', '#']).next().unwrap_or("");
+            if !mcp_client::is_url(&address) || authority.contains('@') {
+                return Err("A synced MCP server must be a web address without a user name or password.".into());
+            }
+            let up = doc.get("updated").and_then(Value::as_u64).filter(|u| *u > 0).ok_or("The server has no time.")?;
+            let enabled = doc.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+            (up, Parsed::Mcp(mcp_client::ServerConfig { name, command: address, enabled, updated: up, ..Default::default() }))
+        }
+        "keys" => {
+            if !syncable_key_id(id) {
+                return Err("That key cannot be synced.".into());
+            }
+            let k = doc.get("key").and_then(Value::as_str).unwrap_or("").trim().to_string();
+            if k.is_empty() || k.len() > 4096 || k.chars().any(char::is_control) {
+                return Err("The key is not valid.".into());
+            }
+            let up = doc.get("updated").and_then(Value::as_u64).filter(|u| *u > 0).ok_or("The key has no time.")?;
+            (up, Parsed::Key(k))
+        }
         _ => {
             let p: personality::Personality = serde_json::from_value(doc.clone()).map_err(bad)?;
             (personality::made_at(&p), Parsed::Person(p))
@@ -277,7 +544,8 @@ pub fn put_doc(kind: &str, id: &str, doc: &Value) -> Result<bool, String> {
         Parsed::Chat(c) => c.id.as_str(),
         Parsed::Note(i) => i.id.as_str(),
         Parsed::Person(p) => p.id.as_str(),
-        Parsed::State(..) => id,
+        Parsed::Profile(p) => p.id.as_str(),
+        Parsed::State(..) | Parsed::Settings(_) | Parsed::Mcp(_) | Parsed::Key(_) => id,
     };
     if id_in_doc != id {
         return Err("The document's id is not the one asked for.".into());
@@ -317,6 +585,48 @@ pub fn put_doc(kind: &str, id: &str, doc: &Value) -> Result<bool, String> {
             personality::import(p);
             true
         }
+        Parsed::Profile(mut p) => {
+            let mut all = profiles::load();
+            if !all.iter().any(|x| x.id == p.id) && all.len() >= MAX_PROFILES {
+                return Err(format!("There are already {MAX_PROFILES} profiles here."));
+            }
+            // names are unique, ignoring case: a clash with another profile gets a number
+            let base = p.name.clone();
+            let mut n = 1;
+            while all.iter().any(|x| x.id != p.id && x.name.eq_ignore_ascii_case(&p.name)) {
+                n += 1;
+                p.name = format!("{base} ({n})");
+            }
+            all.retain(|x| x.id != p.id);
+            all.push(p);
+            profiles::save_as_is(&all);
+            true
+        }
+        Parsed::Settings(p) => ui_prefs::save_as_is(&p).map(|_| true)?,
+        Parsed::Mcp(mut s) => {
+            let mut all = mcp_client::load_servers();
+            if let Some(x) = all.iter().find(|x| mcp_id(&x.name) == id) {
+                if !mcp_client::is_url(&x.command) {
+                    return Err("A program with that name is already set up here.".into());
+                }
+                // the headers and sign-in details of this computer stay; only the address, the on/off switch and the time come in
+                let keep = x.clone();
+                s = mcp_client::ServerConfig { command: s.command, enabled: s.enabled, updated: s.updated, name: keep.name.clone(), ..keep };
+                all.retain(|x| mcp_id(&x.name) != id);
+            } else if all.iter().filter(|x| mcp_client::is_url(&x.command)).count() >= MAX_MCP {
+                return Err(format!("There are already {MAX_MCP} MCP servers here."));
+            }
+            all.push(s);
+            mcp_client::save_servers_as_is(&all);
+            true
+        }
+        Parsed::Key(k) => {
+            applying(|| crate::ai::keys::set(id, &k))?;
+            key_times_edit(|t| {
+                t.insert(id.to_string(), up);
+            });
+            true
+        }
     };
     if applied && tomb.is_some() {
         tomb_clear(&k);
@@ -331,6 +641,12 @@ pub fn apply_delete(kind: &str, id: &str, at: u64) -> Result<bool, String> {
     if kind == "memory" && id == STATE_ID {
         return Err("The memory state cannot be deleted.".into());
     }
+    if kind == "settings" {
+        return Err("The preferences cannot be deleted.".into());
+    }
+    if kind == "keys" && !syncable_key_id(id) {
+        return Err("That key cannot be synced.".into());
+    }
     if too_far_ahead(at) {
         return Err("That deletion is dated in the future (is a clock wrong?), so it is not taken in yet.".into());
     }
@@ -342,6 +658,31 @@ pub fn apply_delete(kind: &str, id: &str, at: u64) -> Result<bool, String> {
     match kind {
         "chats" => chats::delete_quiet(id),
         "memory" => memory::change(|s| s.items.retain(|i| i.id != id)),
+        "profiles" => {
+            let mut all = profiles::load();
+            if let Some(p) = all.iter().find(|p| p.id == id).cloned() {
+                all.retain(|x| x.id != id);
+                profiles::save_as_is(&all);
+                // the profile's own key goes with it (it is a separate item when keys are synced)
+                applying(|| crate::ai::keys::clear(&format!("{}@{}", p.provider, p.id)));
+                let mut sel = crate::ai::Selection::load();
+                if sel.profile.as_deref() == Some(id) {
+                    sel.profile = None;
+                    sel.save();
+                }
+            }
+        }
+        "mcp" => {
+            let mut all = mcp_client::load_servers();
+            all.retain(|s| !(mcp_client::is_url(&s.command) && mcp_id(&s.name) == id));
+            mcp_client::save_servers_as_is(&all);
+        }
+        "keys" => {
+            applying(|| crate::ai::keys::clear(id));
+            key_times_edit(|t| {
+                t.remove(id);
+            });
+        }
         _ => personality::remove_quiet(id),
     }
     Ok(true)
@@ -358,6 +699,12 @@ pub struct Config {
     pub enabled: bool,
     /// The signed-in account (see `login`); empty when nobody is signed in. Never a secret.
     pub email: String,
+    /// Sync the profiles (with their pinned models and addresses) and the picker preferences. Default on.
+    pub profiles: bool,
+    /// Sync the remote MCP servers (addresses only). Default on.
+    pub mcp: bool,
+    /// Also sync API keys (they then also live, encrypted, on the server). Default OFF.
+    pub keys: bool,
 }
 
 fn config_path() -> std::path::PathBuf {
@@ -367,7 +714,8 @@ fn config_path() -> std::path::PathBuf {
 pub fn config() -> Config {
     let v: Value = std::fs::read_to_string(config_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
     let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-    Config { url: text("url"), enabled: v.get("enabled").and_then(Value::as_bool).unwrap_or(false), email: text("email") }
+    let flag = |k: &str, d: bool| v.get(k).and_then(Value::as_bool).unwrap_or(d);
+    Config { url: text("url"), enabled: flag("enabled", false), email: text("email"), profiles: flag("profiles", true), mcp: flag("mcp", true), keys: flag("keys", false) }
 }
 
 /// The server address in its clean form (no trailing slash). The device token goes with every call, so only https is accepted
@@ -417,8 +765,40 @@ pub(crate) fn write_config(url: &str, enabled: bool, email: &str) -> Result<(), 
     let dir = p.parent().unwrap_or(&p);
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let tmp = p.with_extension("json.tmp");
-    std::fs::write(&tmp, json!({"url": url, "enabled": enabled, "email": email}).to_string()).map_err(|e| e.to_string())?;
+    let c = config();
+    std::fs::write(&tmp, json!({"url": url, "enabled": enabled, "email": email, "profiles": c.profiles, "mcp": c.mcp, "keys": c.keys}).to_string()).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
+}
+
+/// Chooses what else is synced besides chats, memory and personalities (the Account and sync page). Keys are off unless asked for.
+pub fn set_kinds(profiles: bool, mcp: bool, keys: bool) -> Result<(), String> {
+    let c = config();
+    let p = config_path();
+    std::fs::create_dir_all(p.parent().unwrap_or(&p)).map_err(|e| e.to_string())?;
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, json!({"url": c.url, "enabled": c.enabled, "email": c.email, "profiles": profiles, "mcp": mcp, "keys": keys}).to_string()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &p).map_err(|e| e.to_string())?;
+    kick();
+    Ok(())
+}
+
+/// The kinds this computer syncs with the current settings.
+pub fn enabled_kinds(c: &Config) -> Vec<&'static str> {
+    KINDS.iter().copied().filter(|k| match *k {
+        "profiles" | "settings" => c.profiles,
+        "mcp" => c.mcp,
+        "keys" => c.keys,
+        _ => true,
+    }).collect()
+}
+
+/// Keeps only the items and tombstones of these kinds.
+fn only_kinds(mut s: Side, kinds: &[&str]) -> Side {
+    // a kind nobody knows stays (the round reports it); a known kind that is switched off goes
+    let keep = |k: &String| split_key(k).map_or(true, |(kind, _)| kinds.contains(&kind));
+    s.items.retain(|k, _| keep(k));
+    s.deleted.retain(|k, _| keep(k));
+    s
 }
 
 /// Forgets what the last rounds said (after signing out): the status line, the skipped items and the refused pushes.
@@ -599,6 +979,9 @@ pub fn skew_ms(sent: u64, received: u64, server_now: u64) -> i64 {
 }
 
 fn shift_time(t: u64, by: i64) -> u64 {
+    if t <= UNKNOWN_TIME {
+        return t;
+    }
     if by >= 0 {
         t.saturating_add(by as u64)
     } else {
@@ -641,10 +1024,11 @@ pub fn sync_with(base: &str, token: &str) -> Result<(usize, usize, usize), Strin
     let sent = chats::now_millis();
     let manifest = post(&base, token, "/api/sync/manifest", &json!({}))?;
     let received = chats::now_millis();
-    let remote = side_from_json(&manifest)?;
+    let kinds = enabled_kinds(&config());
+    let remote = only_kinds(side_from_json(&manifest)?, &kinds);
     // the two computers' clocks may differ: times are compared on the server's clock, and documents are moved onto it or back
     let skew = manifest.get("now").and_then(Value::as_u64).map_or(0, |n| skew_ms(sent, received, n));
-    let local_raw = local_side();
+    let local_raw = local_side_of(&kinds);
     let local = shifted(&local_raw, skew);
     let plan = plan(&local, &remote);
     let (mut pulled, mut pushed, mut deleted) = (0, 0, 0);
@@ -658,6 +1042,10 @@ pub fn sync_with(base: &str, token: &str) -> Result<(usize, usize, usize), Strin
     let mut note = |k: &str, e: String| -> Result<(), String> {
         if is_fatal(&e) {
             return Err(e);
+        }
+        // a rule of the account (or a server that does not know this kind yet) is not a problem to show every round
+        if e.starts_with(NOT_FOR_ACCOUNT) || e == "Unknown kind of item." {
+            return Ok(());
         }
         skipped.push(format!("{k}: {e}"));
         Ok(())
@@ -892,7 +1280,7 @@ mod tests {
         assert!(side_from_json(&json!({"ok": false, "error": "x"})).is_err());
         assert!(side_from_json(&json!({"chats": {"a": "x"}, "memory": {}, "personalities": {}, "deleted": {}})).is_err());
         assert_eq!(split_key("chats:a:b"), Some(("chats", "a:b")));
-        assert_eq!(split_key("keys:a"), None);
+        assert_eq!(split_key("bogus:a"), None);
     }
 
     #[test]
@@ -918,6 +1306,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("XDG_DATA_HOME", dir.join("data"));
         std::env::set_var("XDG_CONFIG_HOME", dir.join("config"));
+        // keys go to a plain file in the sandbox (no keyring), never to the real one
+        std::env::set_var("ZO_AI_KEYS_FILE", dir.join("keys.json"));
         (g, dir)
     }
 
@@ -998,7 +1388,7 @@ mod tests {
         assert!(put_doc("chats", "c1", &chat("c1", "v3", 300)).unwrap());
         assert_eq!(chats::load()[0].title, "v3");
         assert!(put_doc("chats", "c1", &chat("other", "x", 400)).is_err(), "id must match");
-        assert!(put_doc("keys", "x", &json!({})).is_err());
+        assert!(put_doc("bogus", "x", &json!({})).is_err());
         assert!(put_doc("chats", "c1", &json!({"id": "c1"})).is_err(), "not a chat");
         // memory notes and the state
         let note = json!({"id": "m1", "text": "likes tea", "kind": "preference", "updated": 50});
@@ -1164,5 +1554,247 @@ mod tests {
         assert_eq!((pulled, pushed), (0, 1), "the chat was still sent");
         assert!(skipped().iter().any(|s| s.starts_with("weird:1")), "{:?}", skipped());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // ---- profiles, settings, MCP servers and keys ----
+
+    #[test]
+    fn the_new_kinds_plan_like_the_others() {
+        // a profile only here is copied, one deleted on the server is deleted here, the newest edit of an MCP server wins
+        let p = plan(
+            &side(&[("profiles:p1", 5), ("mcp:gh", 9), ("settings:main", 3), ("keys:openrouter@p1", 4)], &[]),
+            &side(&[("profiles:p2", 6), ("mcp:gh", 7), ("settings:main", 8)], &[("keys:openrouter@p1", 10)]),
+        );
+        assert_eq!(names(&p.push), ["mcp:gh", "profiles:p1"]);
+        assert_eq!(names(&p.pull), ["profiles:p2", "settings:main"]);
+        assert_eq!(p.delete_local, [("keys:openrouter@p1".to_string(), 10)]);
+        // keys use ids with an @, and every new kind is a known kind
+        assert_eq!(split_key("keys:openrouter@p1"), Some(("keys", "openrouter@p1")));
+        for k in ["profiles:a", "settings:main", "mcp:x", "keys:y"] {
+            assert!(split_key(k).is_some(), "{k}");
+        }
+        assert!(split_key("secrets:a").is_none());
+    }
+
+    #[test]
+    fn a_manifest_carries_the_new_kinds_and_an_old_servers_manifest_still_reads() {
+        let s = side(&[("profiles:p1", 5), ("mcp:gh", 9), ("settings:main", 3), ("keys:openai", 4), ("chats:c", 1)], &[("mcp:old", 2)]);
+        let back = side_from_json(&side_to_json(&s)).unwrap();
+        assert_eq!(back, s);
+        // a server from before these kinds has only the first three: the others are empty, not an error
+        let old = json!({"chats": {"c": 1}, "memory": {}, "personalities": {}, "deleted": {}});
+        assert_eq!(side_from_json(&old).unwrap().items.len(), 1);
+        // but the first three are required: a broken answer is never an empty server
+        assert!(side_from_json(&json!({"chats": {}, "memory": {}, "deleted": {}})).is_err());
+        // an unknown time is never moved by a clock difference
+        assert_eq!(shift_time(UNKNOWN_TIME, 90_000), UNKNOWN_TIME);
+        assert_eq!(shift_time(1000, 5000), 6000);
+    }
+
+    #[test]
+    fn only_the_chosen_kinds_travel_and_keys_are_off_by_default() {
+        let (_g, dir) = sandbox("kinds");
+        let c = config();
+        assert!(c.profiles && c.mcp && !c.keys, "profiles and MCP on, keys off");
+        assert_eq!(enabled_kinds(&c), ["chats", "memory", "personalities", "profiles", "settings", "mcp"]);
+        set_kinds(true, false, true).unwrap();
+        assert_eq!(enabled_kinds(&config()), ["chats", "memory", "personalities", "profiles", "settings", "keys"]);
+        // writing the sign-in does not forget the choices
+        write_config("", true, "a@x.test").unwrap();
+        let c = config();
+        assert!(c.enabled && c.keys && !c.mcp && c.email == "a@x.test");
+        let s = only_kinds(side(&[("chats:a", 1), ("keys:openai", 2), ("mcp:x", 3)], &[("keys:b", 4), ("profiles:p", 5)]), &enabled_kinds(&Config { keys: false, mcp: false, ..c }));
+        assert_eq!(s.items.keys().collect::<Vec<_>>(), ["chats:a"]);
+        assert_eq!(s.deleted.keys().collect::<Vec<_>>(), ["profiles:p"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_profile_travels_with_its_pins_and_address_but_never_with_a_key() {
+        let (_g, dir) = sandbox("prof");
+        crate::ai::keys::set("openrouter", "sk-or-very-secret-1").unwrap();
+        let mut sel = crate::ai::Selection { provider: "openrouter".into(), model: "x/y".into(), ..Default::default() };
+        sel.base_urls.insert("openrouter".into(), "https://proxy.example.com/v1".into());
+        let p = profiles::create("Work", &sel).unwrap();
+        profiles::pin(&p.id, "x/y");
+        profiles::pin(&p.id, "x/z");
+        assert!(crate::ai::keys::get(&format!("openrouter@{}", p.id)).is_some(), "the profile has its own copy of the key here");
+        let doc = get_doc("profiles", &p.id).unwrap();
+        assert_eq!((doc["base_url"].as_str(), doc["pinned"].as_array().unwrap().len()), (Some("https://proxy.example.com/v1"), 2));
+        assert!(doc["updated"].as_u64().unwrap() > 1);
+        // no key anywhere in the profile document, the manifest or the profiles file
+        let everything = format!("{doc}{}{}", manifest_json(), std::fs::read_to_string(crate::audit::config_dir().join("profiles.json")).unwrap());
+        assert!(!everything.contains("sk-or-very-secret"), "{everything}");
+        assert!(local_side_of(&["profiles"]).items.contains_key(&format!("profiles:{}", p.id)));
+        // the other side's newer edit comes in; an older one does not
+        let mut newer = doc.clone();
+        newer["updated"] = json!(doc["updated"].as_u64().unwrap() + 50);
+        newer["pinned"] = json!(["a/b"]);
+        newer["key"] = json!("sk-smuggled");
+        assert!(put_doc("profiles", &p.id, &newer).unwrap());
+        assert_eq!(profiles::load()[0].pinned, ["a/b"]);
+        assert!(!std::fs::read_to_string(crate::audit::config_dir().join("profiles.json")).unwrap().contains("smuggled"), "unknown fields are dropped");
+        assert!(!put_doc("profiles", &p.id, &doc).unwrap());
+        // a new profile from the other side, a clash of names gets a number, wrong documents are refused
+        let other = json!({"id": "p5", "name": "work", "provider": "gemini", "model": "gemini-2.5-pro", "pinned": [], "updated": 77});
+        assert!(put_doc("profiles", "p5", &other).unwrap());
+        assert!(profiles::load().iter().any(|x| x.id == "p5" && x.name == "work (2)"));
+        for bad in [
+            json!({"id": "p6", "name": "x", "provider": "nonsense", "model": "m", "updated": 5}),
+            json!({"id": "p6", "name": "x", "provider": "gemini", "model": "m", "base_url": "ftp://x", "updated": 5}),
+            json!({"id": "p7", "name": "x", "provider": "gemini", "model": "m", "updated": 5}),
+            json!({"id": "p6", "name": "", "provider": "gemini", "model": "m", "updated": 5}),
+        ] {
+            assert!(put_doc("profiles", "p6", &bad).is_err(), "{bad}");
+        }
+        // deleting here leaves a tombstone; a deletion from the other side removes the profile and unchooses it
+        let mut now_sel = crate::ai::Selection::default();
+        now_sel.apply_profile(&profiles::load().iter().find(|x| x.id == "p5").unwrap().clone());
+        now_sel.save();
+        assert!(apply_delete("profiles", "p5", chats::now_millis() + 1000).unwrap());
+        assert!(profiles::load().iter().all(|x| x.id != "p5") && crate::ai::Selection::load().profile.is_none());
+        profiles::delete(&p.id);
+        assert!(tombstones().contains_key(&format!("profiles:{}", p.id)));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_picker_preferences_travel_as_one_item() {
+        let (_g, dir) = sandbox("prefs");
+        assert!(get_doc("settings", SETTINGS_ID).is_none() && !local_side_of(&["settings"]).items.contains_key("settings:main"));
+        ui_prefs::set_hidden(vec!["groq".into(), "groq".into(), "mistral".into()]).unwrap();
+        let doc = get_doc("settings", SETTINGS_ID).unwrap();
+        assert_eq!(doc["hidden_providers"], json!(["groq", "mistral"]));
+        let mut newer = doc.clone();
+        newer["updated"] = json!(doc["updated"].as_u64().unwrap() + 10);
+        newer["hidden_providers"] = json!(["openai"]);
+        assert!(put_doc("settings", SETTINGS_ID, &newer).unwrap());
+        assert_eq!(ui_prefs::load().hidden_providers, ["openai"]);
+        assert!(!put_doc("settings", SETTINGS_ID, &doc).unwrap());
+        assert!(put_doc("settings", "other", &newer).is_err());
+        assert!(apply_delete("settings", SETTINGS_ID, 5).is_err());
+        let mut bad = newer.clone();
+        bad["updated"] = json!(chats::now_millis() + 1000);
+        bad["hidden_providers"] = json!(["has space"]);
+        assert!(put_doc("settings", SETTINGS_ID, &bad).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn only_remote_mcp_servers_travel_by_address_and_never_with_a_token() {
+        let (_g, dir) = sandbox("mcp");
+        mcp_client::save_servers(&[
+            mcp_client::ServerConfig { name: "github".into(), command: "https://mcp.example.com/mcp".into(), enabled: true, headers: [("Authorization".to_string(), "Bearer ghp_secret_token".to_string())].into(), client_secret: Some("shhh".into()), ..Default::default() },
+            mcp_client::ServerConfig { name: "files".into(), command: "npx -y some-server /home/me".into(), enabled: true, env: [("KEY".to_string(), "env-secret".to_string())].into(), ..Default::default() },
+        ]);
+        let side = local_side_of(&["mcp"]);
+        assert_eq!(side.items.keys().collect::<Vec<_>>(), ["mcp:github"], "a program is never listed");
+        let doc = get_doc("mcp", "github").unwrap();
+        assert_eq!(doc["address"], "https://mcp.example.com/mcp");
+        let shown = format!("{doc}{}", manifest_json());
+        for secret in ["ghp_secret", "shhh", "env-secret", "npx"] {
+            assert!(!shown.contains(secret), "{secret} in {shown}");
+        }
+        assert!(get_doc("mcp", "files").is_none());
+        // the other side's newer edit changes the address and the switch, and the headers of this computer stay
+        let mut newer = doc.clone();
+        newer["updated"] = json!(doc["updated"].as_u64().unwrap() + 20);
+        newer["enabled"] = json!(false);
+        newer["address"] = json!("https://mcp2.example.com/mcp");
+        assert!(put_doc("mcp", "github", &newer).unwrap());
+        let now = mcp_client::load_servers();
+        let g = now.iter().find(|s| s.name == "github").unwrap();
+        assert!(!g.enabled && g.command == "https://mcp2.example.com/mcp" && g.headers.contains_key("Authorization"));
+        // a new one comes in; wrong ones are refused (a program, a user name in the address, a name that is not the id)
+        let fresh = json!({"name": "docs", "address": "https://docs.example.com/mcp", "enabled": true, "updated": 5});
+        assert!(put_doc("mcp", "docs", &fresh).unwrap());
+        for (id, d) in [
+            ("run", json!({"name": "run", "address": "npx -y thing", "updated": 5})),
+            ("u", json!({"name": "u", "address": "https://me:pw@x.example.com/mcp", "updated": 5})),
+            ("a", json!({"name": "b", "address": "https://x.example.com/mcp", "updated": 5})),
+            ("files", json!({"name": "files", "address": "https://x.example.com/mcp", "updated": 5})),
+        ] {
+            assert!(put_doc("mcp", id, &d).is_err(), "{d}");
+        }
+        // removing one here leaves a tombstone, a remote deletion removes it here (the program stays)
+        mcp_client::save_servers(&mcp_client::load_servers().into_iter().filter(|s| s.name != "docs").collect::<Vec<_>>());
+        assert!(tombstones().contains_key("mcp:docs"));
+        assert!(apply_delete("mcp", "github", chats::now_millis() + 1000).unwrap());
+        assert_eq!(mcp_client::load_servers().iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["files"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn keys_travel_only_as_their_own_kind_and_only_provider_keys() {
+        let (_g, dir) = sandbox("keys");
+        crate::ai::keys::set("openrouter", "sk-or-1").unwrap();
+        crate::ai::keys::set("sync-token", "zd_not_a_provider_key_at_all").unwrap();
+        crate::ai::keys::set("claude-code", "nope").unwrap();
+        crate::ai::keys::set("mcp-github", "ghp_x").unwrap();
+        let side = local_side_of(&["keys"]);
+        assert_eq!(side.items.keys().collect::<Vec<_>>(), ["keys:openrouter"], "{:?}", side.items);
+        assert!(side.items["keys:openrouter"] > 1, "saving a key gives it a time");
+        assert!(get_doc("keys", "sync-token").is_none() && get_doc("keys", "claude-code").is_none() && get_doc("keys", "mcp-github").is_none());
+        assert_eq!(get_doc("keys", "openrouter").unwrap()["key"], "sk-or-1");
+        // the other side's newer key replaces it, without leaving a tombstone or a time of "now"
+        let t = side.items["keys:openrouter"] + 100;
+        assert!(put_doc("keys", "openrouter", &json!({"id": "openrouter", "key": "sk-or-2", "updated": t})).unwrap());
+        assert_eq!(crate::ai::keys::get("openrouter").unwrap(), "sk-or-2");
+        assert_eq!(local_side_of(&["keys"]).items["keys:openrouter"], t);
+        assert!(!put_doc("keys", "openrouter", &json!({"id": "openrouter", "key": "old", "updated": t - 1})).unwrap());
+        for bad in [("sync-token", json!({"key": "x", "updated": 5})), ("openrouter", json!({"key": "", "updated": t + 1})), ("openrouter", json!({"key": "a\nb", "updated": t + 1})), ("nonsense", json!({"key": "x", "updated": 5}))] {
+            assert!(put_doc("keys", bad.0, &bad.1).is_err(), "{:?}", bad);
+        }
+        // a key for a profile
+        assert!(put_doc("keys", "gemini@p123", &json!({"key": "g-1", "updated": 9})).unwrap());
+        assert_eq!(crate::ai::keys::get("gemini@p123").unwrap(), "g-1");
+        // clearing a key here leaves a tombstone; the other side's deletion clears it without a new one
+        crate::ai::keys::clear("openrouter");
+        assert!(tombstones().contains_key("keys:openrouter"));
+        let tomb = tombstones()["keys:openrouter"];
+        assert!(!put_doc("keys", "openrouter", &json!({"key": "back", "updated": tomb - 1})).unwrap());
+        assert!(!apply_delete("keys", "gemini@p123", 5).unwrap(), "changed after that deletion");
+        assert!(apply_delete("keys", "gemini@p123", chats::now_millis() + 1000).unwrap());
+        assert!(crate::ai::keys::get("gemini@p123").is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_restricted_account_takes_no_mcp_server_no_private_address_and_nothing_big() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = crate::tenant::testkit::fresh(true);
+        let admin = crate::tenant::testkit::fresh(false);
+        let mcp = json!({"name": "docs", "address": "https://docs.example.com/mcp", "enabled": true, "updated": 5});
+        crate::tenant::scope(&t, || {
+            let e = put_doc("mcp", "docs", &mcp).unwrap_err();
+            assert!(e.starts_with(NOT_FOR_ACCOUNT), "{e}");
+            assert!(apply_delete("mcp", "docs", 5).unwrap_err().starts_with(NOT_FOR_ACCOUNT));
+            assert!(get_doc("mcp", "docs").is_none());
+            assert!(manifest_json()["mcp"].as_object().unwrap().is_empty());
+            // a model server on this network or without https is refused, a public https one is taken
+            let prof = |url: &str, id: &str| json!({"id": id, "name": id, "provider": "custom", "model": "m", "base_url": url, "updated": 5});
+            for bad in ["http://127.0.0.1:8000/v1", "https://10.0.0.5/v1", "http://api.example.com/v1", "https://localhost/v1", "https://user@api.example.com/v1"] {
+                let e = put_doc("profiles", "pa", &prof(bad, "pa")).unwrap_err();
+                assert!(e.starts_with(NOT_FOR_ACCOUNT), "{bad}: {e}");
+            }
+            assert!(put_doc("profiles", "pb", &prof("https://8.8.8.8/v1", "pb")).unwrap());
+            // Claude Code is not for it, a document over the limit is refused
+            let cc = json!({"id": "pc", "name": "pc", "provider": "claude-code", "model": "sonnet", "updated": 5});
+            assert!(put_doc("profiles", "pc", &cc).unwrap_err().starts_with(NOT_FOR_ACCOUNT));
+            let big = json!({"id": "pd", "name": "pd", "provider": "gemini", "model": "m", "updated": 5, "pad": "x".repeat(70_000)});
+            assert!(put_doc("profiles", "pd", &big).unwrap_err().contains("too big"));
+            let many: Vec<String> = (0..300).map(|i| format!("model-{i}")).collect();
+            let lots = json!({"id": "pe", "name": "pe", "provider": "gemini", "model": "m", "updated": 5, "pinned": many});
+            assert!(put_doc("profiles", "pe", &lots).is_err());
+            // its API keys may travel (they are its own, in its own encrypted store)
+            assert!(put_doc("keys", "gemini", &json!({"key": "g-k", "updated": 5})).unwrap());
+            assert!(crate::ai::keys::get("gemini").is_some());
+        });
+        // the same documents are fine for a person with a computer of their own (not restricted)
+        crate::tenant::scope(&admin, || {
+            assert!(put_doc("mcp", "docs", &mcp).unwrap());
+            assert!(put_doc("profiles", "pa", &json!({"id": "pa", "name": "pa", "provider": "custom", "model": "m", "base_url": "http://10.0.0.5:8000/v1", "updated": 5})).unwrap());
+            assert!(manifest_json()["mcp"]["docs"].is_u64());
+        });
     }
 }

@@ -165,7 +165,7 @@ pub enum Event {
 }
 
 /// What a restricted tenant may reach: no Claude Code, and only a model server with a public https address.
-fn check_restricted_provider(p: &Provider, base_url: &str) -> Result<(), String> {
+pub(crate) fn check_restricted_provider(p: &Provider, base_url: &str) -> Result<(), String> {
     if p.protocol == Protocol::ClaudeCode {
         return Err("Claude Code is not available to this account.".into());
     }
@@ -199,6 +199,18 @@ fn agent() -> ureq::Agent {
         return crate::tools::web::public_agent(Duration::from_secs(10), crate::tenant::max_answer());
     }
     ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(Duration::from_secs(180)).build()
+}
+
+/// Like `agent()` but with a short total time (for the model list and the connection test, which a person is waiting for).
+pub(crate) fn quick_agent(total: Duration) -> ureq::Agent {
+    if crate::tenant::is_restricted() {
+        #[cfg(test)]
+        if local_allowed() {
+            return ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(8)).timeout(total).redirects(0).build();
+        }
+        return crate::tools::web::public_agent(Duration::from_secs(8), total);
+    }
+    ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(8)).timeout(total).build()
 }
 
 fn http_error(e: ureq::Error) -> String {
@@ -593,7 +605,7 @@ pub fn list_models(p: &Provider, base_url: &str, key: Option<&str>) -> Result<Ve
         }
     }
     let base = base_url.trim_end_matches('/');
-    let mut r = agent().get(&format!("{base}/models"));
+    let mut r = quick_agent(Duration::from_secs(20)).get(&format!("{base}/models"));
     match (p.protocol, key) {
         (Protocol::Anthropic, Some(k)) => r = r.set("x-api-key", k).set("anthropic-version", "2023-06-01"),
         (Protocol::Gemini, Some(k)) => r = r.set("x-goog-api-key", k),

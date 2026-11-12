@@ -143,6 +143,19 @@ fn secret_tool() -> std::ffi::OsString {
     "secret-tool".into()
 }
 
+/// Saves a key. A provider's key also gets a time for the sync (see `sync`).
+pub fn set(id: &str, key: &str) -> Result<(), String> {
+    set_inner(id, key)?;
+    crate::sync::key_touched(id, false);
+    Ok(())
+}
+
+/// Forgets a key. A provider's key also leaves a tombstone for the sync.
+pub fn clear(id: &str) {
+    clear_inner(id);
+    crate::sync::key_touched(id, true);
+}
+
 pub fn available() -> bool {
     if let Some(t) = tenant_keys() {
         return t.is_some() && secret().is_ok();
@@ -173,7 +186,7 @@ pub fn get(id: &str) -> Option<String> {
     (out.status.success() && !key.is_empty()).then_some(key)
 }
 
-pub fn set(id: &str, key: &str) -> Result<(), String> {
+fn set_inner(id: &str, key: &str) -> Result<(), String> {
     if let Some(t) = tenant_keys() {
         let (p, tid) = t.ok_or("No account is signed in.")?;
         let mut m = enc_load(&p, &tid)?; // an unreadable file is never overwritten
@@ -202,7 +215,7 @@ pub fn set(id: &str, key: &str) -> Result<(), String> {
     }
 }
 
-pub fn clear(id: &str) {
+fn clear_inner(id: &str) {
     if let Some(t) = tenant_keys() {
         if let Some((p, tid)) = t {
             if let Ok(mut m) = enc_load(&p, &tid) {

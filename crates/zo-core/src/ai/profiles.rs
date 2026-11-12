@@ -21,6 +21,13 @@ pub struct Profile {
     /// Models of this profile that show in the model menu (so one click switches to that profile and model).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pinned: Vec<String>,
+    /// When it last changed (ms; 0 = from before this was kept). Set by `save`; the sync compares it between computers.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub updated: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 fn file() -> PathBuf {
@@ -31,7 +38,31 @@ pub fn load() -> Vec<Profile> {
     std::fs::read_to_string(file()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
 }
 
+/// Saves the list. A profile that is new or changed gets the time now; one that was removed leaves a tombstone for the sync.
 pub fn save(all: &[Profile]) {
+    let old = load();
+    let now = crate::store::chats::now_millis();
+    let mut out = all.to_vec();
+    for p in &mut out {
+        p.updated = match old.iter().find(|o| o.id == p.id) {
+            Some(o) => {
+                let mut same = o.clone();
+                same.updated = p.updated;
+                if same == *p { o.updated } else { now.max(o.updated.saturating_add(1)) }
+            }
+            None => now,
+        };
+    }
+    for o in &old {
+        if !all.iter().any(|p| p.id == o.id) {
+            crate::sync::tombstone("profiles", &o.id, o.updated.max(1));
+        }
+    }
+    save_as_is(&out);
+}
+
+/// Saves the list exactly as given (the sync stores a profile with the time it was changed on the other side).
+pub(crate) fn save_as_is(all: &[Profile]) {
     let _ = std::fs::create_dir_all(crate::audit::config_dir());
     let tmp = file().with_extension("json.tmp");
     if let Ok(s) = serde_json::to_string_pretty(all) {
@@ -42,6 +73,20 @@ pub fn save(all: &[Profile]) {
             let _ = std::fs::rename(&tmp, file());
         }
     }
+}
+
+/// Changes the address and/or effort of a profile (`None` leaves it; an empty text takes the default again).
+pub fn update(id: &str, base_url: Option<&str>, effort: Option<&str>) -> Result<(), String> {
+    let mut all = load();
+    let p = all.iter_mut().find(|p| p.id == id).ok_or("That profile is gone.")?;
+    if let Some(u) = base_url {
+        p.base_url = Some(u.trim().to_string()).filter(|u| !u.is_empty());
+    }
+    if let Some(e) = effort {
+        p.effort = Some(e.trim().to_string()).filter(|e| !e.is_empty());
+    }
+    save(&all);
+    Ok(())
 }
 
 /// The keyring entry of a provider's key: the profile's own when one is chosen, else the shared one of the provider.
@@ -68,7 +113,7 @@ fn new_id() -> String {
 
 fn from_selection(id: String, name: &str, sel: &Selection) -> Profile {
     let base_url = sel.base_urls.get(&sel.provider).cloned();
-    Profile { id, name: name.trim().to_string(), provider: sel.provider.clone(), model: sel.model.clone(), base_url, effort: sel.effort.clone(), vision: sel.vision, pinned: Vec::new() }
+    Profile { id, name: name.trim().to_string(), provider: sel.provider.clone(), model: sel.model.clone(), base_url, effort: sel.effort.clone(), vision: sel.vision, pinned: Vec::new(), updated: 0 }
 }
 
 /// Makes a profile from the current choices. The key currently in use is copied into the new profile, so it works at once.
