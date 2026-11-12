@@ -21,9 +21,20 @@ Every item has `id`, `kind`, `title`, `detail`, `source` (`desktop`, `phone`, `w
 it belongs to a chat), `started_ms` and `can_stop`. Terminals and the sync are built when the list is asked for, so they can never be
 stale; they have `started_ms` 0 (no running time is shown).
 
-Clients: a request that carries `"client":"phone"`, `"web"` or `"cli"` shows as a Client item while its connection is open. Without that
-field the source is `web` on a multi-tenant server and `phone` otherwise. The registry also remembers when each kind of client last
-talked to the service (`clients_seen`), which the Activity page uses for "Connected".
+Clients: requests are short, so they are not listed as items. The registry remembers when each kind of client last talked to the
+service (`clients_seen`; the `client` field of a request says `phone`, `web` or `cli`; without it the source is `web` on a
+multi-tenant server and `phone` otherwise). The Activity page shows "Connected" when the last request was under 30 seconds ago.
+
+Stop: pressing Stop on an answer also stops the shell command it is running. Commands run in a group of their own, and Stop or the
+time limit kills the whole group, so what a shell started does not go on in the background.
+
+Quit: asks when chats, tasks, commands or terminals are open (not for the sync or the short memory job). Quit anyway stops the work,
+waits up to 3 seconds for answers to save, then closes the terminals and removes the sockets.
+
+Tray presence: the icon counts as present only when the watcher took it and a tray that draws icons is registered (the Plasma
+watcher exists even without a tray applet). The check is repeated every 30 seconds. In `--background` mode the window is shown when
+no tray is present after 30 seconds, so the app is never invisible. "Start with the computer" reads the package's entry in
+`/etc/xdg/autostart` too; turning it off writes a user entry with `Hidden=true`.
 
 ## How it works
 

@@ -77,8 +77,16 @@ pub fn run(cmd: &mut Command, limit: Duration) -> Result<Out, String> {
 
 /// Like `run`, and the program is killed as soon as `cancel` is set (the Stop button of the activity list).
 pub fn run_cancellable(cmd: &mut Command, limit: Duration, cancel: &std::sync::atomic::AtomicBool) -> Result<Out, String> {
+    run_until(cmd, limit, &|| cancel.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Like `run_cancellable`, with any "should stop" test (for example two flags). The program runs in a group of its own, and Stop or
+/// the time limit kills the whole group, so what a shell started (`make && ./deploy`) does not go on in the background.
+pub fn run_until(cmd: &mut Command, limit: Duration, stop: &dyn Fn() -> bool) -> Result<Out, String> {
+    use std::os::unix::process::CommandExt;
     scrub(cmd);
     let mut child = cmd
+        .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -91,12 +99,14 @@ pub fn run_cancellable(cmd: &mut Command, limit: Duration, cancel: &std::sync::a
     let status = loop {
         match child.try_wait().map_err(|e| e.to_string())? {
             Some(s) => break s,
-            None if cancel.load(std::sync::atomic::Ordering::Relaxed) => {
+            None if stop() => {
+                kill_group(&child);
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err("Stopped.".into());
             }
             None if start.elapsed() >= limit => {
+                kill_group(&child);
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(format!("timed out after {} s", limit.as_secs()));
@@ -109,6 +119,11 @@ pub fn run_cancellable(cmd: &mut Command, limit: Duration, cancel: &std::sync::a
         stderr: err.join().unwrap_or_default(),
         code: status.code(),
     })
+}
+
+fn kill_group(child: &std::process::Child) {
+    // the child leads a group of its own (process_group(0)), so its pid is the group id
+    unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
 }
 
 /// Shorthand: program + args, 30 s limit.
@@ -132,6 +147,27 @@ mod tests {
         let e = run_cancellable(Command::new("sleep").arg("20"), Duration::from_secs(30), &cancel).err().unwrap();
         assert_eq!(e, "Stopped.");
         assert!(t0.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn stop_kills_what_the_shell_started_too() {
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let c2 = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            c2.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let marker = format!("zo-stop-test-{}", std::process::id());
+        let script = format!("sleep 31 && echo {marker}; sleep 32; echo {marker}");
+        let t0 = Instant::now();
+        let e = run_cancellable(Command::new("sh").arg("-c").arg(&script), Duration::from_secs(30), &cancel).err().unwrap();
+        assert_eq!(e, "Stopped.");
+        assert!(t0.elapsed() < Duration::from_secs(3));
+        std::thread::sleep(Duration::from_millis(200));
+        // no `sleep 31` or `sleep 32` of ours is left behind
+        let left = Command::new("sh").arg("-c").arg("ps -eo args | grep -E '^sleep 3[12]$' | wc -l").output().unwrap();
+        let n: usize = String::from_utf8_lossy(&left.stdout).trim().parse().unwrap_or(0);
+        assert_eq!(n, 0, "children of the stopped shell are still running");
     }
 
     #[test]

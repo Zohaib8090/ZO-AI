@@ -10,7 +10,7 @@ use gtk::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use zo_core::activity::{self, Item, Kind};
+use zo_core::activity::{self, Kind};
 use zo_core::store::chats;
 
 pub struct Page {
@@ -37,6 +37,37 @@ thread_local! {
     static STOPPED: RefCell<HashMap<u64, String>> = RefCell::new(HashMap::new());
     /// The last "Sync now" result.
     static SYNC_NOW: RefCell<String> = const { RefCell::new(String::new()) };
+    /// Labels whose text holds a "5 s ago" stamp: (label, text with the stamp markers), refreshed in place every second.
+    static STAMPED: RefCell<Vec<(gtk::Label, String)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A moment inside a text: kept as the time itself (so the page signature does not change every second) and turned into "5 s ago"
+/// when the label is shown or ticks.
+fn stamp(at: u64) -> String {
+    format!("\u{1}{at}\u{2}")
+}
+
+/// Replaces every stamp marker by how long ago it was.
+fn fill(tpl: &str) -> String {
+    let now = activity::now_ms();
+    let mut out = String::new();
+    let mut rest = tpl;
+    while let Some(a) = rest.find('\u{1}') {
+        out.push_str(&rest[..a]);
+        let after = &rest[a + 1..];
+        match after.find('\u{2}') {
+            Some(b) => {
+                let at: u64 = after[..b].parse().unwrap_or(0);
+                out.push_str(&activity::ago(now.saturating_sub(at)));
+                rest = &after[b + 1..];
+            }
+            None => {
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// "12 s", "3 min 5 s", "1 h 2 min".
@@ -104,14 +135,12 @@ struct Snapshot {
     services: Vec<(String, String)>,
 }
 
-fn seen_line(source: &[&str], items: &[Item], seen: &[(String, u64)]) -> String {
+fn seen_line(source: &[&str], seen: &[(String, u64)]) -> String {
     let now = activity::now_ms();
-    let open = items.iter().filter(|i| i.kind == Kind::Client && source.contains(&i.source.as_str())).count();
-    if open > 0 {
-        return format!("Connected now ({open})");
-    }
     match seen.iter().filter(|(s, _)| source.contains(&s.as_str())).map(|(_, at)| *at).max() {
-        Some(at) => format!("Last seen {}", activity::ago(now.saturating_sub(at))),
+        // a phone or a browser asks every few seconds while it is open
+        Some(at) if now.saturating_sub(at) < 30_000 => format!("Connected, last request {}", stamp(at)),
+        Some(at) => format!("Last seen {}", stamp(at)),
         None => "Not connected yet".into(),
     }
 }
@@ -132,8 +161,8 @@ fn snapshot() -> Snapshot {
     }
     // a "Stop" message is forgotten once its item is gone
     STOPPED.with(|m| m.borrow_mut().retain(|id, _| all.iter().any(|i| i.id == *id)));
-    s.phone = seen_line(&["phone"], &all, &seen);
-    s.web = seen_line(&["web", "cli"], &all, &seen);
+    s.phone = seen_line(&["phone"], &seen);
+    s.web = seen_line(&["web", "cli"], &seen);
 
     let servers = zo_core::mcp_client::load_servers();
     s.mcp = if servers.is_empty() {
@@ -153,7 +182,7 @@ fn snapshot() -> Snapshot {
     } else if !st.error.is_empty() {
         format!("Problem: {}", st.error)
     } else if st.last_ok > 0 {
-        format!("Up to date, last synced {}", activity::ago(activity::now_ms().saturating_sub(st.last_ok)))
+        format!("Up to date, last synced {}", stamp(st.last_ok))
     } else {
         "Waiting for the first sync".to_string()
     };
@@ -181,7 +210,7 @@ fn snapshot() -> Snapshot {
     if zo_core::ai::memory_agent::is_running() {
         m += ". Reading a chat now";
     } else if last > 0 {
-        m += &format!(". Last note saved {}", activity::ago(activity::now_ms().saturating_sub(last)));
+        m += &format!(". Last note saved {}", stamp(last));
     }
     s.services.push(("Memory agent".into(), m));
     s.services.push(("Sync loop".into(), if cfg.enabled { "On, every 30 seconds".into() } else { "Off".into() }));
@@ -217,7 +246,10 @@ fn line(ic: &str, title: &str, sub: &str) -> (gtk::Box, gtk::Box) {
     t.set_ellipsize(gtk::pango::EllipsizeMode::End);
     col.append(&t);
     if !sub.is_empty() {
-        let s = lbl(sub, "pc-meta");
+        let s = lbl(&fill(sub), "pc-meta");
+        if sub.contains('\u{1}') {
+            STAMPED.with(|v| v.borrow_mut().push((s.clone(), sub.to_string())));
+        }
         s.set_wrap(true);
         s.set_max_width_chars(70);
         col.append(&s);
@@ -238,6 +270,7 @@ fn small_button(text: &str) -> gtk::Button {
 /// Builds the page again from a snapshot.
 fn rebuild(ui: &Rc<Ui>, s: &Snapshot) {
     let page = &ui.activity;
+    STAMPED.with(|v| v.borrow_mut().clear());
     while let Some(c) = page.list.first_child() {
         page.list.remove(&c);
     }
@@ -424,6 +457,11 @@ pub fn watch(ui: &Rc<Ui>) {
         for (l, started) in ui.activity.times.borrow().iter() {
             l.set_text(&clock(now.saturating_sub(*started)));
         }
+        STAMPED.with(|v| {
+            for (l, tpl) in v.borrow().iter() {
+                l.set_text(&fill(tpl));
+            }
+        });
         glib::ControlFlow::Continue
     });
 }

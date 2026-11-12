@@ -160,6 +160,64 @@ fn visible(i: &Item) -> bool {
     true
 }
 
+thread_local! {
+    static RUN_CANCEL: std::cell::Cell<*const std::sync::atomic::AtomicBool> = const { std::cell::Cell::new(std::ptr::null()) };
+}
+
+/// While alive, tools run on this thread see the agent run's cancel flag (see `run_cancelled`).
+pub struct RunScope(*const std::sync::atomic::AtomicBool);
+
+impl RunScope {
+    /// The flag must outlive the scope: it is the `cancel` argument of the agent run, and the scope is a local of that run.
+    pub fn enter(cancel: &std::sync::atomic::AtomicBool) -> RunScope {
+        RunScope(RUN_CANCEL.with(|c| c.replace(cancel as *const _)))
+    }
+}
+
+impl Drop for RunScope {
+    fn drop(&mut self) {
+        RUN_CANCEL.with(|c| c.set(self.0));
+    }
+}
+
+/// True when the agent run that is executing a tool on this thread was stopped.
+pub fn run_cancelled() -> bool {
+    RUN_CANCEL.with(|c| {
+        let p = c.get();
+        // SAFETY: set only by RunScope, whose owner keeps the flag alive until the scope is dropped on this same thread.
+        !p.is_null() && unsafe { &*p }.load(std::sync::atomic::Ordering::Relaxed)
+    })
+}
+
+/// Whether a sync token is stored. Looking asks the keyring (a program that can take seconds), and the lists are asked for on the
+/// window's thread every second: so the answer is kept, and looked up again on a thread of its own when it is older than a minute.
+fn signed_in() -> bool {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    static KNOWN: AtomicBool = AtomicBool::new(false);
+    static AT: AtomicU64 = AtomicU64::new(0);
+    static BUSY: AtomicBool = AtomicBool::new(false);
+    let now = now_ms();
+    let at = AT.load(Ordering::Relaxed);
+    if at == 0 || now.saturating_sub(at) > 60_000 {
+        if !BUSY.swap(true, Ordering::SeqCst) {
+            let first = at == 0;
+            let t = std::thread::spawn(|| {
+                KNOWN.store(crate::sync::token().is_some(), Ordering::Relaxed);
+                AT.store(now_ms(), Ordering::Relaxed);
+                BUSY.store(false, Ordering::SeqCst);
+            });
+            // the very first look is waited for (a moment), so a list made right after the start is right; never for long
+            if first {
+                let t0 = std::time::Instant::now();
+                while !t.is_finished() && t0.elapsed() < std::time::Duration::from_millis(150) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+        }
+    }
+    KNOWN.load(Ordering::Relaxed)
+}
+
 /// Things that are read from where they live: this computer's terminals and the sync.
 fn live_items() -> Vec<Item> {
     let mut out = Vec::new();
@@ -187,7 +245,7 @@ fn live_items() -> Vec<Item> {
         }
     }
     let c = crate::sync::config();
-    if c.enabled && !c.email.is_empty() && crate::sync::token().is_some() {
+    if c.enabled && !c.email.is_empty() && signed_in() {
         let s = crate::sync::status();
         let detail = if s.running {
             format!("Syncing now ({})", c.email)
@@ -239,6 +297,29 @@ pub fn counts() -> Vec<(&'static str, usize)> {
 /// Things that are doing work for the person (not just present): what a "still running" warning is about.
 pub fn busy_count() -> usize {
     list().iter().filter(|i| !matches!(i.kind, Kind::Sync | Kind::Client | Kind::Terminal)).count()
+}
+
+/// What a "Quit ZO-AI?" question is about: work in progress (answers, tasks, commands) and the terminals that are open (closing
+/// one ends what runs in it). Not the sync, the clients, nor the short memory job (it is stopped on quit).
+pub fn quit_count() -> usize {
+    list().iter().filter(|i| !matches!(i.kind, Kind::Sync | Kind::Client | Kind::MemoryJob)).count()
+}
+
+/// Presses Stop on everything that can be stopped except terminals, then waits up to `wait` for the work to wind up (an answer
+/// saves what it had when it is stopped). Returns how many things are still there.
+pub fn stop_all_and_wait(wait: std::time::Duration) -> usize {
+    let work = |i: &Item| !matches!(i.kind, Kind::Sync | Kind::Client | Kind::Terminal);
+    for i in list().iter().filter(|i| work(i) && i.can_stop()) {
+        stop(i.id);
+    }
+    let t0 = std::time::Instant::now();
+    loop {
+        let left = list().iter().filter(|i| work(i)).count();
+        if left == 0 || t0.elapsed() >= wait {
+            return left;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 /// Stops one item: sets its cancel flag, or closes the terminal. False when there is no such item for this tenant, or it cannot be

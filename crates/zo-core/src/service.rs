@@ -150,12 +150,6 @@ fn serve_request(req: &Value, reader: BufReader<UnixStream>, writer: Arc<Mutex<U
         send(&req, reader, writer);
         return;
     }
-    // a client that says who it is ("client": "phone" | "web" | "cli") is shown while its connection is open
-    let _client = req
-        .get("client")
-        .and_then(Value::as_str)
-        .filter(|c| matches!(*c, "phone" | "web" | "cli"))
-        .map(|c| crate::activity::start(crate::activity::Kind::Client, &format!("{c} client"), &op, c, None, None));
     let reply = match handle(&op, &req) {
         Ok(mut v) => {
             if let Some(o) = v.as_object_mut() {

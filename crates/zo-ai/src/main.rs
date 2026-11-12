@@ -1666,7 +1666,7 @@ static OWNS_APPROVALS: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 
 /// The tray's Quit: when something is still running, the window comes up and asks first.
 pub(crate) fn request_quit() {
-    if zo_core::activity::busy_count() > 0 {
+    if zo_core::activity::quit_count() > 0 {
         confirm_quit();
     } else {
         quit_now();
@@ -1675,11 +1675,11 @@ pub(crate) fn request_quit() {
 
 fn confirm_quit() {
     raise_main();
-    let n = zo_core::activity::busy_count();
+    let n = zo_core::activity::quit_count();
     let body = match n {
         0 => "Nothing is running any more.".to_string(),
-        1 => "1 thing is still running. Quit anyway?".to_string(),
-        n => format!("{n} things are still running. Quit anyway?"),
+        1 => "1 thing is still running or open (a chat, a task, a command or a terminal). Quit anyway?".to_string(),
+        n => format!("{n} things are still running or open (chats, tasks, commands, terminals). Quit anyway?"),
     };
     let dialog = adw::AlertDialog::new(Some("Quit ZO-AI?"), Some(&body));
     dialog.add_responses(&[("cancel", "Keep running"), ("quit", "Quit anyway")]);
@@ -1701,6 +1701,8 @@ pub(crate) fn quit_now() {
     if let Some(ui) = UI.with(|u| u.borrow().as_ref().and_then(|w| w.upgrade())) {
         ui.store.borrow().save();
     }
+    // everything that works is told to stop and given a moment to save what it has; then the terminals are closed
+    zo_core::activity::stop_all_and_wait(std::time::Duration::from_secs(3));
     for t in zo_core::term::list() {
         t.close();
     }
@@ -2705,7 +2707,7 @@ fn build_ui(app: &adw::Application) {
             // closing keeps ZO-AI running when there is a tray icon to get it back from; without one the close button quits
             // (asking first when something is still running), so the app is never left invisible with no way back
             if !tray::keep_running() && !FORCE_QUIT.with(Cell::get) {
-                if zo_core::activity::busy_count() > 0 {
+                if zo_core::activity::quit_count() > 0 {
                     confirm_quit();
                     return glib::Propagation::Stop;
                 }
@@ -2908,7 +2910,17 @@ fn main() -> glib::ExitCode {
         let args: Vec<String> = cmd.arguments().iter().map(|a| a.to_string_lossy().into_owned()).collect();
         let has = |f: &str| args.iter().any(|a| a == f);
         if has("--background") {
-            // autostart: nothing to show
+            // autostart: nothing to show, as long as the icon in the panel can bring the window back. Without a panel that shows
+            // icons (none, or it comes late) the window is shown after a while, so the app is never running invisibly.
+            static WATCH: std::sync::Once = std::sync::Once::new();
+            WATCH.call_once(|| {
+                glib::timeout_add_seconds_local(30, || {
+                    if !tray::present() && !main_window_open() {
+                        show_main("");
+                    }
+                    glib::ControlFlow::Continue
+                });
+            });
         } else if has("--quick") {
             quick::toggle(app.upcast_ref(), |text| show_main(text));
         } else {

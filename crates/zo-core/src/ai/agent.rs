@@ -331,6 +331,7 @@ pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approv
             Err(_) => {} // too short to summarize, or the summary could not be made: carry on and let the provider decide
         }
     }
+    let _scope = crate::activity::RunScope::enter(cancel);
     for _ in 0..max_steps {
         if cancel.load(Ordering::Relaxed) {
             return Err(STOPPED.into());

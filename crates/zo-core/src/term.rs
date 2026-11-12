@@ -203,6 +203,9 @@ impl Term {
     }
 
     pub fn close(&self) {
+        // the shell leads a session and a group of its own (setsid): the whole group goes, so a build running in it ends too
+        let pid = self.child.lock().unwrap().id() as i32;
+        unsafe { libc::kill(-pid, libc::SIGKILL) };
         let _ = self.child.lock().unwrap().kill();
         let _ = self.child.lock().unwrap().wait();
         registry().lock().unwrap().remove(&self.id);

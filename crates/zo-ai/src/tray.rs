@@ -146,6 +146,10 @@ struct State {
     name_ok: bool,
     watcher: bool,
     registered: bool,
+    /// a RegisterStatusNotifierItem call is in flight
+    registering: bool,
+    /// the watcher says a tray (a host that draws the icons) is there
+    host: bool,
     rev: u32,
     root: Node,
     /// the layout as text, to see whether anything changed (ids of the changing lines left out)
@@ -164,6 +168,8 @@ thread_local! {
         name_ok: false,
         watcher: false,
         registered: false,
+        registering: false,
+        host: false,
         rev: 1,
         root: Node { id: ID_ROOT, label: String::new(), sep: false, enabled: true, kids: Vec::new() },
         sig: String::new(),
@@ -175,9 +181,13 @@ thread_local! {
     });
 }
 
-/// Is the icon in a panel right now? (A panel that shows tray icons was there and took it.)
+/// Is the icon in a panel right now? (The watcher took it, and a tray that draws the icons is there: a watcher alone, as the
+/// Plasma shell has without a system tray applet, is not enough.)
 pub fn present() -> bool {
-    ST.with(|s| s.borrow().registered)
+    ST.with(|s| {
+        let st = s.borrow();
+        st.registered && st.host
+    })
 }
 
 // ---------------------------------------------------------------- the settings the tray owns
@@ -211,22 +221,38 @@ fn autostart_path() -> std::path::PathBuf {
     base.join("autostart").join("zo-ai-background.desktop")
 }
 
-pub fn autostart_enabled() -> bool {
-    autostart_path().is_file()
+/// The autostart entry the package installs for every user, when there is one.
+fn system_autostart() -> Option<std::path::PathBuf> {
+    let dirs = std::env::var("XDG_CONFIG_DIRS").unwrap_or_default();
+    let dirs = if dirs.is_empty() { "/etc/xdg".to_string() } else { dirs };
+    dirs.split(':').filter(|d| !d.is_empty()).map(|d| std::path::Path::new(d).join("autostart").join("zo-ai-background.desktop")).find(|p| p.is_file())
 }
 
-/// "Start with the computer": the autostart entry that starts ZO-AI without a window.
+/// On when the person's own entry exists and is not switched off, or (without one) the package's entry for all users exists.
+pub fn autostart_enabled() -> bool {
+    match std::fs::read_to_string(autostart_path()) {
+        Ok(t) => !t.lines().any(|l| l.trim().eq_ignore_ascii_case("Hidden=true")),
+        Err(_) => system_autostart().is_some(),
+    }
+}
+
+/// "Start with the computer": the autostart entry that starts ZO-AI without a window. Off writes an entry with `Hidden=true` when
+/// the package's entry for all users exists (the only way to override it); otherwise the entry is removed.
 pub fn set_autostart(on: bool) -> Result<(), String> {
     let p = autostart_path();
     if on {
         std::fs::create_dir_all(p.parent().unwrap_or(&p)).map_err(|e| e.to_string())?;
-        std::fs::write(&p, include_str!("../data/zo-ai-background.desktop")).map_err(|e| e.to_string())
-    } else {
-        match std::fs::remove_file(&p) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.to_string()),
-        }
+        return std::fs::write(&p, include_str!("../data/zo-ai-background.desktop")).map_err(|e| e.to_string());
+    }
+    if system_autostart().is_some() {
+        std::fs::create_dir_all(p.parent().unwrap_or(&p)).map_err(|e| e.to_string())?;
+        let off = format!("{}Hidden=true\n", include_str!("../data/zo-ai-background.desktop").trim_end().to_string() + "\n");
+        return std::fs::write(&p, off).map_err(|e| e.to_string());
+    }
+    match std::fs::remove_file(&p) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -368,6 +394,8 @@ fn refresh(force: bool) -> bool {
             name_ok: false,
             watcher: false,
             registered: false,
+            registering: false,
+            host: false,
             rev: 0,
             root: Node::sep(0),
             sig: String::new(),
@@ -602,12 +630,13 @@ fn item_call(method: &str, inv: gio::DBusMethodInvocation) {
 fn try_register() {
     let go = ST.with(|s| {
         let st = s.borrow();
-        st.name_ok && st.watcher && !st.registered
+        st.name_ok && st.watcher && !st.registered && !st.registering
     });
     if !go {
         return;
     }
     let Some(conn) = ST.with(|s| s.borrow().conn.clone()) else { return };
+    ST.with(|s| s.borrow_mut().registering = true);
     let name = format!("org.kde.StatusNotifierItem-{}-1", std::process::id());
     conn.call(
         Some(WATCHER),
@@ -621,11 +650,47 @@ fn try_register() {
         gio::Cancellable::NONE,
         |r| match r {
             Ok(_) => {
-                ST.with(|s| s.borrow_mut().registered = true);
+                ST.with(|s| {
+                    let mut st = s.borrow_mut();
+                    st.registering = false;
+                    st.registered = true;
+                });
+                check_host();
                 refresh(true);
                 eprintln!("zo-ai: tray icon registered");
             }
-            Err(e) => eprintln!("zo-ai: tray: the panel did not take the icon: {e}"),
+            // tried again by the 30 second look (quietly: one line, no storm)
+            Err(e) => {
+                ST.with(|s| s.borrow_mut().registering = false);
+                eprintln!("zo-ai: tray: the panel did not take the icon: {e}");
+            }
+        },
+    );
+}
+
+/// Asks the watcher whether a tray that draws icons is there (the property IsStatusNotifierHostRegistered).
+fn check_host() {
+    let Some(conn) = ST.with(|s| s.borrow().conn.clone()) else { return };
+    conn.call(
+        Some(WATCHER),
+        "/StatusNotifierWatcher",
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        Some(&(WATCHER, "IsStatusNotifierHostRegistered").to_variant()),
+        None,
+        gio::DBusCallFlags::NONE,
+        3000,
+        gio::Cancellable::NONE,
+        |r| {
+            let host = r
+                .ok()
+                .and_then(|v| v.child_value(0).as_variant())
+                .and_then(|v| v.get::<bool>())
+                .unwrap_or(false);
+            let changed = ST.with(|s| std::mem::replace(&mut s.borrow_mut().host, host) != host);
+            if changed {
+                refresh(true);
+            }
         },
     );
 }
@@ -680,9 +745,28 @@ pub fn start() {
                     let mut st = s.borrow_mut();
                     st.watcher = false;
                     st.registered = false;
+                    st.registering = false;
+                    st.host = false;
                 });
             },
         ));
+        // a tray that draws the icons may start after the watcher (at login) or go: ask when it says so, and every 30 seconds
+        let _ = conn.signal_subscribe(
+            Some(WATCHER),
+            Some(WATCHER),
+            None,
+            Some("/StatusNotifierWatcher"),
+            None,
+            gio::DBusSignalFlags::NONE,
+            |_, _, _, _, _, _| check_host(),
+        );
+        glib::timeout_add_seconds_local(30, || {
+            if ST.with(|s| s.borrow().watcher) {
+                try_register();
+                check_host();
+            }
+            glib::ControlFlow::Continue
+        });
         // look at what is running once a second; a change goes to the panel (LayoutUpdated) at most that often
         glib::timeout_add_seconds_local(1, || {
             if present() {

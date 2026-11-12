@@ -9,7 +9,11 @@ pub fn shell(cmd: &str, timeout: u64) -> Result<String, String> {
     }
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let _activity = crate::activity::start(crate::activity::Kind::Command, cmd, "Shell command", "desktop", None, Some(cancel.clone()));
-    exec::run_cancellable(Command::new("sh").arg("-c").arg(cmd), Duration::from_secs(timeout.clamp(1, 600)), &cancel).map(|o| o.text())
+    // Stop on the answer that started the command stops the command as well, not only Stop on the command's own row
+    exec::run_until(Command::new("sh").arg("-c").arg(cmd), Duration::from_secs(timeout.clamp(1, 600)), &|| {
+        cancel.load(std::sync::atomic::Ordering::Relaxed) || crate::activity::run_cancelled()
+    })
+    .map(|o| o.text())
 }
 
 fn kb(line: &str) -> f64 {
