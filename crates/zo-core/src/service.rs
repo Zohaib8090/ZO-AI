@@ -488,10 +488,15 @@ struct RemoteApprover {
     out: Arc<Mutex<UnixStream>>,
     pending: Arc<Mutex<HashMap<u64, mpsc::Sender<bool>>>>,
     next: AtomicU64,
+    /// Nobody is connected any more (an answer that was kept running): nothing can be approved.
+    gone: Arc<AtomicBool>,
 }
 
 impl Approver for RemoteApprover {
     fn approve(&self, tool: &str, summary: &str) -> bool {
+        if self.gone.load(Ordering::SeqCst) {
+            return false;
+        }
         let id = self.next.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel();
         self.pending.lock().unwrap().insert(id, tx);
@@ -566,18 +571,26 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
     // a mode in the request is for this question only (the saved mode, which the app and the phone share, is not changed)
     let mode = req.get("mode").and_then(Value::as_str).and_then(Mode::parse_known).unwrap_or_else(Mode::load);
 
+    // "keep_running" (a multi-user server whose person has a device to notify): when the connection closes the answer is NOT cancelled,
+    // it is finished within the usual limit and saved; nobody is left to answer an approval, so those are refused. Without it, or
+    // anywhere but on such a server, a closed connection still cancels.
+    let keep = tenant::multi_tenant() && req.get("keep_running").and_then(Value::as_bool) == Some(true);
     // the phone's answers and "stop" arrive while the AI works
     let cancel = Arc::new(AtomicBool::new(false));
+    let gone = Arc::new(AtomicBool::new(false));
     let pending: Arc<Mutex<HashMap<u64, mpsc::Sender<bool>>>> = Arc::new(Mutex::new(HashMap::new()));
     {
-        let (cancel, pending) = (cancel.clone(), pending.clone());
+        let (cancel, pending, gone) = (cancel.clone(), pending.clone(), gone.clone());
         tenant::spawn(move || {
             let mut buf = String::new();
             loop {
                 buf.clear();
                 match reader.read_line(&mut buf) {
                     Ok(0) | Err(_) => {
-                        cancel.store(true, Ordering::SeqCst);
+                        if !keep {
+                            cancel.store(true, Ordering::SeqCst);
+                        }
+                        gone.store(true, Ordering::SeqCst);
                         // nobody is left to answer
                         pending.lock().unwrap().clear();
                         return;
@@ -592,6 +605,11 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
                                 }
                             }
                             Some("stop") => cancel.store(true, Ordering::SeqCst),
+                            // the server tells a kept-running answer that its person left: approvals can no longer be answered
+                            Some("detached") if keep => {
+                                gone.store(true, Ordering::SeqCst);
+                                pending.lock().unwrap().clear();
+                            }
                             _ => {}
                         }
                     }
@@ -599,7 +617,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
             }
         });
     }
-    let approver = RemoteApprover { out: out.clone(), pending, next: AtomicU64::new(1) };
+    let approver = RemoteApprover { out: out.clone(), pending, next: AtomicU64::new(1), gone };
     let activity = crate::activity::start(
         if sel.provider == "claude-code" { crate::activity::Kind::ClaudeCode } else { crate::activity::Kind::Answer },
         &chat.title,
@@ -1079,6 +1097,93 @@ mod tenant_tests {
         // the audit log of the restricted person has no words
         let log = std::fs::read_to_string(t.data.join("audit.jsonl")).unwrap_or_default();
         assert!(!log.contains("bees") && !log.contains("owned"), "{log}");
+    }
+
+    /// A model server that thinks for `delay_ms` before it answers its one request.
+    fn slow_model(delay_ms: u64, answer: Value) -> String {
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let (mut buf, mut tmp) = (Vec::new(), [0u8; 4096]);
+            loop {
+                let n = s.read(&mut tmp).unwrap_or(0);
+                if n == 0 {
+                    return;
+                }
+                buf.extend_from_slice(&tmp[..n]);
+                if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                    let len = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                    while buf.len() < i + 4 + len {
+                        let n = s.read(&mut tmp).unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&tmp[..n]);
+                    }
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(delay_ms));
+            let body = answer.to_string();
+            let _ = write!(s, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+        });
+        url
+    }
+
+    /// Sends a message as `t` on a multi-tenant server, waits for the chat event and then closes the connection (the person left).
+    fn send_and_leave(t: &crate::tenant::Tenant, extra: Value) {
+        let (client, server) = UnixStream::pair().unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        std::thread::spawn(move || {
+            crate::tenant::test_multi(true);
+            serve(server)
+        });
+        let mut req = with_tenant(json!({"op": "send", "text": "tell me later"}), t);
+        for (k, v) in extra.as_object().unwrap() {
+            req[k] = v.clone();
+        }
+        let mut w = client.try_clone().unwrap();
+        writeln!(w, "{req}").unwrap();
+        let mut lines = BufReader::new(client.try_clone().unwrap()).lines();
+        loop {
+            let v: Value = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+            if v["event"] == "chat" {
+                break;
+            }
+        }
+        let _ = client.shutdown(std::net::Shutdown::Both);
+    }
+
+    fn wait_for_answer(t: &crate::tenant::Tenant, secs: u64) -> Option<Chat> {
+        let t0 = std::time::Instant::now();
+        loop {
+            let c = crate::tenant::scope(t, chats::load).into_iter().find(|c| c.entries.iter().any(|e| e.kind == "msg-ai"));
+            if c.is_some() || t0.elapsed() >= Duration::from_secs(secs) {
+                return c;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    #[test]
+    fn keep_running_finishes_and_saves_the_answer_after_the_connection_closed_and_without_it_the_answer_is_cancelled() {
+        let _g = lock();
+        for restricted in [true, false] {
+            let (kept, cancelled) = (fresh(restricted), fresh(restricted));
+            use_model(&kept, &slow_model(800, chat_reply("The late answer.")));
+            use_model(&cancelled, &slow_model(800, chat_reply("Never saved.")));
+            send_and_leave(&kept, json!({"keep_running": true}));
+            send_and_leave(&cancelled, json!({}));
+            let c = wait_for_answer(&kept, 15).unwrap_or_else(|| panic!("restricted={restricted}: the kept answer was never saved"));
+            assert!(c.entries.iter().any(|e| e.kind == "msg-ai" && e.text == "The late answer."), "{:?}", c.entries);
+            assert!(c.entries.iter().any(|e| e.kind == "msg-user" && e.text == "tell me later"));
+            // the other one: the closed connection stopped it, so no answer was ever written
+            std::thread::sleep(Duration::from_millis(1500));
+            assert!(wait_for_answer(&cancelled, 0).is_none(), "restricted={restricted}: a closed connection without keep_running must cancel");
+        }
     }
 
     #[test]

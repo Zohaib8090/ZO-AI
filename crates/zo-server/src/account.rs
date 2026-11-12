@@ -8,7 +8,7 @@ use zo_core::tenant::{self, Tenant};
 
 /// The names under /api/account/.
 /// There is no call that makes a device credential here: they only come from the device login and `/api/auth/exchange`.
-pub const CALLS: [&str; 6] = ["whoami", "devices_list", "device_revoke", "export", "delete", "accept_terms"];
+pub const CALLS: [&str; 10] = ["whoami", "devices_list", "device_revoke", "export", "delete", "accept_terms", "push_config", "push_subscribe", "push_unsubscribe", "push_list"];
 
 fn text<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(Value::as_str).unwrap_or("")
@@ -97,6 +97,8 @@ pub fn handle(app: &App, name: &str, v: &Value, who: &Who, lease: &Lease) -> (u1
                 Err(e) => err(503, &e),
             }
         }
+        // notifications when the browser is closed (push.rs): always the caller's own tenant
+        "push_config" | "push_subscribe" | "push_unsubscribe" | "push_list" => app.push.account_call(name, v, id),
         "export" => (200, export(&me)),
         "delete" => {
             if text(v, "confirm") != "DELETE" {
@@ -112,6 +114,7 @@ pub fn handle(app: &App, name: &str, v: &Value, who: &Who, lease: &Lease) -> (u1
                 || app.close_streams(id),
                 || {
                     app.accepted.lock().unwrap().remove(id);
+                    app.push.forget(id);
                     if let Some(db) = app.tenants.db() {
                         // first the marker that keeps a sign-in token that is still valid from bringing the account back
                         let marker = |removed: bool| json!({"at": now_secs(), "login_removed": removed}).to_string();

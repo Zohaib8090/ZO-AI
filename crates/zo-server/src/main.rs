@@ -29,6 +29,8 @@ mod devices;
 mod firestore;
 mod loginapi;
 mod pages;
+mod push;
+mod pwa;
 mod sync;
 mod sync_api;
 mod tenants;
@@ -51,6 +53,9 @@ use tiny_http::{Header, Method, Request, Response, Server};
 /// Request bodies: /api/op, /api/send and /api/reply, and the desktop sync.
 const BODY_LIMIT: usize = 1_000_000;
 const SYNC_BODY_LIMIT: usize = 20_000_000;
+/// How long an answer of somebody who left (`keep_running`) may still take: the answer limit of a restricted account is 120 s.
+const KEEP_RESTRICTED_SECS: u64 = 130;
+const KEEP_ADMIN_SECS: u64 = 1800;
 /// Requests being handled at the same time, for the whole server.
 const MAX_CONNECTIONS: usize = 400;
 
@@ -135,6 +140,8 @@ pub struct App {
     pub require_terms: std::sync::atomic::AtomicBool,
     /// People known to have accepted `pages::TERMS_VERSION` (so the database is read once per person).
     pub accepted: Mutex<std::collections::HashSet<String>>,
+    /// Notifications when the browser is closed (`push.rs`).
+    pub push: Arc<push::Hub>,
 }
 
 impl App {
@@ -411,8 +418,17 @@ fn send(app: &Arc<App>, req: Request, v: Value, lease: Lease, tenant: zo_core::t
         Ok(p) => p,
         Err(r) => return fail(app, req, r.into()),
     };
+    // "keep_running": the answer is finished even if the browser goes away (then a push says so). Only for a person who has a device
+    // to notify; for everybody else the field is dropped and a closed connection stops the answer as before.
+    let keep = v.get("keep_running").and_then(Value::as_bool) == Some(true) && app.push.has_any(&tenant.id);
     let mut v = for_service(v, &tenant);
     v["op"] = json!("send");
+    if let Some(o) = v.as_object_mut() {
+        o.remove("keep_running");
+        if keep {
+            o.insert("keep_running".into(), json!(true));
+        }
+    }
     let conn = match connect() {
         Ok(c) => c,
         Err(e) => return reply(app, req, 503, json!({"ok": false, "error": e})),
@@ -433,21 +449,71 @@ fn send(app: &Arc<App>, req: Request, v: Value, lease: Lease, tenant: zo_core::t
     let mut ok = out.write_all(head.as_bytes()).is_ok() && chunk(&mut out, &format!("{}\n", json!({"event": "stream", "id": id})));
     let mut reader = BufReader::new(conn);
     let mut line = String::new();
-    while ok {
+    // what the push needs to know, read from the lines that pass: the chat, and whether there is an answer to tell about
+    let (mut chat_id, mut chat_title, mut answered, mut stopped) = (String::new(), String::new(), false, false);
+    let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    loop {
+        if !ok && !keep {
+            break;
+        }
         line.clear();
         match reader.read_line(&mut line) {
             Ok(0) | Err(_) => break,
-            Ok(_) => ok = chunk(&mut out, &line),
+            Ok(_) => {
+                if keep {
+                    if let Ok(e) = serde_json::from_str::<Value>(&line) {
+                        match e.get("event").and_then(Value::as_str) {
+                            Some("chat") => {
+                                chat_id = e.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                                chat_title = e.get("title").and_then(Value::as_str).unwrap_or("").to_string();
+                            }
+                            Some("text") | Some("delta") => answered = true,
+                            Some("stopped") => stopped = true,
+                            _ => {}
+                        }
+                    }
+                }
+                if ok {
+                    ok = chunk(&mut out, &line);
+                    if !ok && keep {
+                        // the person went away: the answer carries on, within the usual limit, then a push says it is ready
+                        if let Some((_, s)) = app.streams.lock().unwrap().get_mut(&id) {
+                            let _ = s.write_all(b"{\"op\":\"detached\"}\n");
+                        }
+                        let (app, f) = (app.clone(), finished.clone());
+                        let limit = if tenant.restricted { KEEP_RESTRICTED_SECS } else { KEEP_ADMIN_SECS };
+                        std::thread::spawn(move || {
+                            let t0 = Instant::now();
+                            while !f.load(Ordering::SeqCst) && t0.elapsed() < Duration::from_secs(limit) {
+                                std::thread::sleep(Duration::from_millis(500));
+                            }
+                            if !f.load(Ordering::SeqCst) {
+                                if let Some((_, s)) = app.streams.lock().unwrap().get(&id) {
+                                    let _ = s.shutdown(std::net::Shutdown::Both);
+                                }
+                            }
+                        });
+                    }
+                }
+            }
         }
     }
-    let _ = out.write_all(b"0\r\n\r\n");
-    let _ = out.flush();
+    finished.store(true, Ordering::SeqCst);
+    let client_gone = !ok;
+    if ok {
+        let _ = out.write_all(b"0\r\n\r\n");
+        let _ = out.flush();
+    }
     // closing the connection tells the service to stop if the person went away
     if let Some((_, s)) = app.streams.lock().unwrap().remove(&id) {
         let _ = s.shutdown(std::net::Shutdown::Both);
     }
     drop(permit);
     drop(lease);
+    // the permits are free again; a person who stayed connected has seen the answer, so only a person who left is told
+    if keep && client_gone && answered && !stopped {
+        app.push.notify_answer(&tenant.id, &chat_id, &chat_title);
+    }
 }
 
 fn route(app: Arc<App>, mut req: Request) {
@@ -465,6 +531,8 @@ fn route(app: Arc<App>, mut req: Request) {
         (Method::Get, "/healthz") => return text(&app, req, 200, "ok"),
         // /device is the approval page: a page of the same app (it works out from the address which screen to show)
         (Method::Get, "/") | (Method::Get, "/index.html") | (Method::Get, "/device") => return html(&app, req, include_str!("../web/index.html").to_string(), pages::APP_CSP),
+        // the installable app: manifest, icons and the service worker (see pwa.rs)
+        (Method::Get, p) if pwa::serves(p) => return pwa::serve(&app, req, p),
         (Method::Get, "/privacy") => return html(&app, req, pages::page("ZO-AI privacy notice", &pages::fill(pages::PRIVACY_MD, &app.legal)), pages::PLAIN_CSP),
         (Method::Get, "/terms") => return html(&app, req, pages::page("ZO-AI terms of use", &pages::fill(pages::TERMS_MD, &app.legal)), pages::PLAIN_CSP),
         _ => {}
@@ -740,6 +808,9 @@ fn main() {
     };
     eprintln!("zo-server: listening on {addr}{}", if no_auth { " (no login: testing only)" } else { "" });
     let devices = database.clone().map(Devices::new);
+    // the contact in the notification key's token: push services write to it if the server misbehaves
+    let subject = if legal.contact.contains('@') && !legal.contact.contains(char::is_whitespace) { format!("mailto:{}", legal.contact) } else { public_url.clone().unwrap_or_else(|| "mailto:nobody@invalid.example".into()) };
+    let push = Arc::new(push::Hub::new(database.clone(), secret.as_deref().unwrap_or(""), subject));
     let app = Arc::new(App {
         no_auth,
         noauth_admin: no_auth && env("ZO_NOAUTH_ADMIN").as_deref() == Some("1"),
@@ -755,6 +826,7 @@ fn main() {
         legal,
         require_terms: std::sync::atomic::AtomicBool::new(!no_auth),
         accepted: Mutex::new(Default::default()),
+        push,
     });
     {
         // requests that ran out are dropped, and a credential nobody collected is revoked

@@ -54,6 +54,10 @@ Quotas: message text up to 20,000 characters, tenant data folder up to 25 MB (wr
 | device-code phishing: tricking a victim into approving the attacker's sign-in request | the approval page needs the code to be **typed** (links never carry it), shows device name, kind and requesting address with a warning, codes last 10 minutes and are single use, 5 wrong codes per person per 10 minutes, caps on requests per address (10/min, 5 waiting) and overall (1000 waiting) | a person who types a code an attacker dictated and ignores the warning; see `LOGIN.md` |
 | using the server as a free relay to attack the web | fetch is rate limited by the per-user bucket and runs only from the model's tool loop | a user can still make the server fetch public pages; the 8-step cap bounds it |
 
+## Notifications
+
+The web app can be installed, can notify when an answer is ready, and (with the person's consent) can have the server finish an answer after the tab closed and push a generic "answer ready" message. Web Push goes only to the allow-listed push services the browser named, at most 5 devices and 30 pushes an hour per account. Details, privacy and limits: [NOTIFICATIONS.md](NOTIFICATIONS.md).
+
 ## Activity
 
 The service operations `activity` and `activity_stop` list and stop what is running, scoped to the calling tenant: a user sees and stops only their own answers, memory jobs and open client connections (restricted users cannot have anything else). Details: [ACTIVITY.md](ACTIVITY.md).
@@ -71,7 +75,7 @@ accounts that are never used again (watch the count; `ZO_MAX_USERS` and `ZO_BLOC
 
 ## Account API
 
-POST, Firebase-authenticated, under `/api/account/`: `whoami`, `devices_list` (shown as "signed-in devices"), `device_revoke {id}`, `accept_terms {version}`, `export`, `delete {confirm:"DELETE"}`. Until a person has accepted the current version of the
+POST, Firebase-authenticated, under `/api/account/`: `whoami`, `devices_list` (shown as "signed-in devices"), `device_revoke {id}`, `accept_terms {version}`, `export`, `delete {confirm:"DELETE"}`, and the notification devices `push_config`, `push_subscribe`, `push_unsubscribe`, `push_list` ([NOTIFICATIONS.md](NOTIFICATIONS.md)). Until a person has accepted the current version of the
 notice and terms (recorded in `users/<tenant>/meta/terms`), everything but `whoami`, `accept_terms`, `export` and `delete` answers 403 with
 `terms_required`. A blocked address can still `export` and `delete`. Delete writes a marker (`deleted/<tenant>`, time and whether the
 login was removed) first, so a sign-in token that is still valid cannot bring the account back for two hours (for good when the login could

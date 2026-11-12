@@ -18,6 +18,8 @@ pub struct Firestore {
     key: EncodingKey,
     token_uri: String,
     token: Mutex<Option<(u64, String)>>,
+    /// The same account's token for Cloud Messaging (another scope, so another token).
+    fcm_token: Mutex<Option<(u64, String)>>,
 }
 
 fn now() -> u64 {
@@ -121,6 +123,7 @@ impl Firestore {
             key: EncodingKey::from_rsa_pem(get("private_key")?.as_bytes()).map_err(|e| format!("The service account's private key cannot be read: {e}"))?,
             token_uri: get("token_uri").unwrap_or_else(|_| "https://oauth2.googleapis.com/token".into()),
             token: Mutex::new(None),
+            fcm_token: Mutex::new(None),
         })
     }
 
@@ -129,14 +132,18 @@ impl Firestore {
     }
 
     fn token(&self) -> Result<String, String> {
-        let mut g = self.token.lock().unwrap();
+        self.token_for(&self.token, "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/identitytoolkit")
+    }
+
+    fn token_for(&self, cache: &Mutex<Option<(u64, String)>>, scope: &str) -> Result<String, String> {
+        let mut g = cache.lock().unwrap();
         if let Some((until, t)) = g.as_ref() {
             if *until > now() + 60 {
                 return Ok(t.clone());
             }
         }
         let iat = now();
-        let claims = json!({"iss": self.email, "scope": "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/identitytoolkit", "aud": self.token_uri, "iat": iat, "exp": iat + 3600});
+        let claims = json!({"iss": self.email, "scope": scope, "aud": self.token_uri, "iat": iat, "exp": iat + 3600});
         let jwt = encode(&Header::new(Algorithm::RS256), &claims, &self.key).map_err(|e| e.to_string())?;
         let r: Value = ureq::post(&self.token_uri)
             .timeout(Duration::from_secs(20))
@@ -155,6 +162,9 @@ impl Firestore {
 }
 
 impl Db for Firestore {
+    fn fcm_access(&self) -> Option<Result<(String, String), String>> {
+        Some(self.token_for(&self.fcm_token, "https://www.googleapis.com/auth/firebase.messaging").map(|t| (self.project.clone(), t)))
+    }
     fn put_doc(&self, collection: &str, id: &str, text: &str) -> Result<(), String> {
         let body = json!({"fields": {"data": {"stringValue": text}, "updated": {"integerValue": now().to_string()}}});
         ureq::request("PATCH", &format!("{}/{collection}/{id}", self.base()))

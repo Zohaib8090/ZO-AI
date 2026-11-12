@@ -20,6 +20,11 @@ pub trait Db: Send + Sync {
     fn delete_login(&self, _uid: &str) -> Result<bool, String> {
         Ok(false)
     }
+    /// For Firebase Cloud Messaging: the project id and an access token (scope firebase.messaging) of the service account. None: this
+    /// database has no such thing (the tests, which give the push module a fixed one).
+    fn fcm_access(&self) -> Option<Result<(String, String), String>> {
+        None
+    }
 }
 
 /// Saves one text under a name. `old_parts` is how many documents it may take up now (extra ones are removed). The later parts are

@@ -28,6 +28,7 @@ font-src https://fonts.gstatic.com data:; \
 img-src 'self' data: blob: https:; \
 connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://*.googleapis.com https://www.gstatic.com; \
 frame-src https://*.firebaseapp.com https://accounts.google.com https://apis.google.com; \
+worker-src 'self'; manifest-src 'self'; \
 object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// For the plain text pages: no script at all.
@@ -211,7 +212,7 @@ mod tests {
 
     #[test]
     fn the_policy_allows_what_the_page_needs() {
-        for want in ["https://www.gstatic.com", "https://apis.google.com", "https://fonts.googleapis.com", "https://fonts.gstatic.com", "https://identitytoolkit.googleapis.com", "https://securetoken.googleapis.com", "https://*.firebaseapp.com", "frame-ancestors 'none'", "object-src 'none'"] {
+        for want in ["https://www.gstatic.com", "https://apis.google.com", "https://fonts.googleapis.com", "https://fonts.gstatic.com", "https://identitytoolkit.googleapis.com", "https://securetoken.googleapis.com", "https://*.firebaseapp.com", "frame-ancestors 'none'", "object-src 'none'", "worker-src 'self'", "manifest-src 'self'"] {
             assert!(APP_CSP.contains(want), "{want}");
         }
     }
