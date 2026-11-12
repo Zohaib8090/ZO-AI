@@ -579,6 +579,13 @@ fn route(app: Arc<App>, mut req: Request) {
         (Method::Get, "/") | (Method::Get, "/index.html") | (Method::Get, "/device") => return html(&app, req, include_str!("../web/index.html").to_string(), pages::APP_CSP),
         // the installable app: manifest, icons and the service worker (see pwa.rs)
         (Method::Get, p) if pwa::serves(p) => return pwa::serve(&app, req, p),
+        // Google Search Console ownership verification file (must stay here permanently)
+        (Method::Get, "/google0dfec91cc0809278.html") => {
+            let r = Response::from_string("google-site-verification: google0dfec91cc0809278.html")
+                .with_header(header("Content-Type", "text/html; charset=utf-8"))
+                .with_header(header("Cache-Control", "no-cache"));
+            return send_response(&app, req, r);
+        }
         (Method::Get, "/privacy") => return html(&app, req, pages::page("ZO-AI privacy notice", &pages::fill(pages::PRIVACY_MD, &app.legal)), pages::PLAIN_CSP),
         (Method::Get, "/terms") => return html(&app, req, pages::page("ZO-AI terms of use", &pages::fill(pages::TERMS_MD, &app.legal)), pages::PLAIN_CSP),
         _ => {}
