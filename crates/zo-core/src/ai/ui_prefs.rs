@@ -107,3 +107,22 @@ pub fn set_provider_pref(provider: &str, value: Value) -> Result<Prefs, String> 
 pub fn doc(p: &Prefs) -> Value {
     serde_json::to_value(p).unwrap_or(Value::Null)
 }
+
+/// The providers that are left out of the pickers.
+pub fn hidden_providers() -> Vec<String> {
+    load().hidden_providers
+}
+
+pub fn is_provider_hidden(id: &str) -> bool {
+    load().hidden_providers.iter().any(|h| h == id)
+}
+
+/// Shows or hides one provider in the pickers (the desktop switch).
+pub fn set_provider_hidden(id: &str, hidden: bool) {
+    let mut v = hidden_providers();
+    v.retain(|h| h != id);
+    if hidden {
+        v.push(id.to_string());
+    }
+    let _ = set_hidden(v);
+}
