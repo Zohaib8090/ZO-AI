@@ -93,6 +93,10 @@ dependencies {
   implementation(libs.androidx.credentials)
   implementation(libs.androidx.credentials.play.services)
   implementation(libs.googleid)
+  // media-link module: push (FCM), picture rotation (EXIF), PDF text
+  implementation(libs.firebase.messaging)
+  implementation(libs.androidx.exifinterface)
+  implementation(libs.pdfbox.android)
 
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)

@@ -14,6 +14,8 @@ firebaseBom = "34.17.0"
 credentials = "1.5.0"
 googleid = "1.1.1"
 browser = "1.8.0"
+exifinterface = "1.4.1"
+pdfbox = "2.0.27.0"
 googleServices = "4.5.0"
 junit = "4.13.2"
 robolectric = "4.16.1"
@@ -39,6 +41,9 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 androidx-compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+androidx-exifinterface = { group = "androidx.exifinterface", name = "exifinterface", version.ref = "exifinterface" }
+pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfbox" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
 androidx-browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
