@@ -64,6 +64,9 @@ pub struct Store {
     pub read: HashMap<String, usize>,
     #[serde(default)]
     pub items: Vec<Item>,
+    /// When `enabled` was last changed (the sync keeps the newest choice).
+    #[serde(default)]
+    pub state_updated: u64,
 }
 
 fn yes() -> bool {
@@ -75,7 +78,7 @@ fn three() -> usize {
 
 impl Default for Store {
     fn default() -> Self {
-        Store { enabled: true, every: 3, read: HashMap::new(), items: Vec::new() }
+        Store { enabled: true, every: 3, read: HashMap::new(), items: Vec::new(), state_updated: 0 }
     }
 }
 
@@ -416,11 +419,15 @@ pub fn update_text(id: &str, text: &str) -> bool {
 }
 
 pub fn forget(id: &str) -> bool {
-    change(|s| {
+    let gone = change(|s| {
         let before = s.items.len();
         s.items.retain(|i| i.id != id);
         s.items.len() != before
-    })
+    });
+    if gone {
+        crate::sync::tombstone("memory", id);
+    }
+    gone
 }
 
 /// Forgets the notes that match `words` best (used when the model is asked to forget something), returning what went.
@@ -443,14 +450,20 @@ pub fn set_pinned(id: &str, on: bool) {
 }
 
 pub fn clear_all() {
-    change(|s| {
-        s.items.clear();
+    let ids: Vec<String> = change(|s| {
         s.read.clear();
+        s.items.drain(..).map(|i| i.id).collect()
     });
+    for id in ids {
+        crate::sync::tombstone("memory", &id);
+    }
 }
 
 pub fn set_enabled(on: bool) {
-    change(|s| s.enabled = on);
+    change(|s| {
+        s.enabled = on;
+        s.state_updated = chats::now_millis();
+    });
 }
 
 #[cfg(test)]

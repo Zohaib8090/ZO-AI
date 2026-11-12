@@ -52,6 +52,9 @@ pub struct Chat {
 
 const KEEP: usize = 100;
 
+/// Chats are read, changed and written as a whole file: one change at a time (the window, the service and the sync all write).
+static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn path() -> PathBuf {
     let base = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| {
         PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into())).join(".local/share")
@@ -85,6 +88,7 @@ fn write(all: &[Chat]) {
 
 /// Adds the chat, or replaces the one with the same id.
 pub fn upsert(mut chat: Chat) {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut all = load();
     // pinning is only changed by `set_pinned`, so saving a chat never loses it
     chat.pinned = all.iter().find(|c| c.id == chat.id).is_some_and(|c| c.pinned);
@@ -96,6 +100,7 @@ pub fn upsert(mut chat: Chat) {
 
 /// Pins or unpins a chat. Pinned chats are listed first and keep their order by the last message.
 pub fn set_pinned(id: &str, on: bool) {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut all = load();
     if let Some(c) = all.iter_mut().find(|c| c.id == id) {
         c.pinned = on;
@@ -103,9 +108,37 @@ pub fn set_pinned(id: &str, on: bool) {
     write(&all);
 }
 
+/// Deletes a chat and remembers that it was deleted, so that the sync removes it on the other side too.
 pub fn delete(id: &str) {
+    delete_quiet(id);
+    crate::sync::tombstone("chats", id);
+}
+
+/// Deletes a chat without a tombstone (the sync uses this when the deletion came from the other side).
+pub fn delete_quiet(id: &str) {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut all = load();
     all.retain(|c| c.id != id);
+    write(&all);
+}
+
+/// Would a chat last changed at `updated` still be kept after saving (the list keeps the newest KEEP chats)?
+pub fn fits(updated: u64) -> bool {
+    let all = load();
+    all.len() < KEEP || all.iter().any(|c| c.updated < updated)
+}
+
+/// Takes in a chat that came from the other side, as it is (its time stays; the local pin stays if the chat is here already).
+pub fn import(mut chat: Chat) {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut all = load();
+    if let Some(old) = all.iter().find(|c| c.id == chat.id) {
+        chat.pinned = old.pinned;
+    }
+    all.retain(|c| c.id != chat.id);
+    all.push(chat);
+    all.sort_by(|a, b| b.updated.cmp(&a.updated));
+    all.truncate(KEEP);
     write(&all);
 }
 

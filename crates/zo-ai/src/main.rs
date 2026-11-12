@@ -2552,6 +2552,7 @@ fn build_ui(app: &adw::Application) {
             set_nav(&ui, "projects");
         }
         Ok("settings") => settings::show(&ui),
+        Ok("settings-sync") => settings::open_page(&ui, "sync"),
         Ok("add-server") => {
             settings::show(&ui);
             settings::open_add_server(&ui);
@@ -2696,6 +2697,8 @@ fn main() -> glib::ExitCode {
                     zo_core::ai::models::refresh_if_stale(&sel.base_url_for(a), key.as_deref());
                 }
             });
+            // chats, memory and personalities are kept in step with the server when the person turned that on
+            zo_core::sync::start();
             scheduler::start(Rc::new(|| {
                 let f = TASKS_DONE.with(|t| t.borrow().clone());
                 if let Some(f) = f {

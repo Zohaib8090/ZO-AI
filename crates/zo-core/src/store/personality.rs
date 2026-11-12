@@ -99,11 +99,33 @@ pub fn add(name: &str, prompt: &str, generated: bool) -> Result<Personality, Str
 }
 
 pub fn remove(id: &str) {
+    remove_quiet(id);
+    crate::sync::tombstone("personalities", id);
+}
+
+/// Removes a personality without a tombstone (the sync uses this when the removal came from the other side).
+pub fn remove_quiet(id: &str) {
     change(|s| {
         s.items.retain(|p| p.id != id);
         if s.active == id {
             s.active.clear();
         }
+    });
+}
+
+/// When a personality of the person's own was made (its id is `p` and the time in milliseconds; they are never edited).
+pub fn made_at(p: &Personality) -> u64 {
+    p.id.strip_prefix('p').and_then(|t| t.parse().ok()).unwrap_or(1)
+}
+
+/// Takes in a personality that came from the other side (not a built-in one).
+pub fn import(p: Personality) {
+    if builtin().iter().any(|b| b.id == p.id) {
+        return;
+    }
+    change(|s| {
+        s.items.retain(|x| x.id != p.id);
+        s.items.push(p);
     });
 }
 

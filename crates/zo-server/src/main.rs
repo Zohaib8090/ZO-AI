@@ -7,11 +7,15 @@
 //!   ZO_ALLOWED_EMAILS          who may sign in, separated by commas (required with the login check)
 //!   ZO_SERVER_SECRET           a long random text: API keys are stored in Firestore encrypted with it
 //!   RENDER_EXTERNAL_URL        the server's own address (Render sets it): it calls itself every few minutes so it is not put to sleep
+//!   ZO_ACCESS_TOKEN            the owner's own-devices key (at least 32 characters): `Authorization: Bearer <it>` is accepted on every /api call
+//!                              (desktop sync, terminal client). Without FIREBASE_SERVICE_ACCOUNT the server runs "token-only": no Firebase
+//!                              login, no Firestore, listens on 127.0.0.1 unless PORT and ZO_BIND (for example 0.0.0.0) are both set
 //!   ZO_SERVER_NO_AUTH=1        for testing on your own computer only: no login, listens on 127.0.0.1 only, no Firestore
 
 mod auth;
 mod firestore;
 mod sync;
+mod sync_api;
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -26,6 +30,8 @@ struct App {
     project: String,
     allowed: Vec<String>,
     no_auth: bool,
+    /// ZO_ACCESS_TOKEN (at least 32 characters), if set.
+    access_token: Option<String>,
     /// Answers running right now: the web app can talk to one (approve a step, stop it) by its number.
     streams: Mutex<HashMap<u64, UnixStream>>,
     next: AtomicU64,
@@ -64,6 +70,13 @@ fn text(req: Request, status: u16, body: &str) {
     let _ = req.respond(r);
 }
 
+/// Same result for any two texts of any length, in time that does not depend on where they differ.
+fn same_secret(a: &str, b: &str) -> bool {
+    use sha2::{Digest, Sha256};
+    let (x, y) = (Sha256::digest(a.as_bytes()), Sha256::digest(b.as_bytes()));
+    x.iter().zip(y.iter()).fold(0u8, |acc, (p, q)| acc | (p ^ q)) == 0
+}
+
 /// Who is asking, or why they are refused.
 fn who(app: &App, req: &Request) -> Result<String, String> {
     if app.no_auth {
@@ -76,6 +89,14 @@ fn who(app: &App, req: &Request) -> Result<String, String> {
         .map(|h| h.value.as_str().to_string())
         .and_then(|v| v.strip_prefix("Bearer ").map(str::to_string))
         .ok_or("Sign in first.")?;
+    if let Some(own) = &app.access_token {
+        if same_secret(&token, own) {
+            return Ok("access token".into());
+        }
+    }
+    if app.project.is_empty() {
+        return Err("The access token is not right.".into());
+    }
     auth::verify(&token, &app.project, &app.allowed)
 }
 
@@ -148,7 +169,7 @@ fn route(app: Arc<App>, mut req: Request) {
             let r = Response::from_string(include_str!("../web/index.html")).with_header(header("Content-Type", "text/html; charset=utf-8")).with_header(header("Cache-Control", "no-cache"));
             let _ = req.respond(r);
         }
-        (Method::Post, "/api/op") | (Method::Post, "/api/send") | (Method::Post, "/api/reply") => {
+        (Method::Post, "/api/op") | (Method::Post, "/api/send") | (Method::Post, "/api/reply") | (Method::Post, "/api/sync/manifest") | (Method::Post, "/api/sync/get") | (Method::Post, "/api/sync/put") | (Method::Post, "/api/sync/delete") => {
             if let Err(e) = who(&app, &req) {
                 return reply(req, 401, json!({"ok": false, "error": e}));
             }
@@ -158,6 +179,10 @@ fn route(app: Arc<App>, mut req: Request) {
             };
             match path.as_str() {
                 "/api/send" => send(&app, req, v),
+                p if p.starts_with("/api/sync/") => match sync_api::handle(p, &v) {
+                    Ok(r) => reply(req, 200, r),
+                    Err(e) => reply(req, 400, json!({"ok": false, "error": e})),
+                },
                 "/api/reply" => {
                     // a line for an answer that is running: {"stream": 3, "op": "stop"} or an approval
                     let id = v.get("stream").and_then(Value::as_u64).unwrap_or(0);
@@ -186,8 +211,17 @@ fn main() {
     let no_auth = env("ZO_SERVER_NO_AUTH").as_deref() == Some("1");
     let account = env("FIREBASE_SERVICE_ACCOUNT");
     let allowed: Vec<String> = env("ZO_ALLOWED_EMAILS").map(|s| s.split(',').map(|e| e.trim().to_lowercase()).filter(|e| !e.is_empty()).collect()).unwrap_or_default();
-    if !no_auth && (account.is_none() || allowed.is_empty()) {
-        eprintln!("zo-server: set FIREBASE_SERVICE_ACCOUNT and ZO_ALLOWED_EMAILS (or ZO_SERVER_NO_AUTH=1 to try it on your own computer).");
+    let access_token = env("ZO_ACCESS_TOKEN").filter(|t| {
+        let long = t.chars().count() >= 32;
+        if !long {
+            eprintln!("zo-server: ZO_ACCESS_TOKEN is shorter than 32 characters, so it is ignored.");
+        }
+        long
+    });
+    // token-only: the access token is the only way in; no Firebase login and no Firestore
+    let token_only = !no_auth && account.is_none() && access_token.is_some();
+    if !no_auth && !token_only && (account.is_none() || allowed.is_empty()) {
+        eprintln!("zo-server: set FIREBASE_SERVICE_ACCOUNT and ZO_ALLOWED_EMAILS (or ZO_ACCESS_TOKEN for token-only mode, or ZO_SERVER_NO_AUTH=1 to try it on your own computer).");
         std::process::exit(2);
     }
     let (config, data) = (zo_core::audit::config_dir(), zo_core::audit::data_dir());
@@ -251,7 +285,18 @@ fn main() {
     }
 
     let port = env("PORT").unwrap_or_else(|| "8787".into());
-    let addr = format!("{}:{port}", if no_auth { "127.0.0.1" } else { "0.0.0.0" });
+    let host = if no_auth {
+        "127.0.0.1".to_string()
+    } else if token_only {
+        // token-only listens on this computer only, unless PORT and ZO_BIND are both set on purpose
+        match (env("PORT"), env("ZO_BIND")) {
+            (Some(_), Some(b)) => b,
+            _ => "127.0.0.1".to_string(),
+        }
+    } else {
+        "0.0.0.0".to_string()
+    };
+    let addr = format!("{host}:{port}");
     let server = match Server::http(&addr) {
         Ok(s) => s,
         Err(e) => {
@@ -259,8 +304,8 @@ fn main() {
             std::process::exit(1);
         }
     };
-    eprintln!("zo-server: listening on {addr}{}", if no_auth { " (no login: testing only)" } else { "" });
-    let app = Arc::new(App { project, allowed, no_auth, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1) });
+    eprintln!("zo-server: listening on {addr}{}", if no_auth { " (no login: testing only)" } else if token_only { " (token-only: no Firebase login, no Firestore)" } else { "" });
+    let app = Arc::new(App { project, allowed, no_auth, access_token, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1) });
     for req in server.incoming_requests() {
         let app = app.clone();
         std::thread::spawn(move || route(app, req));

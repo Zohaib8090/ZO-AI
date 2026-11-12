@@ -65,6 +65,11 @@ pub fn home(ui: &Rc<Ui>) {
     go(ui, "");
 }
 
+/// For verification: opens one Settings page straight away.
+pub(crate) fn open_page(ui: &Rc<Ui>, page: &str) {
+    go(ui, page);
+}
+
 fn go(ui: &Rc<Ui>, page: &str) {
     PAGE.with(|p| *p.borrow_mut() = page.to_string());
     show(ui);
@@ -78,12 +83,13 @@ pub fn show(ui: &Rc<Ui>) {
     }
     content.set_spacing(0);
     let page = PAGE.with(|p| p.borrow().clone());
-    let pages: [(&str, &str, &str); 7] = [
+    let pages: [(&str, &str, &str); 8] = [
         ("model", "Model and profiles", "Which AI answers, its key, and saved presets."),
         ("personality", "Personality", "How ZO-AI talks to you."),
         ("memory", "Memory", "What ZO-AI remembers about you between chats."),
         ("general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."),
         ("apps", "Connected apps", "Other programs that use ZO-AI, and tools ZO-AI can use."),
+        ("sync", "Web sync", "Keep chats, memory and personalities the same on your ZO-AI server and the web app."),
         ("data", "Data", "Saved chats."),
         ("about", "About", "Version."),
     ];
@@ -579,6 +585,116 @@ pub fn show(ui: &Rc<Ui>) {
     content.append(&sec);
     }
 
+    // ---- web sync ----
+    if page == "sync" {
+    use zo_core::sync;
+    let (sec, card) = section("Server");
+    let cfg = sync::config();
+    let url = gtk::Entry::new();
+    url.add_css_class("field-input");
+    url.set_placeholder_text(Some("https://your-zo-ai.onrender.com"));
+    url.set_text(&cfg.url);
+    url.set_hexpand(true);
+    let token = gtk::PasswordEntry::new();
+    token.set_show_peek_icon(true);
+    token.add_css_class("field-input");
+    token.set_hexpand(true);
+    token.set_placeholder_text(Some(if sync::token().is_some() { "Saved in the keyring. Type to replace it" } else { "Paste the access token" }));
+    let on = gtk::Switch::new();
+    on.set_active(cfg.enabled);
+    let status = lbl("", "field-hint");
+    status.set_wrap(true);
+    status.set_xalign(0.0);
+    let fields = vbox(12);
+    fields.set_margin_top(4);
+    fields.set_margin_bottom(14);
+    fields.set_margin_start(16);
+    fields.set_margin_end(16);
+    fields.append(&crate::field("Server address", &url));
+    fields.append(&crate::field("Access token", &token));
+    fields.append(&lbl("The token is ZO_ACCESS_TOKEN from your server. It is kept in the system keyring and is never shown again.", "field-hint"));
+    let save = crate::primary("Save");
+    let now = secondary("Sync now");
+    let buttons = hbox(8);
+    buttons.append(&save);
+    buttons.append(&now);
+    fields.append(&buttons);
+    fields.append(&status);
+    card.append(&fields);
+    // saves the address, the token (when one was typed) and the switch; says what is wrong in the status line
+    let store: Rc<dyn Fn() -> Result<(), String>> = {
+        let (url, token, on) = (url.clone(), token.clone(), on.clone());
+        Rc::new(move || {
+            let typed = token.text().to_string();
+            if !typed.trim().is_empty() {
+                sync::set_token(&typed)?;
+                token.set_text("");
+                token.set_placeholder_text(Some("Saved in the keyring. Type to replace it"));
+            }
+            sync::save_config(&url.text(), on.is_active())
+        })
+    };
+    {
+        let (store, status) = (store.clone(), status.clone());
+        save.connect_clicked(move |_| match store() {
+            Ok(()) => status.set_text("Saved."),
+            Err(e) => status.set_text(&e),
+        });
+    }
+    {
+        let (store, status) = (store.clone(), status.clone());
+        now.connect_clicked(move |b| {
+            if let Err(e) = store() {
+                status.set_text(&e);
+                return;
+            }
+            b.set_sensitive(false);
+            status.set_text("Syncing…");
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(sync::sync_now());
+            });
+            let (b, status) = (b.clone(), status.clone());
+            gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || match rx.try_recv() {
+                Ok(r) => {
+                    b.set_sensitive(true);
+                    status.set_text(&sync_line());
+                    let _ = r;
+                    gtk::glib::ControlFlow::Break
+                }
+                Err(mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
+                Err(_) => gtk::glib::ControlFlow::Break,
+            });
+        });
+    }
+    {
+        let (store, status) = (store.clone(), status.clone());
+        on.connect_state_set(move |_, _| {
+            if let Err(e) = store() {
+                status.set_text(&e);
+            }
+            gtk::glib::Propagation::Proceed
+        });
+    }
+    card.append(&row("Keep in step", "Every 30 seconds this computer and the server compare chats, memory notes and personalities. The newest change wins; a deleted chat or note is deleted on both. API keys are never sent.", Some(&on)));
+    status.set_text(&sync_line());
+    // the status line follows the background sync while this page is open
+    {
+        let status = status.clone();
+        gtk::glib::timeout_add_local(std::time::Duration::from_secs(2), move || {
+            if status.root().is_none() {
+                return gtk::glib::ControlFlow::Break;
+            }
+            let t = status.text();
+            if t.is_empty() || t.starts_with("Last") || t.starts_with("Not yet") || t.starts_with("The last try") {
+                status.set_text(&sync_line());
+            }
+            gtk::glib::ControlFlow::Continue
+        });
+    }
+    content.append(&sec);
+    }
+
     // ---- about ----
     if page == "about" {
     let (sec, card) = section("About");
@@ -590,6 +706,26 @@ pub fn show(ui: &Rc<Ui>) {
     ui.stack.set_visible_child_name("settings");
     set_nav(ui, "settings");
     ui.top_title.set_text("Settings");
+}
+
+/// The sync status as one line for the Web sync page.
+fn sync_line() -> String {
+    let s = zo_core::sync::status();
+    let when = |ms: u64| {
+        let ago = zo_core::store::chats::now_millis().saturating_sub(ms) / 1000;
+        match ago {
+            0..=59 => "just now".to_string(),
+            60..=3599 => format!("{} min ago", ago / 60),
+            _ => format!("{} h ago", ago / 3600),
+        }
+    };
+    let counts = format!("{} received, {} sent, {} deleted", s.pulled, s.pushed, s.deleted);
+    match (s.last_ok, s.error.is_empty()) {
+        (0, true) => "Not yet synced.".to_string(),
+        (0, false) => format!("The last try failed: {}", s.error),
+        (t, true) => format!("Last sync {} ({counts}).", when(t)),
+        (t, false) => format!("The last try failed: {} Last good sync {} ({counts}).", s.error, when(t)),
+    }
 }
 
 /// A small panel with one text box. `work` gets the text and runs off the main thread (it may call the model); `done` runs on the
