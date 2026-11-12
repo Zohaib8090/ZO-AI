@@ -43,7 +43,7 @@ impl Drop for Shut {
 
 pub fn local_hint(path: &std::path::Path) -> String {
     format!(
-        "ZO-AI is not running: nothing listens on {}.\nStart the ZO-AI app (it serves this socket), or talk to a server instead:\n  zo --remote https://your-server --token-file ~/.config/zo-ai/token \"question\"\n  (or set ZO_REMOTE_URL, and ZO_DEVICE_TOKEN for the device token, scope: full)",
+        "ZO-AI is not running: nothing listens on {}.\nStart the ZO-AI app (it serves this socket), or sign in and talk to the ZO-AI server:\n  zo login                     (once; then zo works against the server when the app is not running)\n  zo --remote https://your-server \"question\"   (a server of your own; for scripts set ZO_DEVICE_TOKEN)",
         path.display()
     )
 }
@@ -57,7 +57,7 @@ fn check(v: Value) -> Result<Value, String> {
 
 fn remote_error(e: ureq::Error) -> String {
     match e {
-        ureq::Error::Status(401, _) => zo_core::sync::TOKEN_REFUSED.into(),
+        ureq::Error::Status(401, _) => crate::account::NOT_SIGNED_IN.into(),
         ureq::Error::Status(429, resp) => format!("Too many requests, try again in {} s.", zo_core::sync::retry_after_secs(resp.header("Retry-After"))),
         ureq::Error::Status(code, resp) => {
             let body = resp.into_string().unwrap_or_default();

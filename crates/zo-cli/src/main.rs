@@ -1,5 +1,6 @@
 //! `zo`: ZO-AI in the terminal. Talks to the local ZO-AI service (the app's Unix socket) or to a zo-server with --remote.
 
+mod account;
 mod net;
 mod proto;
 
@@ -28,21 +29,27 @@ Usage:
   zo models [provider]       providers, and the models of one
   zo use <provider> [model]  choose provider and model
   zo mode [Manual|Auto|Bypass]  show or set the permission mode
+  zo login [--email]         sign in (browser: type a code on the web page; --email: e-mail and password)
+  zo logout                  sign out of this computer (the server forgets this terminal)
+  zo whoami                  the account you are signed in as
 
 Options:
   -c, --chat ID          continue this chat (one-shot questions)
       --mode MODE        permission mode for this question: Manual, Auto or Bypass
-      --remote URL       talk to a zo-server instead of the local app (or set ZO_REMOTE_URL)
+      --remote URL       talk to a server of your own instead of the local app (or set ZO_REMOTE_URL)
+      --email            with `zo login`: sign in with e-mail and password instead of the browser
       --stdin            add piped input to the question on the command line
       --local            ignore ZO_REMOTE_URL and use the local app
-      --token-env NAME   environment variable that holds the device token (scope: full), default ZO_DEVICE_TOKEN
-      --token-file PATH  file that holds the device token (scope: full)
+      --token-env NAME   scripts: environment variable that holds a device credential (zd_...), default ZO_DEVICE_TOKEN
+      --token-file PATH  scripts: file that holds a device credential
       --no-color         no colours (also: NO_COLOR is set, or the output is not a terminal)
   -h, --help             this text
   -V, --version
 
-The device token (scope: full, starts with zd_) is made in the web app: Settings > Account > Create device token.
-It is never taken as an argument value: it would show in the process list.
+Where zo talks to: the ZO-AI app on this computer when it runs; otherwise, when you have signed in with `zo login`, the ZO-AI
+server (the same chats, memory and personalities as the web version). `--local` forces the app, `--remote URL` a server.
+You never copy a token: `zo login` does it. For scripts a device credential (starts with zd_) can still be given in the
+environment (ZO_DEVICE_TOKEN, or the older name ZO_ACCESS_TOKEN) or a file; never as an argument value (the process list shows those).
 Inside `zo chat`: /new /chats /open N /model [name] /mode [name] /memory /stop /help /quit.
 Ctrl-C stops the running answer; a second Ctrl-C quits. Ctrl-D quits. Exit codes: 0 ok, 1 error, 2 usage.";
 
@@ -55,6 +62,7 @@ struct Opts {
     chat: Option<String>,
     mode: Option<String>,
     no_color: bool,
+    email: bool,
     stdin: bool,
     help: bool,
     version: bool,
@@ -93,13 +101,14 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
             "--no-color" => o.no_color = true,
             "--local" => o.local = true,
             "--stdin" => o.stdin = true,
+            "--email" => o.email = true,
             "--remote" => o.remote = Some(value("an address")?),
             "--token-env" => o.token_env = Some(value("a variable name")?),
             "--token-file" => o.token_file = Some(value("a file name")?),
             "-c" | "--chat" => o.chat = Some(value("a chat id")?),
             "--mode" => o.mode = Some(value("a mode")?),
             "--token" | "--access-token" | "--password" => {
-                return Err("Refusing a device token as an argument: it would show in the process list.\nPut it in a file and use --token-file PATH, or in an environment variable and use --token-env NAME (default ZO_DEVICE_TOKEN). Make a device token (scope: full) in the web app: Settings > Account.".into());
+                return Err("Refusing a device token as an argument: it would show in the process list.\nYou do not need one: run `zo login`. For scripts, put a device credential in a file and use --token-file PATH, or in an environment variable and use --token-env NAME (default ZO_DEVICE_TOKEN).".into());
             }
             _ => return Err(format!("unknown option {a} (try --help)")),
         }
@@ -107,21 +116,28 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
     Ok(o)
 }
 
-/// The device token from the file, else from the environment variable. `None` when neither is set (a local test server without login needs none).
-/// A token that is set must look like a device token (`zd_...`).
-fn read_token(file: Option<&str>, env_name: &str, getenv: &dyn Fn(&str) -> Option<String>) -> Result<Option<String>, String> {
+/// A device credential given for scripting: from the file, else from the environment variable (the default name is
+/// ZO_DEVICE_TOKEN; the older ZO_ACCESS_TOKEN is accepted too). `None` when neither is set. One that is set must be a device
+/// credential (`zd_...`), never an old-style token.
+fn read_token(file: Option<&str>, env_name: Option<&str>, getenv: &dyn Fn(&str) -> Option<String>) -> Result<Option<String>, String> {
     if let Some(p) = file {
         let t = std::fs::read_to_string(p).map_err(|e| format!("cannot read the token file {p}: {e}"))?;
         let t = t.trim().to_string();
         if t.is_empty() {
             return Err(format!("the token file {p} is empty"));
         }
-        return zo_core::sync::check_device_token(&t).map(Some).map_err(|e| format!("{e} (token file {p})"));
+        return account::check_credential(&t).map(Some).map_err(|e| format!("{e} (token file {p})"));
     }
-    match getenv(env_name).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
-        Some(t) => zo_core::sync::check_device_token(&t).map(Some).map_err(|e| format!("{e} (variable ${env_name})")),
-        None => Ok(None),
+    let names: Vec<&str> = match env_name {
+        Some(n) => vec![n],
+        None => vec!["ZO_DEVICE_TOKEN", "ZO_ACCESS_TOKEN"],
+    };
+    for n in names {
+        if let Some(t) = getenv(n).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+            return account::check_credential(&t).map(Some).map_err(|e| format!("{e} (variable ${n})"));
+        }
     }
+    Ok(None)
 }
 
 fn canonical_mode(s: &str) -> Option<&'static str> {
@@ -650,32 +666,45 @@ fn run() -> i32 {
             return 2;
         }
     }
-    let remote = if o.local { None } else { o.remote.clone().or_else(|| std::env::var("ZO_REMOTE_URL").ok()).map(|u| u.trim().to_string()).filter(|u| !u.is_empty()) };
-    let target = match remote {
-        Some(url) => {
-            // the same rule as the desktop sync: https, or http only for this computer itself (the token goes with every call)
-            let url = match zo_core::sync::clean_url(&url) {
-                Ok(u) => u,
-                Err(_) => {
-                    eprintln!("zo: the server address must start with https:// (http only for localhost); got {}", proto::one_line(&url, 80));
-                    return 2;
-                }
-            };
-            let token = match read_token(o.token_file.as_deref(), o.token_env.as_deref().unwrap_or("ZO_DEVICE_TOKEN"), &|n| std::env::var(n).ok()) {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("zo: {e}");
-                    return 1;
-                }
-            };
-            Target::Remote { url, token }
+    let rest = &o.rest;
+    let cmd = rest.first().map(String::as_str).unwrap_or("");
+    if o.email && cmd != "login" {
+        eprintln!("zo: --email is only for `zo login` (try --help)");
+        return 2;
+    }
+    if matches!(cmd, "login" | "logout" | "whoami") {
+        if rest.len() > 1 {
+            eprintln!("zo: {cmd} takes no arguments (try --help)");
+            return 2;
         }
-        None => Target::Local(zo_core::service::socket_path()),
+        return match cmd {
+            "login" => account::cmd_login(o.email, &interrupts),
+            "logout" => account::cmd_logout(),
+            _ => account::cmd_whoami(),
+        };
+    }
+    let remote = if o.local { None } else { o.remote.clone().or_else(|| std::env::var("ZO_REMOTE_URL").ok()).map(|u| u.trim().to_string()).filter(|u| !u.is_empty()) };
+    let socket = zo_core::service::socket_path();
+    let token = || read_token(o.token_file.as_deref(), o.token_env.as_deref(), &|n| std::env::var(n).ok());
+    let alive = || std::os::unix::net::UnixStream::connect(&socket).is_ok();
+    let inputs = account::Inputs {
+        local: o.local,
+        remote,
+        token: &token,
+        socket_alive: &alive,
+        saved: &account::saved_login,
+        server_url: &zo_core::login::server_url,
+        socket: socket.clone(),
+    };
+    let target = match account::resolve_target(&inputs) {
+        Ok(t) => t,
+        Err((e, code)) => {
+            eprintln!("zo: {e}");
+            return code;
+        }
     };
     let cx = Ctx { target, color_out, color_err, mode: o.mode.clone().and_then(|m| canonical_mode(&m).map(str::to_string)) };
     let stdin_tty = std::io::stdin().is_terminal();
-    let rest = &o.rest;
-    let cmd = rest.first().map(String::as_str).unwrap_or("");
     let arg1 = rest.get(1).map(String::as_str);
     let usage = |m: &str| {
         eprintln!("zo: {m} (try --help)");
@@ -807,18 +836,41 @@ mod tests {
         let f = dir.join("t");
         std::fs::write(&f, "  zd_from_file_0123456789abc\n").unwrap();
         let env = |n: &str| if n == "ZO_DEVICE_TOKEN" { Some("zd_from_env_0123456789abcd".to_string()) } else { None };
-        assert_eq!(read_token(f.to_str(), "ZO_DEVICE_TOKEN", &env).unwrap().as_deref(), Some("zd_from_file_0123456789abc"));
-        assert_eq!(read_token(None, "ZO_DEVICE_TOKEN", &env).unwrap().as_deref(), Some("zd_from_env_0123456789abcd"));
-        assert_eq!(read_token(None, "OTHER", &env).unwrap(), None);
+        assert_eq!(read_token(f.to_str(), Some("ZO_DEVICE_TOKEN"), &env).unwrap().as_deref(), Some("zd_from_file_0123456789abc"));
+        assert_eq!(read_token(None, None, &env).unwrap().as_deref(), Some("zd_from_env_0123456789abcd"));
+        assert_eq!(read_token(None, Some("OTHER"), &env).unwrap(), None);
         std::fs::write(&f, "\n").unwrap();
-        assert!(read_token(f.to_str(), "X", &env).is_err());
-        assert!(read_token(Some("/no/such/file"), "X", &env).is_err());
+        assert!(read_token(f.to_str(), Some("X"), &env).is_err());
+        assert!(read_token(Some("/no/such/file"), Some("X"), &env).is_err());
         // a token that is not a device token is refused with a clear message
         let old = |_: &str| Some("old-global-token-value-123456".to_string());
-        assert!(read_token(None, "ZO_DEVICE_TOKEN", &old).unwrap_err().contains("zd_"));
+        assert!(read_token(None, None, &old).unwrap_err().contains("zd_"));
         std::fs::write(&f, "nope\n").unwrap();
-        assert!(read_token(f.to_str(), "X", &env).unwrap_err().contains("zd_"));
+        assert!(read_token(f.to_str(), Some("X"), &env).unwrap_err().contains("zd_"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_old_variable_name_still_works_but_only_for_device_credentials() {
+        let old_name = |n: &str| if n == "ZO_ACCESS_TOKEN" { Some("zd_old_name_0123456789abcdef".to_string()) } else { None };
+        assert_eq!(read_token(None, None, &old_name).unwrap().as_deref(), Some("zd_old_name_0123456789abcdef"));
+        // the new name wins when both are set
+        let both = |n: &str| Some(format!("zd_{n}_0123456789abcdefgh"));
+        assert_eq!(read_token(None, None, &both).unwrap().as_deref(), Some("zd_ZO_DEVICE_TOKEN_0123456789abcdefgh"));
+        // an explicit --token-env name does not fall back to the others
+        assert_eq!(read_token(None, Some("MINE"), &old_name).unwrap(), None);
+        // an old-style token in the old variable is refused and points to zo login
+        let stale = |n: &str| if n == "ZO_ACCESS_TOKEN" { Some("some-old-global-token-123456".to_string()) } else { None };
+        let e = read_token(None, None, &stale).unwrap_err();
+        assert!(e.contains("zo login") && e.contains("ZO_ACCESS_TOKEN") && !e.contains("some-old"), "{e}");
+    }
+
+    #[test]
+    fn login_flags() {
+        let o = parse_args(&a(&["login", "--email"])).unwrap();
+        assert!(o.email);
+        assert_eq!(o.rest, a(&["login"]));
+        assert!(!parse_args(&a(&["whoami"])).unwrap().email);
     }
 
     #[test]
