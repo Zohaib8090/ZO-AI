@@ -236,6 +236,7 @@ pub fn edit_by_instruction(instruction: &str) -> Result<String, String> {
         return Err("Say what to change.".into());
     }
     let ask = asker().ok_or("Choose a model first (Settings, Model and profiles).")?;
+    let _activity = crate::activity::start(crate::activity::Kind::MemoryJob, "Editing memory", instruction, "desktop", None, None);
     let answer = ask(&edit_prompt(instruction))?;
     let v = parse(&answer).ok_or("The model's answer could not be read. Try again.")?;
     let (a, u, d) = apply(&v, "", "");
@@ -267,7 +268,10 @@ pub fn after_turn(chat_id: &str, title: &str, entries: &[Entry]) {
     }
     let key = tenant_key();
     let (id, title, entries) = (chat_id.to_string(), title.to_string(), entries.to_vec());
+    // registered here (not on the thread) so it shows from this moment, and it ends with the thread whatever happens
+    let activity = crate::activity::start(crate::activity::Kind::MemoryJob, "Updating memory", &title, "background", Some(&id), None);
     crate::tenant::spawn(move || {
+        let _activity = activity;
         if due_here {
             let _ = process(&*ask, &id, &title, &entries);
         }

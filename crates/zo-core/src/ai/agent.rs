@@ -235,6 +235,10 @@ fn ask(cfg: &Config, turns: &[Turn], specs: &[wire::ToolSpec], cancel: &AtomicBo
         let _ = tx.send(Chunk::Done(out));
     });
     loop {
+        // checked on every round: a model that streams without pause never lets the wait below time out
+        if cancel.load(Ordering::Relaxed) {
+            return Err(STOPPED.into());
+        }
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Chunk::Delta(t)) => on_event(Event::TextDelta(t)),
             Ok(Chunk::Done(r)) => return r,

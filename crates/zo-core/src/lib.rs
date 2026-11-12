@@ -1,6 +1,7 @@
 //! ZO-AI core. Everything that touches the operating system lives here, so the app and the
 //! MCP server share one set of tools, one permission policy and one audit log.
 
+pub mod activity;
 pub mod ai;
 pub mod approval;
 pub mod audit;

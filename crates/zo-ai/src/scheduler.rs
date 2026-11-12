@@ -31,6 +31,16 @@ fn run_task(task: &Task) -> Chat {
     );
     let mut history: Vec<Turn> = Vec::new();
     let mut session = None;
+    // shown in the tray and the Activity page; Stop there sets this flag
+    let cancel = Arc::new(AtomicBool::new(false));
+    let activity = zo_core::activity::start(
+        if sel.provider == "claude-code" { zo_core::activity::Kind::ClaudeCode } else { zo_core::activity::Kind::Scheduled },
+        &format!("Scheduled: {}", task.title),
+        &sel.model,
+        "scheduler",
+        None,
+        Some(cancel.clone()),
+    );
     let result = {
         let mut on = |e: Event| match e {
             Event::TextDelta(_) | Event::Usage(_) => {}
@@ -43,14 +53,15 @@ fn run_task(task: &Task) -> Chat {
         };
         if sel.provider == "claude-code" {
             let model = if sel.model.is_empty() { "sonnet".to_string() } else { sel.model.clone() };
-            claude_code::run(&model, sel.effort.as_deref(), &mut session, &task.prompt, &system, &Arc::new(AtomicBool::new(false)), &mut on)
+            claude_code::run(&model, sel.effort.as_deref(), &mut session, &task.prompt, &system, &cancel, &mut on)
         } else {
             match Config::from_selection(&sel, &system) {
-                Ok(cfg) => agent::run(&cfg, &mut history, &task.prompt, zo_core::Mode::load(), &zo_core::approval::AppApprover, &AtomicBool::new(false), &mut on),
+                Ok(cfg) => agent::run(&cfg, &mut history, &task.prompt, zo_core::Mode::load(), &zo_core::approval::AppApprover, &cancel, &mut on),
                 Err(e) => Err(e),
             }
         }
     };
+    drop(activity);
     if let Err(e) = result {
         entries.push(entry("msg-error", e));
     }

@@ -165,9 +165,18 @@ pub fn run_on(name: &str, remote_cmd: &str, input: Option<&[u8]>, timeout: u64, 
 
     let start = Instant::now();
     let limit_t = Duration::from_secs(timeout.clamp(1, 600));
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _activity = crate::activity::start(crate::activity::Kind::Command, remote_cmd, &format!("on {name}"), "desktop", None, Some(cancel.clone()));
     let status = loop {
         match child.try_wait().map_err(|e| e.to_string())? {
             Some(s) => break s,
+            None if cancel.load(std::sync::atomic::Ordering::Relaxed) => {
+                unsafe { libc::kill(-pid, libc::SIGKILL) };
+                let _ = child.kill();
+                let _ = child.wait();
+                drop(key_file);
+                return Err(format!("The command on {name} was stopped."));
+            }
             None if start.elapsed() >= limit_t => {
                 unsafe { libc::kill(-pid, libc::SIGKILL) };
                 let _ = child.kill();

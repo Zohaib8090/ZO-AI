@@ -145,10 +145,17 @@ fn serve_request(req: &Value, reader: BufReader<UnixStream>, writer: Arc<Mutex<U
         }
     }
     let req = req.clone();
+    crate::activity::seen(client_source(&req));
     if op == "send" {
         send(&req, reader, writer);
         return;
     }
+    // a client that says who it is ("client": "phone" | "web" | "cli") is shown while its connection is open
+    let _client = req
+        .get("client")
+        .and_then(Value::as_str)
+        .filter(|c| matches!(*c, "phone" | "web" | "cli"))
+        .map(|c| crate::activity::start(crate::activity::Kind::Client, &format!("{c} client"), &op, c, None, None));
     let reply = match handle(&op, &req) {
         Ok(mut v) => {
             if let Some(o) = v.as_object_mut() {
@@ -159,6 +166,18 @@ fn serve_request(req: &Value, reader: BufReader<UnixStream>, writer: Arc<Mutex<U
         Err(e) => json!({"ok": false, "error": e}),
     };
     line(&writer, &reply);
+}
+
+/// Who is asking: the request's `client` ("phone", "web" or "cli"); without it, a server's users are the web app, and on a
+/// computer it is the phone link.
+fn client_source(req: &Value) -> &'static str {
+    match req.get("client").and_then(Value::as_str) {
+        Some("phone") => "phone",
+        Some("web") => "web",
+        Some("cli") => "cli",
+        _ if tenant::multi_tenant() => "web",
+        _ => "phone",
+    }
 }
 
 fn s<'a>(v: &'a Value, k: &str) -> &'a str {
@@ -176,6 +195,15 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             }))
         }
         "sync_status" => Ok(crate::sync::status_json()),
+        "activity" => Ok(crate::activity::to_json()),
+        "activity_stop" => {
+            let id = req.get("id").and_then(Value::as_u64).ok_or("Say which item to stop (id).")?;
+            if crate::activity::stop(id) {
+                Ok(json!({"stopped": id}))
+            } else {
+                Err("That is not running (any more), or it cannot be stopped.".into())
+            }
+        }
         "chats" => {
             let all = chats::load();
             Ok(json!({"chats": all.iter().take(60).map(|c| json!({"id": c.id, "title": c.title, "updated": c.updated, "pinned": c.pinned})).collect::<Vec<_>>()}))
@@ -578,6 +606,14 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
         });
     }
     let approver = RemoteApprover { out: out.clone(), pending, next: AtomicU64::new(1) };
+    let activity = crate::activity::start(
+        if sel.provider == "claude-code" { crate::activity::Kind::ClaudeCode } else { crate::activity::Kind::Answer },
+        &chat.title,
+        &sel.model,
+        client_source(req),
+        Some(&chat.id),
+        Some(cancel.clone()),
+    );
 
     chat.entries.push(entry("msg-user", text.clone()));
     let prompt = crate::store::memory::system_with(agent::system_prompt(), &text);
@@ -639,6 +675,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
     chat.updated = chats::now_millis();
     crate::ai::memory_agent::after_turn(&chat.id, &chat.title, &chat.entries);
     chats::upsert_checked(chat, base);
+    drop(activity);
     line(&out, &json!({"event": "done"}));
     // the helper thread that listens for answers still holds the other end: close the connection so the client sees the end
     let _ = out.lock().unwrap().shutdown(std::net::Shutdown::Both);
@@ -680,6 +717,113 @@ mod tests {
             write!(s, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).unwrap();
         });
         url
+    }
+
+    /// A model that streams a very long answer, one small piece every 50 ms, until the client goes away.
+    fn endless_model() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = Vec::new();
+            let mut tmp = [0u8; 4096];
+            loop {
+                let n = s.read(&mut tmp).unwrap_or(0);
+                buf.extend_from_slice(&tmp[..n]);
+                if n == 0 {
+                    return;
+                }
+                if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                    let len = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                    while buf.len() < i + 4 + len {
+                        let n = s.read(&mut tmp).unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&tmp[..n]);
+                    }
+                    break;
+                }
+            }
+            if write!(s, "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n").is_err() {
+                return;
+            }
+            for _ in 0..600 {
+                if write!(s, "data: {{\"choices\":[{{\"delta\":{{\"content\":\"la \"}}}}]}}\n\n").is_err() || s.flush().is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        url
+    }
+
+    fn ask_once(req: Value) -> Value {
+        let (client, server) = UnixStream::pair().unwrap();
+        std::thread::spawn(move || serve(server));
+        let mut w = client.try_clone().unwrap();
+        writeln!(w, "{req}").unwrap();
+        let mut l = String::new();
+        BufReader::new(client).read_line(&mut l).unwrap();
+        serde_json::from_str(&l).unwrap()
+    }
+
+    #[test]
+    fn stop_from_the_activity_list_really_stops_a_streaming_answer() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("zo-service-activity-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", dir.join("config"));
+        std::env::set_var("XDG_DATA_HOME", dir.join("data"));
+        let mut sel = Selection { provider: "ollama".into(), model: "m".into(), ..Default::default() };
+        sel.base_urls.insert("ollama".into(), endless_model());
+        sel.save();
+
+        let (client, server) = UnixStream::pair().unwrap();
+        std::thread::spawn(move || serve(server));
+        let mut w = client.try_clone().unwrap();
+        writeln!(w, "{}", json!({"op": "send", "text": "stop-me-activity-test", "client": "web"})).unwrap();
+        let mut lines = BufReader::new(client).lines();
+        // wait until the answer is streaming
+        loop {
+            let v: Value = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+            if v["event"] == "delta" {
+                break;
+            }
+            assert!(v["event"] != "done" && v["event"] != "error", "{v}");
+        }
+        // it shows in the list, with its source and chat, and can be stopped
+        let list = ask_once(json!({"op": "activity"}));
+        assert_eq!(list["ok"], true);
+        let item = list["items"].as_array().unwrap().iter().find(|i| i["title"] == "stop-me-activity-test").unwrap_or_else(|| panic!("{list}")).clone();
+        assert_eq!((item["kind"].as_str(), item["source"].as_str(), item["can_stop"].as_bool()), (Some("answer"), Some("web"), Some(true)));
+        assert!(item["chat_id"].as_str().unwrap().starts_with('c'));
+        assert!(list["clients_seen"].as_array().unwrap().iter().any(|c| c["source"] == "web"));
+        // an unknown id is refused
+        assert_eq!(ask_once(json!({"op": "activity_stop", "id": 999_999_999u64}))["ok"], false);
+        let t0 = std::time::Instant::now();
+        let r = ask_once(json!({"op": "activity_stop", "id": item["id"]}));
+        assert_eq!(r["ok"], true, "{r}");
+        // the stream ends with `stopped`, then `done`
+        let mut rest = Vec::new();
+        for l in lines {
+            let v: Value = serde_json::from_str(&l.unwrap()).unwrap();
+            let kind = v["event"].as_str().unwrap().to_string();
+            if kind != "delta" {
+                rest.push(kind.clone());
+            }
+            if kind == "done" {
+                break;
+            }
+        }
+        assert_eq!(rest, ["stopped", "done"], "{rest:?}");
+        assert!(t0.elapsed() < Duration::from_secs(5), "stop took {:?}", t0.elapsed());
+        // and it is gone from the list
+        let list = ask_once(json!({"op": "activity"}));
+        assert!(list["items"].as_array().unwrap().iter().all(|i| i["title"] != "stop-me-activity-test"), "{list}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

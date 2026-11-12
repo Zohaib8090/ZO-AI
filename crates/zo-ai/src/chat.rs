@@ -767,7 +767,17 @@ impl Ctl {
         let mut history = std::mem::take(&mut *self.history.borrow_mut());
         let mut session = self.session.borrow().clone();
         let cancel = self.cancel.clone();
+        // shown in the tray and the Activity page for as long as the answer is being made; Stop there sets the same flag as the Stop button
+        let activity = zo_core::activity::start(
+            if cfg.is_none() { zo_core::activity::Kind::ClaudeCode } else { zo_core::activity::Kind::Answer },
+            &{ let t = self.title.borrow().clone(); if t.is_empty() { text.clone() } else { t } },
+            &sel.model,
+            "desktop",
+            Some(&self.id.borrow()),
+            Some(cancel.clone()),
+        );
         std::thread::spawn(move || {
+            let _activity = activity;
             let tx2 = tx.clone();
             let mut emit = |e: Event| {
                 let _ = tx2.send(Msg::Ev(e));

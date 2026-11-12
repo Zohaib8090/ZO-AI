@@ -7,7 +7,9 @@ pub fn shell(cmd: &str, timeout: u64) -> Result<String, String> {
     if cmd.trim().is_empty() {
         return Err("No command provided".into());
     }
-    exec::run(Command::new("sh").arg("-c").arg(cmd), Duration::from_secs(timeout.clamp(1, 600))).map(|o| o.text())
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _activity = crate::activity::start(crate::activity::Kind::Command, cmd, "Shell command", "desktop", None, Some(cancel.clone()));
+    exec::run_cancellable(Command::new("sh").arg("-c").arg(cmd), Duration::from_secs(timeout.clamp(1, 600)), &cancel).map(|o| o.text())
 }
 
 fn kb(line: &str) -> f64 {

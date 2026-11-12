@@ -72,6 +72,11 @@ pub fn scrub_server(cmd: &mut Command) -> &mut Command {
 }
 
 pub fn run(cmd: &mut Command, limit: Duration) -> Result<Out, String> {
+    run_cancellable(cmd, limit, &std::sync::atomic::AtomicBool::new(false))
+}
+
+/// Like `run`, and the program is killed as soon as `cancel` is set (the Stop button of the activity list).
+pub fn run_cancellable(cmd: &mut Command, limit: Duration, cancel: &std::sync::atomic::AtomicBool) -> Result<Out, String> {
     scrub(cmd);
     let mut child = cmd
         .stdin(Stdio::null())
@@ -86,6 +91,11 @@ pub fn run(cmd: &mut Command, limit: Duration) -> Result<Out, String> {
     let status = loop {
         match child.try_wait().map_err(|e| e.to_string())? {
             Some(s) => break s,
+            None if cancel.load(std::sync::atomic::Ordering::Relaxed) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Stopped.".into());
+            }
             None if start.elapsed() >= limit => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -109,6 +119,20 @@ pub fn simple(program: &str, args: &[&str]) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_command_is_killed_when_stop_is_pressed() {
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let c2 = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            c2.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let t0 = Instant::now();
+        let e = run_cancellable(Command::new("sleep").arg("20"), Duration::from_secs(30), &cancel).err().unwrap();
+        assert_eq!(e, "Stopped.");
+        assert!(t0.elapsed() < Duration::from_secs(3));
+    }
 
     #[test]
     fn programs_do_not_get_the_servers_secrets() {
