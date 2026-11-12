@@ -31,6 +31,7 @@ We do not use advertising, analytics or tracking cookies. The browser keeps your
 * **Render (hosting)**: the server runs at Render, in {{region}}. Your data passes through its memory and temporary disk.
 * **The AI provider you choose** (for example Anthropic, OpenAI, OpenRouter, Google): when you send a message, the server sends the conversation and your own API key to that provider so it can answer. That provider's own terms and privacy policy apply to that data. Most are in the United States.
 * **Web search and page fetching**: when the assistant looks something up, the search text or the address of the page leaves the server to the search or web site.
+* **Voice input (optional)**: if you press the microphone button, your browser's own speech recognition listens. In Chrome and Edge the audio is sent to the browser maker's speech service (Google or Microsoft), not to our server; Safari uses Apple's. Our server only ever receives the text you send. The browser asks for your permission first, and you can withdraw it in the browser's site settings. "Read answers aloud" uses the voices of your browser or system; some browsers use an online voice for that, and then the answer text goes to the browser maker.
 
 We do not sell data and do not share it with anyone else.
 
