@@ -253,6 +253,26 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             }
             Ok(json!({"message": crate::tools::call("zohara_ai_schedule", &a)?}))
         }
+        "machines" => Ok(json!({"machines": crate::store::machines::load().iter().map(|m| json!({
+            "name": m.name, "host": m.host, "user": m.user, "port": m.port, "note": m.note, "has_key": m.has_key(),
+        })).collect::<Vec<_>>()})),
+        "machine_add" => {
+            let m = crate::store::machines::Machine {
+                name: s(req, "name").trim().into(),
+                host: s(req, "host").trim().into(),
+                user: s(req, "user").trim().into(),
+                port: match req.get("port") {
+                    Some(Value::Number(n)) => n.as_u64().filter(|p| (1..=65535).contains(p)).ok_or("The port must be a number from 1 to 65535.")? as u16,
+                    Some(Value::String(t)) => crate::store::machines::parse_port(t)?,
+                    _ => 22,
+                },
+                note: s(req, "note").trim().into(),
+            };
+            crate::store::machines::add(m, req.get("key").and_then(Value::as_str))?;
+            Ok(json!({}))
+        }
+        "machine_remove" => crate::store::machines::remove(s(req, "name")).map(|_| json!({})),
+        "machine_test" => crate::tools::ssh::test(s(req, "name")).map(|m| json!({"message": m})),
         "projects" => Ok(json!({"text": crate::tools::call("zohara_ai_projects", &json!({}))?})),
         "project_create" => Ok(json!({"message": crate::tools::call("zohara_ai_create_project", &json!({"name": s(req, "name"), "goal": s(req, "goal")}))?})),
         "compact" => {

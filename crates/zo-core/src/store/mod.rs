@@ -3,6 +3,7 @@
 
 pub mod artifacts;
 pub mod chats;
+pub mod machines;
 pub mod memory;
 pub mod personality;
 pub mod projects;
