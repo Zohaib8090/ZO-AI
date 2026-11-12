@@ -240,12 +240,14 @@ select optgroup{background:var(--card);color:var(--accent);font-size:11px;font-w
 .ctx-c0{background:#5FD4D4}.ctx-c1{background:#4C9AFF}.ctx-c2{background:#F2B84B}.ctx-c3{background:#8E44AD}.ctx-free{background:var(--card2)}
 .ctx-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line4)}.ctx-row:last-child{border-bottom:none}
 .ctx-dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px;flex:none}
-.term-box{background:#0c0e12;border:1px solid var(--line2);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;margin-top:12px;height:340px;box-shadow:inset 0 2px 10px rgba(0,0,0,.4)}
-.term-head{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:#14171f;border-bottom:1px solid var(--line);font-size:12px;color:var(--dim)}
-.term-log{flex:1;padding:12px 14px;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;color:#d0d7de;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
-.term-prompt-wrap{display:flex;align-items:center;background:#14171f;border-top:1px solid var(--line);padding:6px 12px;gap:8px}
-.term-prompt-wrap span{color:var(--accent);font-family:monospace;font-weight:bold}
-.term-input{flex:1;background:transparent;border:none;color:#ECECEC;font-family:monospace;font-size:13px;outline:none}
+.term-box{background:var(--input);border:1px solid var(--line2);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;height:360px}
+.term-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--card2);border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim)}
+.term-head .t-target{display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text)}
+.term-log{flex:1;padding:12px 14px;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:13px;line-height:1.5;color:var(--text);overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+.term-prompt-wrap{display:flex;align-items:center;background:var(--card2);border-top:1px solid var(--line);padding:8px 12px;gap:10px}
+.term-prompt-wrap .prompt-sym{color:var(--accent);font-family:monospace;font-weight:700;font-size:14px;user-select:none}
+.term-input{flex:1;background:transparent;border:none;color:var(--text);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:13px;outline:none}
+.term-input::placeholder{color:var(--dimmer)}
 .msg-actions button[data-retry]:hover{color:var(--accent)}
 .retry-btn{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 11px;margin-top:6px;border-radius:7px}
 .retry-btn svg{width:13px;height:13px}
@@ -1522,13 +1524,28 @@ async function contextSheet() {
 /* ---------- interactive terminal sheet ---------- */
 function terminalSheet() {
   const dsk = onDesktop();
+  const dev = curDev();
+  const targetLabel = dsk ? (dev ? devName(dev) : "Connected computer") : "Cloud environment";
+
   const wrap = document.createElement("div");
-  wrap.className = "term-box";
-  wrap.style.marginTop = "0";
-  wrap.style.height = "380px";
-  wrap.innerHTML = `<div class="term-head"><span>Terminal session ${dsk ? "· " + esc(curDev() ? devName(curDev()) : "Your computer") : "· Cloud session"}</span><button class="btn" id="termClr" style="padding:2px 8px;font-size:11px">Clear</button></div>`
-    + `<div class="term-log" id="termLog">ZO-AI Interactive Terminal\nType a shell command or instruction below.\n${dsk ? "Connected to " + esc(curDev() ? devName(curDev()) : "your computer") + " via desktop link." : "Operating in cloud environment."}\n</div>`
-    + `<div class="term-prompt-wrap"><span>$</span><input type="text" class="term-input" id="termIn" placeholder="Type a shell command (e.g. ls, df -h, pwd, uname)..." autocomplete="off"><button class="btn primary" id="termRun" style="padding:4px 12px;font-size:12px">Run</button></div>`;
+  wrap.innerHTML = `
+    <div class="term-box">
+      <div class="term-head">
+        <div class="t-target">
+          <span class="pdot" style="background:${dsk ? '#5FD4D4' : '#4C9AFF'};flex:none"></span>
+          <span>${esc(targetLabel)}</span>
+        </div>
+        <button class="btn" id="termClr" style="padding:2px 10px;font-size:12px">Clear</button>
+      </div>
+      <div class="term-log" id="termLog">ZO-AI Terminal\nConnected to ${esc(targetLabel)}.\nType a shell command below (e.g. ls, pwd, df -h, uname -a).\n\n</div>
+      <div class="term-prompt-wrap">
+        <span class="prompt-sym">$</span>
+        <input type="text" class="term-input" id="termIn" placeholder="Type a shell command..." autocomplete="off" spellcheck="false">
+        <button class="btn primary" id="termRun" style="padding:6px 14px;font-size:12px">Run</button>
+      </div>
+    </div>
+    <div class="field-hint" style="margin-top:8px">${dsk ? "Commands execute live on your connected computer." : "Commands execute live in your cloud session."}</div>
+  `;
 
   const sh = sheet("Terminal", wrap, [btn("Close", "", () => sh.close())], true);
   const tLog = wrap.querySelector("#termLog");
@@ -1536,41 +1553,50 @@ function terminalSheet() {
   const tRun = wrap.querySelector("#termRun");
   wrap.querySelector("#termClr").onclick = () => { tLog.textContent = ""; };
 
+  let history = [], histIdx = -1;
+
   const runCmd = async () => {
     const cmd = tIn.value.trim(); if (!cmd) return;
+    history.push(cmd);
+    histIdx = history.length;
     tIn.value = "";
-    tLog.textContent += `\n$ ${cmd}\nRunning...\n`;
+    tLog.textContent += `$ ${cmd}\n`;
     tLog.scrollTop = tLog.scrollHeight;
     try {
-      const res = await fetch("/api/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() },
-        body: JSON.stringify({ text: "Run this command in the shell and return its exact output directly:\n" + cmd, chat: chatId, ...(dsk ? { target: "desktop", device: runOn } : {}) })
-      });
-      if (!res.ok) throw new Error("Terminal error " + res.status);
-      const rd = res.body.getReader(), dec = new TextDecoder();
-      let buf = "", acc = "";
-      for (;;) {
-        const { value, done } = await rd.read(); if (done) break;
-        buf += dec.decode(value, { stream: true });
-        let i; while ((i = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue;
-          try {
-            const ev = JSON.parse(line);
-            if (ev.event === "delta") { acc += ev.text; }
-            else if (ev.event === "tool_done" && ev.output) { acc += "\n" + ev.output; }
-            else if (ev.event === "error") { acc += "\nError: " + (ev.message || ev.error); }
-          } catch {}
-        }
+      let r;
+      if (onDesktop()) {
+        r = await dop("terminal_run", { cmd });
+      } else {
+        r = await op("terminal_run", { cmd });
       }
-      tLog.textContent += (acc.trim() || "[Command finished]") + "\n";
+      const out = (r && typeof r.output === "string") ? r.output : (r && r.error ? r.error : (r && r.ok === false ? r.error : JSON.stringify(r)));
+      tLog.textContent += (out ? out.trimEnd() : "") + "\n\n";
     } catch (err) {
-      tLog.textContent += "Error: " + err.message + "\n";
+      tLog.textContent += "Error: " + err.message + "\n\n";
     }
     tLog.scrollTop = tLog.scrollHeight;
   };
+
   tRun.onclick = runCmd;
-  tIn.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); runCmd(); } };
+  tIn.onkeydown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      runCmd();
+    } else if (e.key === "ArrowUp") {
+      if (histIdx > 0) {
+        histIdx--;
+        tIn.value = history[histIdx] || "";
+      }
+    } else if (e.key === "ArrowDown") {
+      if (histIdx < history.length - 1) {
+        histIdx++;
+        tIn.value = history[histIdx] || "";
+      } else {
+        histIdx = history.length;
+        tIn.value = "";
+      }
+    }
+  };
   setTimeout(() => tIn.focus(), 60);
 }
 

@@ -59,7 +59,7 @@ pub const PENDING_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_TEXT_CHARS: usize = 100_000;
 
 /// The settings questions the web page may ask a desktop (everything else is refused here, and again on the desktop).
-pub const OPS: [&str; 7] = ["status", "providers", "profiles", "profile_use", "models", "select", "mode"];
+pub const OPS: [&str; 8] = ["status", "providers", "profiles", "profile_use", "models", "select", "mode", "terminal_run"];
 
 pub const OFFLINE_MESSAGE: &str = "Your computer is not reachable. Start ZO-AI on your computer (it can run in the tray) and turn on Settings > Account and sync > Control this computer from the web.";
 
@@ -741,6 +741,7 @@ pub fn clean_inner(inner: &Value) -> Result<Value, &'static str> {
         }
     };
     match op {
+        "terminal_run" => put("cmd", 4000),
         "profile_use" => put("id", 100),
         "models" => put("provider", 100),
         "select" => {

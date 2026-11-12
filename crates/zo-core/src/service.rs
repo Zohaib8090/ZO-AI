@@ -249,6 +249,20 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
             }
             Ok(json!({"mode": Mode::load().name()}))
         }
+        "terminal_run" => {
+            let cmd = s(req, "cmd");
+            if cmd.trim().is_empty() {
+                return Err("No command provided.".into());
+            }
+            if tenant::is_restricted() {
+                return Err("Terminal command execution on the cloud server requires an admin account. Switch to your linked computer under the chat box to run commands there.".into());
+            }
+            let out = match crate::tools::call("zohara_shell", &json!({"cmd": cmd, "timeout": 60})) {
+                Ok(s) => s,
+                Err(e) => e,
+            };
+            Ok(json!({"output": out}))
+        }
         "providers" => {
             let sel = Selection::load();
             Ok(json!({
