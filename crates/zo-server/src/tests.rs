@@ -894,3 +894,186 @@ fn the_approval_page_is_the_web_app_and_keeps_its_csp() {
     let with = ureq::get(&format!("{}/device?code=ABCD-EFGH", r.base)).call().unwrap().into_string().unwrap();
     assert_eq!(with, body);
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// the whole sign-in and sync, end to end: a real desktop client (zo-core's `syncctl` example, its own process with its own
+// sandbox, no environment of a server) against this server over real HTTP on 127.0.0.1.
+
+mod end_to_end {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Stdio};
+
+    fn syncctl() -> PathBuf {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let out = Command::new(env!("CARGO")).args(["build", "-q", "-p", "zo-core", "--example", "syncctl"]).current_dir(&root).output().expect("cargo runs");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let target = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| root.join("target"));
+        target.join("debug/examples/syncctl")
+    }
+
+    /// A device's own computer: its own folders and key store, and the server it talks to.
+    struct Device {
+        dir: PathBuf,
+        url: String,
+        bin: PathBuf,
+    }
+
+    impl Device {
+        fn new(name: &str, url: &str, bin: &Path) -> Device {
+            let dir = PathBuf::from(format!("/tmp/claude-1000/e2e{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            for d in ["home", "data", "config", "rt"] {
+                std::fs::create_dir_all(dir.join(d)).unwrap();
+            }
+            Device { dir, url: url.into(), bin: bin.into() }
+        }
+        fn cmd(&self, args: &[&str]) -> Command {
+            let mut c = Command::new(&self.bin);
+            c.env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("HOME", self.dir.join("home"))
+                .env("XDG_DATA_HOME", self.dir.join("data"))
+                .env("XDG_CONFIG_HOME", self.dir.join("config"))
+                .env("XDG_RUNTIME_DIR", self.dir.join("rt"))
+                .env("ZO_AI_KEYS_FILE", self.dir.join("keys.json"))
+                .env("ZO_SERVER_URL", &self.url)
+                .args(args);
+            c
+        }
+        fn run(&self, args: &[&str]) -> String {
+            let o = self.cmd(args).output().expect("syncctl runs");
+            assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        }
+        /// Starts the browser sign-in; returns the process and the code it shows.
+        fn login(&self, kind: &str, name: &str) -> (Child, BufReader<std::process::ChildStdout>, String) {
+            let mut child = self.cmd(&["login", kind, name]).stdout(Stdio::piped()).spawn().expect("spawn");
+            let mut out = BufReader::new(child.stdout.take().unwrap());
+            let mut line = String::new();
+            out.read_line(&mut line).unwrap();
+            let code = line.trim().strip_prefix("CODE ").unwrap_or_else(|| panic!("no code: {line:?}")).to_string();
+            (child, out, code)
+        }
+        /// The device credential this computer stores (only used to call the server as the device does; never printed).
+        fn credential(&self) -> Option<String> {
+            let t = std::fs::read_to_string(self.dir.join("keys.json")).ok()?;
+            let v: Value = serde_json::from_str(&t).ok()?;
+            v.as_object()?.values().filter_map(Value::as_str).find(|s| s.starts_with("zd_")).map(str::to_string)
+        }
+    }
+
+    fn finish(mut child: Child, mut out: BufReader<std::process::ChildStdout>) -> String {
+        let mut rest = String::new();
+        let mut l = String::new();
+        while out.read_line(&mut l).unwrap_or(0) > 0 {
+            rest.push_str(&l);
+            l.clear();
+        }
+        child.wait().unwrap();
+        rest.trim().to_string()
+    }
+
+    fn web_ids(r: &Rig, tok: &str, op: &str, field: &str) -> Vec<String> {
+        let a = call(r, tok, "/api/op", json!({"op": op}));
+        assert_eq!(a.status, 200, "{op}: {:?}", a.body);
+        a.body[field].as_array().unwrap_or(&vec![]).iter().map(|x| x["id"].as_str().unwrap_or("").to_string()).collect()
+    }
+
+    #[test]
+    fn sign_in_on_web_and_desktop_then_chats_and_memory_match_and_sign_out_ends_it() {
+        let bin = syncctl();
+        let (a_uid, b_uid) = (uniq("e2e-a"), uniq("e2e-b"));
+        let r = rig(&[("tok-a", &a_uid, "a@x.test"), ("tok-b", &b_uid, "b@x.test")], "owner@x.test", 200, 600);
+        let desk = Device::new("desk", &r.base, &bin);
+
+        // nothing happens without a sign-in: the desktop works on its own and sends nothing
+        assert_eq!(desk.run(&["whoami"]), "not signed in");
+        desk.run(&["chat", "c-desk", "Planning the trip"]);
+        desk.run(&["note", "Likes tea without sugar"]);
+        println!("desktop before sign-in: {}", desk.run(&["syncnow"]));
+        assert!(call(&r, "tok-a", "/api/op", json!({"op": "chats"})).body.to_string().contains("[]"), "the server has nothing of the desktop yet");
+
+        // the desktop starts the browser sign-in and shows a code; the web page is not involved yet
+        let (child, out, code) = desk.login("desktop", "Test desktop");
+        println!("desktop shows the code {code}");
+        // person A, signed in on the web, types the code: sees what is asked, approves
+        let l = call(&r, "tok-a", "/api/auth/device_lookup", json!({"user_code": code}));
+        assert_eq!((l.status, l.body["name"].clone(), l.body["kind"].clone()), (200, json!("Test desktop"), json!("desktop")), "{:?}", l.body);
+        // person B cannot approve it into A's account by guessing: B's approval would make it B's, so B must not look it up wrongly
+        let ap = call(&r, "tok-a", "/api/auth/device_approve", json!({"user_code": code, "approve": true}));
+        assert_eq!(ap.status, 200, "{:?}", ap.body);
+        let end = finish(child, out);
+        println!("desktop sign-in result: {end}");
+        assert_eq!(end, "LOGGED_IN a@x.test");
+        assert_eq!(desk.run(&["whoami"]), "a@x.test");
+        let cred = desk.credential().expect("the credential is in the device's key store");
+        // the person never sees it: not on any screen output of the client, not in sync.json
+        let cfg = std::fs::read_to_string(desk.dir.join("config/zo-ai/sync.json")).unwrap_or_default();
+        assert!(!cfg.contains(&cred) && !end.contains(&cred));
+
+        // the sync round pushes the chat and the note
+        let s = desk.run(&["syncnow"]);
+        println!("desktop sync: {s}");
+        assert!(s.contains("pushed 2"), "{s}");
+        assert!(web_ids(&r, "tok-a", "chats", "chats").contains(&"c-desk".to_string()), "A sees the chat on the web");
+        let notes = call(&r, "tok-a", "/api/op", json!({"op": "memory"}));
+        let item = notes.body["items"].as_array().unwrap().iter().find(|i| i["text"].as_str().unwrap_or("").contains("tea without sugar")).expect("A sees the note on the web").clone();
+        println!("web sees: chat c-desk, note \"{}\"", item["text"]);
+
+        // A edits the note on the web (a moment later); the desktop pulls it
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let up = call(&r, "tok-a", "/api/op", json!({"op": "memory_update", "id": item["id"], "text": "Likes tea with honey"}));
+        assert_eq!(up.status, 200, "{:?}", up.body);
+        let s = desk.run(&["syncnow"]);
+        println!("desktop sync after the web edit: {s}");
+        assert!(s.contains("pulled 1"), "{s}");
+        let list = desk.run(&["list"]);
+        println!("desktop now has:\n{list}");
+        assert!(list.contains("Likes tea with honey") && !list.contains("without sugar"));
+
+        // person B sees nothing of A, by any door
+        assert!(!web_ids(&r, "tok-b", "chats", "chats").contains(&"c-desk".to_string()));
+        assert!(!call(&r, "tok-b", "/api/op", json!({"op": "memory"})).body.to_string().contains("honey"));
+        let bdev = make_device(&r, "tok-b", "B's terminal", "cli").0;
+        assert!(!call(&r, &bdev, "/api/op", json!({"op": "chats"})).body.to_string().contains("c-desk"));
+        assert!(!call(&r, &bdev, "/api/sync/manifest", json!({})).body.to_string().contains("c-desk"));
+
+        // the terminal: `zo login`-style sign-in with kind cli (scope full) reaches A's data through /api/op, and only A's
+        let term = Device::new("term", &r.base, &bin);
+        let (child, out, code) = term.login("cli", "Test terminal");
+        assert_eq!(call(&r, "tok-a", "/api/auth/device_approve", json!({"user_code": code, "approve": true})).status, 200);
+        assert_eq!(finish(child, out), "LOGGED_IN a@x.test");
+        let tcred = term.credential().unwrap();
+        let ch = call(&r, &tcred, "/api/op", json!({"op": "chats"}));
+        assert_eq!(ch.status, 200);
+        assert!(ch.body.to_string().contains("c-desk"));
+        assert_eq!(call(&r, &tcred, "/api/account/whoami", json!({})).status, 403, "a device cannot manage the account");
+        // and the desktop's own credential is sync only
+        assert_eq!(call(&r, &cred, "/api/op", json!({"op": "chats"})).status, 403);
+
+        // A's list shows both devices; A revokes the terminal from the Account page: its calls get 401
+        let list = call(&r, "tok-a", "/api/account/devices_list", json!({}));
+        let devs = list.body["devices"].as_array().unwrap();
+        println!("A's signed-in devices: {:?}", devs.iter().map(|d| format!("{} ({})", d["name"], d["kind"])).collect::<Vec<_>>());
+        let tid = devs.iter().find(|d| d["name"] == "Test terminal").unwrap()["id"].clone();
+        assert_eq!(call(&r, "tok-a", "/api/account/device_revoke", json!({"id": tid})).status, 200);
+        assert_eq!(call(&r, &tcred, "/api/op", json!({"op": "chats"})).status, 401);
+        assert_eq!(call(&r, &cred, "/api/sync/manifest", json!({})).status, 200, "the desktop is untouched");
+        // B cannot revoke A's device
+        assert_ne!(call(&r, "tok-b", "/api/account/device_revoke", json!({"id": devs[0]["id"]})).status, 200);
+
+        // sign out from the desktop: the server revokes this device's credential, the data stays on the computer
+        println!("desktop sign out: {}", desk.run(&["signout"]));
+        assert_eq!(call(&r, &cred, "/api/sync/manifest", json!({})).status, 401, "the credential is dead");
+        assert_eq!(desk.run(&["whoami"]), "not signed in");
+        assert!(desk.run(&["list"]).contains("c-desk"), "chats stay on the computer");
+        assert!(desk.credential().is_none(), "the key store is empty");
+        assert!(desk.run(&["syncnow"]).starts_with("sync failed"), "no sign-in, no sync");
+        // A's data is still on the server
+        assert!(web_ids(&r, "tok-a", "chats", "chats").contains(&"c-desk".to_string()));
+        let left = call(&r, "tok-a", "/api/account/devices_list", json!({}));
+        assert!(left.body["devices"].as_array().unwrap().is_empty(), "{:?}", left.body);
+    }
+}

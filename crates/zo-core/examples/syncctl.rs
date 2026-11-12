@@ -6,6 +6,12 @@
 //!   syncctl forget ID          forget a note
 //!   syncctl list               what is stored here
 //!   syncctl sync URL           one sync round with ZOAI_KEY_SYNC_TOKEN as the access token
+//!
+//! The desktop's sign-in, as the integration test drives it (ZO_SERVER_URL says which server; ZO_AI_KEYS_FILE is the key store):
+//!   syncctl login KIND NAME    the browser device flow: prints "CODE <user code>", waits for the approval, saves the sign-in
+//!   syncctl syncnow            one round with the saved sign-in (what the background loop does)
+//!   syncctl signout            tells the server to revoke this device and forgets the sign-in
+//!   syncctl whoami             the signed-in account, or "not signed in"
 use zo_core::store::{chats, memory};
 
 fn main() {
@@ -35,6 +41,24 @@ fn main() {
                 Err(e) => println!("sync failed: {e}"),
             }
         }
-        _ => eprintln!("usage: syncctl chat|note|rmchat|forget|list|sync"),
+        "login" => {
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let r = zo_core::login::run_device_flow(&arg(2), &arg(1), |code, _url| {
+                println!("CODE {code}");
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+            }, &cancel);
+            match r.and_then(|l| zo_core::login::save_login(&l).map(|_| l)) {
+                Ok(l) => println!("LOGGED_IN {}", l.email),
+                Err(e) => println!("LOGIN_FAILED {e}"),
+            }
+        }
+        "syncnow" => match zo_core::sync::sync_now() {
+            Ok((pulled, pushed, deleted)) => println!("synced: pulled {pulled}, pushed {pushed}, deleted here {deleted}"),
+            Err(e) => println!("sync failed: {e}"),
+        },
+        "signout" => println!("{:?}", zo_core::login::sign_out()),
+        "whoami" => println!("{}", zo_core::login::signed_in().unwrap_or_else(|| "not signed in".into())),
+        _ => eprintln!("usage: syncctl chat|note|rmchat|forget|list|sync|login|syncnow|signout|whoami"),
     }
 }
