@@ -33,10 +33,27 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:8px}
 
 /* sign in */
-#login{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center}
-#login .hero-title{font-size:32px;display:flex;align-items:center;gap:12px}
-#login p{color:var(--dim);max-width:340px;margin:0}
+#login,#verify,#device{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center}
+#login .hero-title,#verify .hero-title,#device .hero-title{font-size:32px;display:flex;align-items:center;gap:12px}
+#login p,#verify p{color:var(--dim);max-width:340px;margin:0}
 #err{color:var(--danger);min-height:1.4em;font-size:13px;max-width:420px}
+#verify,#device{overflow:auto}
+#login{overflow:auto}
+.lcard{width:100%;max-width:340px;display:flex;flex-direction:column;gap:12px;text-align:left}
+.lcard .page-btn{width:100%}
+.lsep{display:flex;align-items:center;gap:10px;color:var(--dimmer);font-size:12px;width:100%;max-width:340px}.lsep:before,.lsep:after{content:"";flex:1;height:1px;background:var(--line2)}
+.ltabs{display:flex;gap:4px;background:var(--input);border-radius:10px;padding:3px}
+.ltabs button{flex:1;padding:7px 8px;border-radius:8px;font-size:13px;color:var(--dim)}
+.ltabs button[aria-selected=true]{background:var(--card2);color:var(--text);font-weight:500}
+.pwrap{position:relative}.pwrap .field-input{padding-right:62px}
+.pwrap .pwshow{position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--dim);padding:5px 8px;border-radius:7px}.pwshow:hover{background:var(--hov)}
+.linkbtn{color:var(--check);font-size:13px;padding:2px 0}.linkbtn:hover{text-decoration:underline}
+.lnote{font-size:13px;color:var(--text2);min-height:1.2em}.lnote.bad{color:var(--danger)}
+.dbox{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:8px 18px 18px;max-width:440px;width:100%;text-align:left}
+.dbox .page-btn{width:100%}
+.dcode{font-family:ui-monospace,"DejaVu Sans Mono",monospace;font-size:22px;letter-spacing:.14em;text-align:center;text-transform:uppercase}
+.dfacts{margin:10px 0 4px}.dfacts div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line4);font-size:13.5px}.dfacts span:first-child{color:var(--dim)}.dfacts span:last-child{text-align:right;word-break:break-word}
+.dacts{display:flex;gap:8px;margin-top:14px}.dacts .btn{flex:1;padding:10px 12px}
 
 #login .legal,#consent .legal{font-size:12.5px;color:var(--dimmer);max-width:340px}
 #login .legal a,#consent a,.web-note a{color:var(--check)}
@@ -196,10 +213,44 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 <body>
 <div id="login" class="hide">
   <div class="hero-title"><svg class="mark" id="loginMark" viewBox="0 0 120 120"></svg>ZO-AI</div>
-  <p>Your AI, from any browser. Sign in with your Google account and bring your own API key.</p>
-  <button class="page-btn primary" id="signin">Sign in with Google</button>
-  <div id="err"></div>
+  <p id="lintro">Your AI, from any browser. Sign in to continue and bring your own API key.</p>
+  <div class="lcard">
+    <button class="page-btn primary" id="signin" type="button">Sign in with Google</button>
+  </div>
+  <div class="lsep" id="lsep">or use your e-mail</div>
+  <div class="lcard" id="lmail">
+    <div class="ltabs" role="tablist" id="ltabs"><button type="button" role="tab" data-lm="in" aria-selected="true">Sign in</button><button type="button" role="tab" data-lm="up" aria-selected="false">Create account</button></div>
+    <form id="lform" novalidate>
+      <div class="field-label" style="margin-top:2px"><label for="lemail">E-mail</label></div>
+      <input class="field-input" id="lemail" type="email" autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false" placeholder="you@example.com">
+      <div id="lpw">
+        <div class="field-label"><label for="lpass">Password</label></div>
+        <div class="pwrap"><input class="field-input" id="lpass" type="password" autocomplete="current-password" placeholder="Password"><button type="button" class="pwshow" id="lshow" aria-controls="lpass" aria-pressed="false">Show</button></div>
+        <div class="field-hint" id="lhint" hidden>Use at least 6 characters.</div>
+      </div>
+      <button class="page-btn primary" id="lgo" type="submit" style="margin-top:14px;width:100%">Sign in</button>
+    </form>
+    <div style="display:flex;justify-content:space-between;gap:8px"><button type="button" class="linkbtn" id="lforgot">Forgot password?</button><button type="button" class="linkbtn hide" id="lback">Back to sign in</button></div>
+    <div class="lnote" id="lnote" role="status" aria-live="polite"></div>
+  </div>
+  <div id="err" role="alert"></div>
   <div class="legal">By signing in you will be asked to agree to the <a href="/terms" target="_blank" rel="noopener">Terms</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy notice</a>.</div>
+</div>
+
+<div id="verify" class="hide">
+  <div class="hero-title"><svg class="mark" id="verifyMark" viewBox="0 0 120 120"></svg>Check your inbox</div>
+  <p id="vtext"></p>
+  <div class="lcard">
+    <div class="lnote" id="vmsg" role="status" aria-live="polite"></div>
+    <button class="page-btn primary" id="vdone" type="button">I verified</button>
+    <button class="page-btn" id="vresend" type="button">Resend verification e-mail</button>
+    <button class="linkbtn" id="vout" type="button" style="text-align:center">Use another account</button>
+  </div>
+</div>
+
+<div id="device" class="hide">
+  <div class="hero-title"><svg class="mark" id="deviceMark" viewBox="0 0 120 120"></svg>Sign in a device</div>
+  <div class="dbox" id="dbox"></div>
 </div>
 
 <div id="consent" class="hide">
@@ -238,7 +289,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 const fb = initializeApp({ apiKey: "AIzaSyBU_nnDL5JKXwWHNTRMKYK2RCvNGXv4PaQ", authDomain: "zo-ai-144.firebaseapp.com", projectId: "zo-ai-144", appId: "1:400907264776:web:d619df222014561add02bd" });
 const auth = getAuth(fb);
@@ -280,7 +331,7 @@ async function api(path, body) {
   try { r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify(body) }); }
   catch { netBanner("offline"); throw new Error("Cannot reach the server."); }
   let j = {}; try { j = await r.json(); } catch {}
-  if (r.status === 403 && j.terms_required) { showConsent(curUser, j.version); const e = new Error(j.error || "Accept the terms first."); e.status = 403; throw e; }
+  if (r.status === 403 && j.terms_required) { showConsent(curUser, j.version); const e = new Error(j.error || "Accept the terms first."); e.status = 403; e.terms = true; throw e; }
   if (r.status === 401) { netBanner("unauthorized"); const e = new Error(j.error || "Sign in again."); e.status = 401; throw e; }
   netBanner(null);
   if (r.status === 429) { const m = limitMsg(r); toast(m); const e = new Error(m); e.status = 429; throw e; }
@@ -594,7 +645,7 @@ async function showScheduled() {
 }
 
 /* ---------- settings: a list of pages, each with a Back button ---------- */
-const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How ZO-AI talks to you."], ["memory", "Memory", "What ZO-AI remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."], ["apps", "Connected apps", "Tools ZO-AI can use (MCP servers)."], ["machines", "Machines", "Computers ZO-AI can reach over SSH."], ["sync", "Desktop sync", "Share chats and memory with the desktop app."], ["account", "Account", "Your data, devices, export and delete."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
+const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How ZO-AI talks to you."], ["memory", "Memory", "What ZO-AI remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."], ["apps", "Connected apps", "Tools ZO-AI can use (MCP servers)."], ["machines", "Machines", "Computers ZO-AI can reach over SSH."], ["sync", "Desktop sync", "Share chats and memory with the desktop app."], ["account", "Account", "Your data, signed-in devices, export and delete."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
 const pages = () => PAGES.filter(p => !(restricted() && ADMIN_PAGES.includes(p[0])));
 function row(title, sub, control) { const r = document.createElement("div"); r.className = "settings-row"; r.innerHTML = `<div class="col"><div class="pc-name2"></div>${sub ? '<div class="pc-meta2"></div>' : ""}</div>`; r.querySelector(".pc-name2").textContent = title; if (sub) r.querySelector(".pc-meta2").textContent = sub; if (control) r.appendChild(control); return r; }
 function cardOf(...rows) { const c = document.createElement("div"); c.className = "settings-card"; rows.forEach(r => c.appendChild(r)); return c; }
@@ -716,8 +767,8 @@ async function pageSync(b) {
   b.appendChild(head("Desktop sync"));
   b.appendChild(cardOf(
     row("Stored for you", `${n("chats")} chat${n("chats") == 1 ? "" : "s"}, ${n("memory")} memory item${n("memory") == 1 ? "" : "s"} and ${n("personalities")} personalit${n("personalities") == 1 ? "y" : "ies"}. Last change: ${ago(newest)}.`),
-    row("Turn it on in the desktop app", "First make a device token in Settings > Account (choose Sync a desktop app). Then in the desktop app open Settings > Web sync, paste this server's address and the device token, and turn sync on. It keeps chats, memory and personalities the same here and on the computer, and chats made on the computer show up in this page's list within a minute."),
-    row("Make a device token", "Tokens are made and revoked on the Account page.", btn("Open Account", "primary", () => settingsPage("account"))),
+    row("Turn it on in the desktop app", "Sign in on the desktop app to sync. Nothing is synced until you do. Use the same account you use here: Google, or the same e-mail and password. Then chats, memory and personalities are the same here and on the computer, and chats made on the computer show up in this page's list within a minute."),
+    row("Signed-in devices", "See which computers are signed in, and sign one out, on the Account page.", btn("Open Account", "primary", () => settingsPage("account"))),
   ));
   if (st && st.enabled) b.appendChild(cardOf(row("This server also syncs out", `To ${st.url}. Last good sync: ${ago(st.last_ok)}.${st.error ? " Problem: " + st.error : ""}`)));
 }
@@ -736,32 +787,17 @@ async function pageAccount(b) {
     row("Data stored for you", human(w.data_bytes) + (w.limits && (w.limits.data_bytes || w.limits.max_data_bytes) ? " of " + human(w.limits.data_bytes || w.limits.max_data_bytes) : "") + ". Chats, memory and personalities."),
     ...(limText ? [row("Limits", limText)] : []),
     row("Legal", "What is stored, where, and who can see it.", links)));
-  b.appendChild(head("Devices"));
-  const mk = btn("Create device token…", "primary", () => deviceSheet(b));
-  const devs = listOf(dv).map(d => { const rv = btn("Revoke", "danger", () => confirmBox("Revoke " + (d.name || "this device") + "?", "The device can no longer sign in with its token. Chats already synced stay.", "Revoke", async () => { try { await acctOp("device_revoke", { id: d.id }); } catch (e) { toast(e.message); } pageAccount(b); }));
-    return row(d.name || "Device", (d.scope === "full" ? "Terminal client (full access)" : "Desktop sync") + " · made " + (d.created ? when(d.created > 1e12 ? d.created : d.created * 1000) : "?") + " · last used " + (d.last_used ? ago(d.last_used > 1e12 ? d.last_used : d.last_used * 1000) : "never"), rv); });
-  b.appendChild(cardOf(...devs, row(devs.length ? "Add another device" : "No devices yet", "A device token lets the desktop app sync your chats, or the zo terminal client talk to your account. It replaces any shared password.", mk)));
+  b.appendChild(head("Signed-in devices"));
+  const KIND = { desktop: "Desktop app", cli: "Terminal" };
+  const secs = t => t ? (t > 1e12 ? t : t * 1000) : 0;
+  const devs = listOf(dv).map(d => { const kind = KIND[d.kind] || (d.scope === "full" ? "Terminal" : "Desktop app"); const nm = d.name || kind;
+    const so = btn("Sign out", "danger", () => confirmBox("Sign out " + nm + "?", "It stops syncing and has to sign in again. Chats already synced stay.", "Sign out", async () => { try { await acctOp("device_revoke", { id: d.id }); } catch (e) { toast(e.message); } pageAccount(b); }));
+    return row(nm, kind + " · last used " + (d.last_used ? ago(secs(d.last_used)) : "never") + (d.created ? " · signed in " + when(secs(d.created)) : ""), so); });
+  b.appendChild(cardOf(...devs, row(devs.length ? "Sign in on another device" : "No signed-in devices", "Sign in on the desktop app to sync. Nothing is synced until you do. This browser is not listed; you sign out of it with the button at the top.")));
   b.appendChild(head("Your data"));
   const ex = btn("Export my data", "", async () => { ex.disabled = true; try { const j = await acctOp("export"); delete j.ok; const u = URL.createObjectURL(new Blob([JSON.stringify(j, null, 2)], { type: "application/json" })); const a = document.createElement("a"); a.href = u; a.download = "zo-ai-export-" + new Date().toISOString().slice(0, 10) + ".json"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); toast("Export downloaded"); } catch (e) { toast(e.message); } ex.disabled = false; });
   const del = btn("Delete my account and all data…", "danger", () => deleteSheet());
   b.appendChild(cardOf(row("Export my data", "A JSON file with your chats, memory and personalities. API keys are never included.", ex), row("Delete my account and all data", "Removes every chat, memory, file, device and your saved API keys from the server. This cannot be undone.", del)));
-}
-function deviceSheet(b) {
-  const w = document.createElement("div");
-  w.innerHTML = '<div class="field-label">Name</div><input class="field-input" id="dn" maxlength="60" placeholder="My laptop"><div class="field-label">What is it for?</div><select id="ds"><option value="sync">Sync a desktop app</option><option value="full">Terminal client (full access)</option></select><div class="field-hint">Sync can only read and write your chats and memory. Full access can also talk to the assistant on your behalf.</div><div class="field-hint" id="de" style="color:var(--danger)"></div>';
-  const go = btn("Create", "primary", async () => { go.disabled = true; w.querySelector("#de").textContent = "";
-    try { const r = await acctOp("device_create", { name: w.querySelector("#dn").value.trim() || "Device", scope: w.querySelector("#ds").value }); sh.close(); tokenSheet(r.token, b); }
-    catch (e) { w.querySelector("#de").textContent = e.message; go.disabled = false; } });
-  const sh = sheet("Create a device token", w, [btn("Cancel", "", () => sh.close()), go]);
-}
-function tokenSheet(tok, b) {
-  const w = document.createElement("div");
-  w.innerHTML = '<div class="warn"><b>Copy this token now.</b> It is shown only once and cannot be shown again. Anyone who has it can use your account from that device. If you lose it, revoke it and make a new one.</div><div class="field-label">Your token</div><div class="field-input tokbox" id="tk"></div>';
-  w.querySelector("#tk").textContent = tok || "";
-  const cp = btn("Copy", "primary", async () => { try { await navigator.clipboard.writeText(tok); cp.textContent = "Copied"; } catch { const r = document.createRange(); r.selectNodeContents(w.querySelector("#tk")); getSelection().removeAllRanges(); getSelection().addRange(r); toast("Press Ctrl+C to copy"); } });
-  const done = btn("I saved it", "", () => { sh.close(); pageAccount(b); });
-  const sh = sheet("Your device token", w, [cp, done]);
-  sh.el.onmousedown = null; sh.el.querySelector("[data-x]").onclick = () => { sh.close(); pageAccount(b); };
 }
 function deleteSheet() {
   const w = document.createElement("div");
@@ -793,11 +829,81 @@ $("hideSide").onclick = () => { if (innerWidth <= 860) $("side").classList.remov
 $("showSide").onclick = () => { if (innerWidth <= 860) $("side").classList.toggle("open"); else $("side").classList.remove("closed"); };
 $("netin").onclick = () => NOAUTH ? location.reload() : signOut(auth);
 $("out").onclick = () => NOAUTH ? toast("No sign-in in test mode") : signOut(auth);
-$("signin").onclick = async () => {
-  $("err").textContent = "";
-  try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { $("err").textContent = e.code === "auth/unauthorized-domain" ? "This web address is not allowed in Firebase yet (Authentication > Settings > Authorized domains)." : e.message; }
+/* ---------- sign-in: Google, or e-mail and password (Firebase) ---------- */
+const FBERR = {
+  "auth/invalid-email": "That does not look like an e-mail address.",
+  "auth/missing-email": "Type your e-mail address first.",
+  "auth/missing-password": "Type your password.",
+  "auth/user-disabled": "This account has been turned off. Contact the operator of this service.",
+  "auth/user-not-found": "The e-mail or password is not right.",
+  "auth/wrong-password": "The e-mail or password is not right.",
+  "auth/invalid-credential": "The e-mail or password is not right.",
+  "auth/invalid-login-credentials": "The e-mail or password is not right.",
+  "auth/email-already-in-use": "There is already an account with this e-mail. Use Sign in, or Forgot password if you do not remember it.",
+  "auth/weak-password": "Choose a longer password, at least 6 characters.",
+  "auth/too-many-requests": "Too many tries. Please wait a few minutes and try again.",
+  "auth/network-request-failed": "Cannot reach the sign-in service. Check your connection and try again.",
+  "auth/operation-not-allowed": "E-mail sign-in is not turned on for this service yet. Use Google instead.",
+  "auth/account-exists-with-different-credential": "This e-mail already has an account made another way. Sign in the way you used before.",
+  "auth/popup-blocked": "Your browser blocked the sign-in window. Allow pop-ups for this page and try again.",
+  "auth/unauthorized-domain": "This web address is not allowed in Firebase yet (Authentication > Settings > Authorized domains).",
+  "auth/requires-recent-login": "Please sign in again and retry.",
 };
-$("consentMark").innerHTML = MARK;
+const SILENT = ["auth/popup-closed-by-user", "auth/cancelled-popup-request", "auth/user-cancelled"];
+const fbMsg = e => FBERR[e && e.code] || "Something went wrong. Please try again.";
+let lmode = "in", lbusy = false;
+function loginMode(m) {
+  lmode = m; const reset = m === "reset", up = m === "up";
+  document.querySelectorAll("#ltabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.lm === m)));
+  $("ltabs").classList.toggle("hide", reset); $("lpw").classList.toggle("hide", reset); $("lhint").hidden = !up;
+  $("lforgot").classList.toggle("hide", reset || up); $("lback").classList.toggle("hide", !reset);
+  $("lpass").autocomplete = up ? "new-password" : "current-password";
+  $("lgo").textContent = reset ? "Send reset link" : up ? "Create account" : "Sign in";
+  $("lnote").textContent = ""; $("lnote").classList.remove("bad"); $("err").textContent = "";
+}
+function lnote(t, bad) { $("lnote").textContent = t; $("lnote").classList.toggle("bad", !!bad); }
+document.querySelectorAll("#ltabs button").forEach(b => b.onclick = () => loginMode(b.dataset.lm));
+$("lforgot").onclick = () => loginMode("reset"); $("lback").onclick = () => loginMode("in");
+$("lshow").onclick = () => { const on = $("lpass").type === "password"; $("lpass").type = on ? "text" : "password"; $("lshow").textContent = on ? "Hide" : "Show"; $("lshow").setAttribute("aria-pressed", String(on)); };
+$("lform").onsubmit = async ev => {
+  ev.preventDefault(); if (lbusy) return;
+  const email = $("lemail").value.trim(), pw = $("lpass").value; $("err").textContent = ""; lnote("");
+  if (!email) return lnote(FBERR["auth/missing-email"], true);
+  if (lmode !== "reset") { if (!pw) return lnote(FBERR["auth/missing-password"], true); if (lmode === "up" && pw.length < 6) return lnote(FBERR["auth/weak-password"], true); }
+  lbusy = true; $("lgo").disabled = true;
+  try {
+    if (lmode === "reset") { await sendPasswordResetEmail(auth, email); lnote("If there is an account for " + email + ", a link to choose a new password is on its way. Check your inbox."); }
+    else if (lmode === "up") { const c = await createUserWithEmailAndPassword(auth, email, pw); try { await sendEmailVerification(c.user); vNote = "We sent a verification link to " + email + "."; } catch (e) { vNote = "Your account is made, but the e-mail could not be sent: " + fbMsg(e) + " Press Resend."; } showVerify(c.user); }
+    else await signInWithEmailAndPassword(auth, email, pw);
+  } catch (e) { if (!SILENT.includes(e.code)) lnote(fbMsg(e), true); }
+  lbusy = false; $("lgo").disabled = false;
+};
+$("signin").onclick = async () => {
+  $("err").textContent = ""; lnote("");
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { if (!SILENT.includes(e.code)) $("err").textContent = fbMsg(e); }
+};
+/* an e-mail account must have a verified address (the server checks it too) */
+const needsVerify = u => !!u && !u.emailVerified && (u.providerData || []).some(p => p.providerId === "password");
+let vNote = "", vCool = 0;
+function showVerify(u, serverMsg) {
+  curUser = u; ["login", "consent", "app", "device"].forEach(i => $(i).classList.add("hide")); $("verify").classList.remove("hide");
+  $("vtext").textContent = "Open the e-mail we sent to " + (u.email || "your address") + ", press the link in it, then come back here and press I verified.";
+  const m = $("vmsg"); m.textContent = serverMsg || vNote; m.classList.toggle("bad", !!serverMsg); vNote = "";
+  $("vdone").onclick = async () => {
+    const b = $("vdone"); b.disabled = true; m.classList.remove("bad");
+    try { await u.reload(); await u.getIdToken(true); const cu = auth.currentUser || u;
+      if (cu.emailVerified) { m.textContent = ""; $("verify").classList.add("hide"); start(cu); } else { m.textContent = "Not verified yet. Press the link in the e-mail first. Check your spam folder too."; m.classList.add("bad"); }
+    } catch (e) { m.textContent = fbMsg(e); m.classList.add("bad"); }
+    b.disabled = false;
+  };
+  $("vresend").onclick = async () => {
+    const b = $("vresend"); if (Date.now() < vCool) return; b.disabled = true; m.classList.remove("bad");
+    try { await sendEmailVerification(u); m.textContent = "Sent again to " + (u.email || "your address") + "."; vCool = Date.now() + 30000; setTimeout(() => { b.disabled = false; }, 30000); }
+    catch (e) { m.textContent = fbMsg(e); m.classList.add("bad"); b.disabled = false; }
+  };
+  $("vout").onclick = () => signOut(auth);
+}
+$("consentMark").innerHTML = MARK; $("verifyMark").innerHTML = MARK; $("deviceMark").innerHTML = MARK;
 /* the record of what a person accepted lives on the server (which version, when); the browser keeps nothing about it */
 let termsVersion = "", curUser = null;
 function showConsent(u, version) {
@@ -811,13 +917,57 @@ function showConsent(u, version) {
   $("consentOut").onclick = () => NOAUTH ? location.reload() : signOut(auth);
 }
 let started = false;
+/* the server said no (for example the e-mail is not verified, or the account is blocked) */
+function refused(u, msg) {
+  if (u && (u.providerData || []).some(p => p.providerId === "password")) return showVerify(u, msg);
+  ["consent", "app", "verify", "device"].forEach(i => $(i).classList.add("hide")); $("login").classList.remove("hide"); $("err").textContent = msg; signOut(auth);
+}
+/* ---------- /device: approve a sign-in started in the desktop app or the terminal. The code is typed here, never read from the address. ---------- */
+const isDevicePath = () => location.pathname.replace(/\/+$/, "") === "/device";
+const KINDS = { desktop: "Desktop app (syncs chats and memory)", cli: "Terminal (full access to your account)" };
+function showDevice() {
+  ["app", "consent", "login", "verify"].forEach(i => $(i).classList.add("hide")); $("device").classList.remove("hide");
+  const box = $("dbox"); let info = null, code = "";
+  const out = () => `<div style="text-align:center;margin-top:10px"><button class="linkbtn" id="dout" type="button">Use another account</button></div>`;
+  const bindOut = () => { const o = $("dout"); if (o) o.onclick = () => NOAUTH ? location.reload() : signOut(auth); };
+  const fmt = v => { const c = v.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 8); return c.length > 4 ? c.slice(0, 4) + "-" + c.slice(4) : c; };
+  function entry(msg) {
+    box.innerHTML = `<div class="field-label"><label for="dcode">Code shown on your device</label></div><input class="field-input dcode" id="dcode" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text" placeholder="ABCD-EFGH" value="${esc(code)}"><div class="field-hint">Open ZO-AI on your computer, or run <b>zo login</b> in a terminal. It shows a code like ABCD-EFGH. Type it here.</div><div class="lnote bad" id="dmsg" role="alert" style="margin-top:10px">${esc(msg || "")}</div><button class="page-btn primary" id="dlook" type="button" style="margin-top:6px">Look up</button>${out()}`;
+    const inp = $("dcode"), go = $("dlook");
+    const upd = () => { go.disabled = inp.value.replace(/[^A-Za-z0-9]/g, "").length < 8; };
+    inp.oninput = () => { inp.value = fmt(inp.value); upd(); }; inp.onkeydown = e => { if (e.key === "Enter" && !go.disabled) go.click(); }; upd(); inp.focus(); bindOut();
+    go.onclick = async () => {
+      code = fmt(inp.value); go.disabled = true; $("dmsg").textContent = "";
+      try { info = await api("/api/auth/device_lookup", { user_code: code }); confirmView(); }
+      catch (e) { $("dmsg").textContent = e.status === 404 ? "That code was not found. It may have expired (they last 10 minutes) or been used. Check it and try again, or start again in the app." : e.message; upd(); }
+    };
+  }
+  function confirmView() {
+    const when_ = info.requested_at ? when(info.requested_at > 1e12 ? info.requested_at : info.requested_at * 1000) : "";
+    box.innerHTML = `<div class="field-label" style="margin-top:12px">This device is asking to sign in to your account</div><div class="dfacts"><div><span>Name</span><span>${esc(info.name)}</span></div><div><span>Type</span><span>${esc(KINDS[info.kind] || info.kind)}</span></div><div><span>From address</span><span>${esc(info.ip || "unknown")}</span></div><div><span>Asked at</span><span>${esc(when_)}</span></div></div><div class="warn"><b>Only approve if you started this on your own device.</b> If someone else sent you here, press Deny.</div><div class="lnote bad" id="dmsg" role="alert"></div><div class="dacts"><button class="btn danger" id="ddeny" type="button">Deny</button><button class="btn primary" id="dok" type="button">Approve</button></div><div style="text-align:center;margin-top:10px"><button class="linkbtn" id="dagain" type="button">Type a different code</button></div>`;
+    const decide = async ok => {
+      $("dok").disabled = $("ddeny").disabled = true; $("dmsg").textContent = "";
+      try { await api("/api/auth/device_approve", { user_code: code, approve: ok }); done(ok); }
+      catch (e) { $("dmsg").textContent = e.message; $("dok").disabled = $("ddeny").disabled = false; }
+    };
+    $("dok").onclick = () => decide(true); $("ddeny").onclick = () => decide(false); $("dagain").onclick = () => { code = ""; entry(); };
+  }
+  function done(ok) {
+    box.innerHTML = `<div style="text-align:center;padding:12px 0 4px"><div class="hero-title" style="font-size:22px;justify-content:center;margin-bottom:8px">${ok ? "Approved" : "Denied"}</div><div class="pc-meta">${ok ? "You can go back to the app. It signs in within a few seconds. You can close this page." : "Nothing was signed in. You can close this page."}</div></div><button class="page-btn" id="dopen" type="button" style="margin-top:14px">Open ZO-AI here</button>`;
+    $("dopen").onclick = () => { history.replaceState(null, "", "/"); $("device").classList.add("hide"); start(curUser, true); };
+  }
+  entry();
+}
 async function start(u, agreed) {
   uid = u ? u.uid : "test"; curUser = u;
+  if (needsVerify(u)) return showVerify(u);
   if (!agreed) {
-    let w = null; try { w = await acctOp("whoami"); } catch (e) { w = null; }
+    let w = null; try { w = await acctOp("whoami"); } catch (e) { w = null; if (e.status === 403 && !e.terms && !NOAUTH) return refused(u, e.message); }
     if (w && w.terms && !w.terms.accepted) return showConsent(u, w.terms.version);
   }
-  $("consent").classList.add("hide"); $("login").classList.add("hide"); $("app").classList.remove("hide");
+  $("consent").classList.add("hide"); $("login").classList.add("hide"); $("verify").classList.add("hide");
+  if (isDevicePath()) return showDevice();
+  $("device").classList.add("hide"); $("app").classList.remove("hide");
   const name = u ? (u.displayName || u.email || "") : "test"; $("uname").textContent = name; $("avatar").textContent = (name[0] || "Z").toUpperCase();
   if (innerWidth <= 860) $("side").classList.remove("open");
   paint(); 
@@ -833,7 +983,10 @@ async function start(u, agreed) {
 }
 paint();
 if (NOAUTH) start(null);
-else onAuthStateChanged(auth, u => { if (u) start(u); else { acct = null; uid = ""; $("app").classList.add("hide"); $("consent").classList.add("hide"); $("login").classList.remove("hide"); } });
+else {
+  if (isDevicePath()) $("lintro").textContent = "Sign in to approve the device you started. You will come back to the approval screen.";
+  onAuthStateChanged(auth, u => { if (u) start(u); else { acct = null; uid = ""; ["app", "consent", "verify", "device"].forEach(i => $(i).classList.add("hide")); $("login").classList.remove("hide"); } });
+}
 </script>
 </body>
 </html>
