@@ -43,7 +43,7 @@ impl Drop for Shut {
 
 pub fn local_hint(path: &std::path::Path) -> String {
     format!(
-        "ZO-AI is not running: nothing listens on {}.\nStart the ZO-AI app (it serves this socket), or talk to a server instead:\n  zo --remote https://your-server --token-file ~/.config/zo-ai/token \"question\"\n  (or set ZO_REMOTE_URL, and ZO_ACCESS_TOKEN for the token)",
+        "ZO-AI is not running: nothing listens on {}.\nStart the ZO-AI app (it serves this socket), or talk to a server instead:\n  zo --remote https://your-server --token-file ~/.config/zo-ai/token \"question\"\n  (or set ZO_REMOTE_URL, and ZO_ACCESS_TOKEN for the device token, scope: full)",
         path.display()
     )
 }
@@ -57,7 +57,8 @@ fn check(v: Value) -> Result<Value, String> {
 
 fn remote_error(e: ureq::Error) -> String {
     match e {
-        ureq::Error::Status(401, _) => "The server refused the token (401). Check the file or variable that holds it (--token-file, or $ZO_ACCESS_TOKEN).".into(),
+        ureq::Error::Status(401, _) => zo_core::sync::TOKEN_REFUSED.into(),
+        ureq::Error::Status(429, resp) => format!("Too many requests, try again in {} s.", zo_core::sync::retry_after_secs(resp.header("Retry-After"))),
         ureq::Error::Status(code, resp) => {
             let body = resp.into_string().unwrap_or_default();
             let msg = serde_json::from_str::<Value>(&body).ok().and_then(|v| v.get("error").and_then(Value::as_str).map(crate::proto::clean));
@@ -77,7 +78,17 @@ impl Target {
         if let Some(t) = token {
             r = r.set("Authorization", &format!("Bearer {t}"));
         }
-        r.send_string(&body.to_string()).map_err(remote_error)
+        let body = body.to_string();
+        match r.clone().send_string(&body) {
+            // honour Retry-After once
+            Err(ureq::Error::Status(429, resp)) => {
+                let n = zo_core::sync::retry_after_secs(resp.header("Retry-After"));
+                eprintln!("zo: Too many requests, retrying in {n} s");
+                std::thread::sleep(Duration::from_secs(n));
+                r.send_string(&body).map_err(remote_error)
+            }
+            other => other.map_err(remote_error),
+        }
     }
 
     /// One question, one answer.

@@ -355,11 +355,11 @@ pub fn config() -> Config {
     Config { url: v.get("url").and_then(Value::as_str).unwrap_or("").to_string(), enabled: v.get("enabled").and_then(Value::as_bool).unwrap_or(false) }
 }
 
-/// The server address in its clean form (no trailing slash). The access token goes with every call, so only https is accepted
+/// The server address in its clean form (no trailing slash). The device token goes with every call, so only https is accepted
 /// (plain http only for this computer itself).
 pub fn clean_url(url: &str) -> Result<String, String> {
     let u = url.trim().trim_end_matches('/').to_string();
-    let err = || "The server address must start with https:// (so the access token is not sent in the open).".to_string();
+    let err = || "The server address must start with https:// (so the device token is not sent in the open).".to_string();
     let (https, rest) = match (u.strip_prefix("https://"), u.strip_prefix("http://")) {
         (Some(r), _) => (true, r),
         (None, Some(r)) => (false, r),
@@ -434,18 +434,57 @@ pub fn status_json() -> Value {
     json!({"enabled": c.enabled, "url": c.url, "last_ok": s.last_ok, "error": s.error, "pulled": s.pulled, "pushed": s.pushed, "deleted": s.deleted, "running": s.running})
 }
 
+/// What the server says for a 401: a device token that is wrong or was revoked.
+pub const TOKEN_REFUSED: &str = "The token is wrong or was revoked: make a new one in the web app, Settings > Account.";
+
+/// Checks the shape of a device token (made on the web app's Account page): it starts with `zd_` and is 20..200 characters long,
+/// without spaces. Returns the trimmed token, or a friendly message.
+pub fn check_device_token(token: &str) -> Result<String, String> {
+    let t = token.trim();
+    if !t.starts_with("zd_") {
+        return Err("That is not a device token: it must start with zd_. Make one in the web app: Settings > Account > Create device token.".into());
+    }
+    if t.len() < 20 || t.len() > 200 || t.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err("That device token looks incomplete or damaged (it should be about 47 characters, no spaces). Copy it again from the web app.".into());
+    }
+    Ok(t.to_string())
+}
+
+/// Seconds to wait for a 429 answer, from its Retry-After header (1..=60, default 5).
+pub fn retry_after_secs(header: Option<&str>) -> u64 {
+    header.and_then(|h| h.trim().parse::<u64>().ok()).unwrap_or(5).clamp(1, 60)
+}
+
 fn post(base: &str, token: &str, path: &str, body: &Value) -> Result<Value, String> {
     let url = format!("{base}{path}");
-    match ureq::post(&url).timeout(Duration::from_secs(20)).set("Authorization", &format!("Bearer {token}")).send_json(body.clone()) {
-        Ok(r) => r.into_json::<Value>().map_err(|_| "The server's answer was not understood.".to_string()),
-        Err(ureq::Error::Status(401, _)) => Err("The server refused the access token.".into()),
+    let mut waited = false;
+    loop {
+        match post_once(&url, token, body) {
+            Err((429, wait, _)) if !waited => {
+                // honour Retry-After once
+                waited = true;
+                std::thread::sleep(Duration::from_secs(wait));
+            }
+            Err((429, wait, _)) => return Err(format!("Too many requests, try again in {wait} s.")),
+            Err((_, _, e)) => return Err(e),
+            Ok(v) => return Ok(v),
+        }
+    }
+}
+
+fn post_once(url: &str, token: &str, body: &Value) -> Result<Value, (u16, u64, String)> {
+    let fail = |e: String| (0u16, 0u64, e);
+    match ureq::post(url).timeout(Duration::from_secs(20)).set("Authorization", &format!("Bearer {token}")).send_json(body.clone()) {
+        Ok(r) => r.into_json::<Value>().map_err(|_| fail("The server's answer was not understood.".to_string())),
+        Err(ureq::Error::Status(401, _)) => Err(fail(TOKEN_REFUSED.into())),
+        Err(ureq::Error::Status(429, r)) => Err((429, retry_after_secs(r.header("Retry-After")), String::new())),
         // a server that is down or restarting is not an answer about the item
-        Err(ureq::Error::Status(c, _)) if c >= 500 => Err(format!("The server answered {c}.")),
+        Err(ureq::Error::Status(c, _)) if c >= 500 => Err(fail(format!("The server answered {c}."))),
         Err(ureq::Error::Status(c, r)) => {
             let msg = r.into_json::<Value>().ok().and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string));
-            Err(msg.unwrap_or_else(|| format!("The server answered {c}.")))
+            Err(fail(msg.unwrap_or_else(|| format!("The server answered {c}."))))
         }
-        Err(ureq::Error::Transport(t)) => Err(format!("Cannot reach the server: {}", t.kind())),
+        Err(ureq::Error::Transport(t)) => Err(fail(format!("Cannot reach the server: {}", t.kind()))),
     }
 }
 
@@ -487,7 +526,7 @@ fn shift_doc(kind: &str, doc: &mut Value, by: i64) {
 
 /// Things that stop the whole round: the server cannot be reached or does not accept the token. Any other error belongs to one item.
 fn is_fatal(e: &str) -> bool {
-    e.starts_with("Cannot reach the server") || e.starts_with("The server refused the access token") || e.starts_with("The server's answer") || e.starts_with("The server answered 5")
+    e.starts_with("Cannot reach the server") || e == TOKEN_REFUSED || e.starts_with("Too many requests") || e.starts_with("The server's answer") || e.starts_with("The server answered 5")
 }
 
 /// The items the last round skipped because of an error of their own (the rest of the round went on).
@@ -593,7 +632,7 @@ pub fn sync_now() -> Result<(usize, usize, usize), String> {
     let cfg = config();
     let result = match (cfg.url.is_empty(), token()) {
         (true, _) => Err("No server address is set.".to_string()),
-        (_, None) => Err("No access token is saved.".to_string()),
+        (_, None) => Err("No device token is saved.".to_string()),
         (false, Some(t)) => sync_with(&cfg.url, &t),
     };
     let mut s = STATUS.lock().unwrap_or_else(|e| e.into_inner());
@@ -634,6 +673,26 @@ pub fn start() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn device_token_shape() {
+        let good = format!("zd_{}", "A".repeat(43));
+        assert_eq!(check_device_token(&format!("  {good}\n")).unwrap(), good);
+        assert!(check_device_token("abc").unwrap_err().contains("zd_"));
+        assert!(check_device_token("zd_short").unwrap_err().contains("incomplete"));
+        assert!(check_device_token(&format!("zd_{}", "A".repeat(200))).is_err());
+        assert!(check_device_token(&format!("zd_{} {}", "A".repeat(20), "B".repeat(20))).is_err());
+        assert!(check_device_token("").is_err());
+    }
+
+    #[test]
+    fn retry_after_is_clamped() {
+        assert_eq!(retry_after_secs(Some("7")), 7);
+        assert_eq!(retry_after_secs(Some("0")), 1);
+        assert_eq!(retry_after_secs(Some("9999")), 60);
+        assert_eq!(retry_after_secs(Some("soon")), 5);
+        assert_eq!(retry_after_secs(None), 5);
+    }
+
     use super::*;
 
     fn side(items: &[(&str, u64)], deleted: &[(&str, u64)]) -> Side {

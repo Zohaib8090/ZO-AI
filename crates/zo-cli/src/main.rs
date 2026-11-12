@@ -35,13 +35,14 @@ Options:
       --remote URL       talk to a zo-server instead of the local app (or set ZO_REMOTE_URL)
       --stdin            add piped input to the question on the command line
       --local            ignore ZO_REMOTE_URL and use the local app
-      --token-env NAME   environment variable that holds the server's access token (default ZO_ACCESS_TOKEN)
-      --token-file PATH  file that holds the access token
+      --token-env NAME   environment variable that holds the device token (scope: full), default ZO_ACCESS_TOKEN
+      --token-file PATH  file that holds the device token (scope: full)
       --no-color         no colours (also: NO_COLOR is set, or the output is not a terminal)
   -h, --help             this text
   -V, --version
 
-The token is never taken as an argument value: it would show in the process list.
+The device token (scope: full, starts with zd_) is made in the web app: Settings > Account > Create device token.
+It is never taken as an argument value: it would show in the process list.
 Inside `zo chat`: /new /chats /open N /model [name] /mode [name] /memory /stop /help /quit.
 Ctrl-C stops the running answer; a second Ctrl-C quits. Ctrl-D quits. Exit codes: 0 ok, 1 error, 2 usage.";
 
@@ -98,7 +99,7 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
             "-c" | "--chat" => o.chat = Some(value("a chat id")?),
             "--mode" => o.mode = Some(value("a mode")?),
             "--token" | "--access-token" | "--password" => {
-                return Err("Refusing a token as an argument: it would show in the process list.\nPut it in a file and use --token-file PATH, or in an environment variable and use --token-env NAME (default ZO_ACCESS_TOKEN).".into());
+                return Err("Refusing a device token as an argument: it would show in the process list.\nPut it in a file and use --token-file PATH, or in an environment variable and use --token-env NAME (default ZO_ACCESS_TOKEN). Make a device token (scope: full) in the web app: Settings > Account.".into());
             }
             _ => return Err(format!("unknown option {a} (try --help)")),
         }
@@ -106,7 +107,8 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
     Ok(o)
 }
 
-/// The token from the file, else from the environment variable. `None` when neither is set (a server without login needs none).
+/// The device token from the file, else from the environment variable. `None` when neither is set (a local test server without login needs none).
+/// A token that is set must look like a device token (`zd_...`).
 fn read_token(file: Option<&str>, env_name: &str, getenv: &dyn Fn(&str) -> Option<String>) -> Result<Option<String>, String> {
     if let Some(p) = file {
         let t = std::fs::read_to_string(p).map_err(|e| format!("cannot read the token file {p}: {e}"))?;
@@ -114,9 +116,12 @@ fn read_token(file: Option<&str>, env_name: &str, getenv: &dyn Fn(&str) -> Optio
         if t.is_empty() {
             return Err(format!("the token file {p} is empty"));
         }
-        return Ok(Some(t));
+        return zo_core::sync::check_device_token(&t).map(Some).map_err(|e| format!("{e} (token file {p})"));
     }
-    Ok(getenv(env_name).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()))
+    match getenv(env_name).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+        Some(t) => zo_core::sync::check_device_token(&t).map(Some).map_err(|e| format!("{e} (variable ${env_name})")),
+        None => Ok(None),
+    }
 }
 
 fn canonical_mode(s: &str) -> Option<&'static str> {
@@ -790,7 +795,7 @@ mod tests {
     fn a_token_as_an_argument_is_refused() {
         for bad in [&["--token", "abc"][..], &["--token=abc"][..], &["x", "--access-token", "abc"][..]] {
             let e = parse_args(&a(bad)).unwrap_err();
-            assert!(e.contains("Refusing a token"), "{e}");
+            assert!(e.contains("Refusing a device token"), "{e}");
             assert!(!e.contains("abc"));
         }
     }
@@ -800,14 +805,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("zo-cli-token-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("t");
-        std::fs::write(&f, "  from-file\n").unwrap();
-        let env = |n: &str| if n == "ZO_ACCESS_TOKEN" { Some("from-env".to_string()) } else { None };
-        assert_eq!(read_token(f.to_str(), "ZO_ACCESS_TOKEN", &env).unwrap().as_deref(), Some("from-file"));
-        assert_eq!(read_token(None, "ZO_ACCESS_TOKEN", &env).unwrap().as_deref(), Some("from-env"));
+        std::fs::write(&f, "  zd_from_file_0123456789abc\n").unwrap();
+        let env = |n: &str| if n == "ZO_ACCESS_TOKEN" { Some("zd_from_env_0123456789abcd".to_string()) } else { None };
+        assert_eq!(read_token(f.to_str(), "ZO_ACCESS_TOKEN", &env).unwrap().as_deref(), Some("zd_from_file_0123456789abc"));
+        assert_eq!(read_token(None, "ZO_ACCESS_TOKEN", &env).unwrap().as_deref(), Some("zd_from_env_0123456789abcd"));
         assert_eq!(read_token(None, "OTHER", &env).unwrap(), None);
         std::fs::write(&f, "\n").unwrap();
         assert!(read_token(f.to_str(), "X", &env).is_err());
         assert!(read_token(Some("/no/such/file"), "X", &env).is_err());
+        // a token that is not a device token is refused with a clear message
+        let old = |_: &str| Some("old-global-token-value-123456".to_string());
+        assert!(read_token(None, "ZO_ACCESS_TOKEN", &old).unwrap_err().contains("zd_"));
+        std::fs::write(&f, "nope\n").unwrap();
+        assert!(read_token(f.to_str(), "X", &env).unwrap_err().contains("zd_"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

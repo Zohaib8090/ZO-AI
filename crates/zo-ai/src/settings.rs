@@ -665,14 +665,14 @@ pub fn show(ui: &Rc<Ui>) {
     let cfg = sync::config();
     let url = gtk::Entry::new();
     url.add_css_class("field-input");
-    url.set_placeholder_text(Some("https://your-zo-ai.onrender.com"));
+    url.set_placeholder_text(Some("https://..."));
     url.set_text(&cfg.url);
     url.set_hexpand(true);
     let token = gtk::PasswordEntry::new();
     token.set_show_peek_icon(true);
     token.add_css_class("field-input");
     token.set_hexpand(true);
-    token.set_placeholder_text(Some(if sync::token().is_some() { "Saved in the keyring. Type to replace it" } else { "Paste the access token" }));
+    token.set_placeholder_text(Some(if sync::token().is_some() { "Saved in the keyring. Type to replace it" } else { "Paste the device token (starts with zd_)" }));
     let on = gtk::Switch::new();
     on.set_active(cfg.enabled);
     let status = lbl("", "field-hint");
@@ -684,8 +684,8 @@ pub fn show(ui: &Rc<Ui>) {
     fields.set_margin_start(16);
     fields.set_margin_end(16);
     fields.append(&crate::field("Server address", &url));
-    fields.append(&crate::field("Access token", &token));
-    fields.append(&lbl("The token is ZO_ACCESS_TOKEN from your server. It is kept in the system keyring and is never shown again.", "field-hint"));
+    fields.append(&crate::field("Device token", &token));
+    fields.append(&lbl("Get one in the web app: sign in with Google, then Settings > Account > Create device token > Sync a desktop app. It is shown once; it is kept in the system keyring here and is never shown again. You can revoke it any time on the same page.", "field-hint"));
     let save = crate::primary("Save");
     let now = secondary("Sync now");
     let buttons = hbox(8);
@@ -700,7 +700,7 @@ pub fn show(ui: &Rc<Ui>) {
         Rc::new(move || {
             let typed = token.text().to_string();
             if !typed.trim().is_empty() {
-                sync::set_token(&typed)?;
+                sync::set_token(&sync::check_device_token(&typed)?)?;
                 token.set_text("");
                 token.set_placeholder_text(Some("Saved in the keyring. Type to replace it"));
             }
@@ -884,7 +884,7 @@ fn add_server_sheet(ui: &Rc<Ui>) {
     let token = gtk::PasswordEntry::new();
     token.set_show_peek_icon(true);
     token.add_css_class("field-input");
-    body.append(&crate::field("Access token (only if the server gave you one)", &token));
+    body.append(&crate::field("Access token (only if the MCP server needs one)", &token));
     // advanced: what other apps' configuration files hold too
     let env = gtk::TextView::new();
     env.add_css_class("field-input");
