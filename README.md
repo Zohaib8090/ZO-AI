@@ -9,7 +9,7 @@ The AI assistant built into Zohara OS. It chats with the model you choose and ca
 | `crates/zo-core` | The tools (files, shell, screenshots, processes, snapshots, Android and Waydroid), the permission policy, the audit log, model providers and the MCP protocol |
 | `crates/zo-mcp` | A stdio MCP server. Any MCP client, such as Claude Code, can control this computer through it |
 | `crates/zo-ai` | The app: chat window, projects, quick popup, approval dialogs and the global shortcut |
-| `crates/zo-server` | The public cloud server: web app, Google sign-in, per-user isolated data, sync with the desktop app |
+| `crates/zo-server` | The public cloud server: web app, Google or e-mail sign-in, per-user isolated data, sync with the desktop app |
 | `crates/zo-cli` | `zo`, the terminal client |
 
 ## Install
@@ -64,18 +64,18 @@ Any MCP client that can start a stdio server works the same way.
 zo "how much disk is left?"        # one answer, streamed; tool steps appear dimmed on stderr
 zo chat                            # an interactive chat (/new /chats /open N /model /mode /memory /stop /quit)
 zo memory; zo remember "I use fish"; zo status
-zo --remote https://your-server --token-file ~/.config/zo-ai/device-token "question"   # a zo-server instead of the local app (device token from the Account page)
+zo login                                                       # sign in (a code and a web address; Google or e-mail)
+zo --remote https://your-server "question"                      # a zo-server instead of the local app (after zo login)
 ```
 
 It uses the same chats, memory and model choice as the app. See [docs/CLI.md](docs/CLI.md).
 
 ## The public web service
 
-`zo-server` is a **public, multi-user service**: anyone who uses Zohara OS / ZO-AI can sign in with Google on the web, sync their desktop app and use `zo --remote`.
+`zo-server` is a **public, multi-user service**: anyone who uses Zohara OS / ZO-AI can sign in with Google or e-mail and password on the web, and in the desktop app (optional: it works fully without any login and sends nothing until you sign in) to sync, and in the terminal (`zo login`). No tokens to copy: see [docs/LOGIN.md](docs/LOGIN.md).
 Each person has their own isolated data and **brings their own API key**; there is no shared model key. Everyone except the operator's admin
 addresses (`ZO_ADMIN_EMAILS`) is **restricted**: web search, page fetch and memory only, with no access to any computer, shell, files or MCP servers
-(computer-control tools run only in a person's own desktop app, which syncs their chats). Devices sync with per-user device tokens made on the Account
-page, which also has Export and Delete. Operator settings: `ZO_ADMIN_EMAILS`, `ZO_BLOCKED_EMAILS`, `ZO_MAX_USERS`, `ZO_MAX_RUNS`, `ZO_TENANT_ROOT`.
+(computer-control tools run only in a person's own desktop app, which syncs their chats). Devices sign in through the browser or with e-mail and password and get their own revocable credential (Account > signed-in devices, which also has Export and Delete). Operator settings: `ZO_ADMIN_EMAILS`, `ZO_PUBLIC_URL`, `ZO_BLOCKED_EMAILS`, `ZO_MAX_USERS`, `ZO_MAX_RUNS`, `ZO_TENANT_ROOT`.
 Design, threat model, limits and cost: [docs/PUBLIC.md](docs/PUBLIC.md); setup: [docs/DEPLOY.md](docs/DEPLOY.md), [docs/SERVER.md](docs/SERVER.md).
 Texts for the operator to review: [docs/PRIVACY.md](docs/PRIVACY.md), [docs/TERMS.md](docs/TERMS.md) (templates, not legal advice).
 
@@ -93,6 +93,7 @@ cargo run -p zo-core --example mock-model   # a fake model server, to try the ch
 
 * [docs/ZO-AI.md](docs/ZO-AI.md): how the app, the model layer, context and compaction, profiles and storage work.
 * [docs/CLI.md](docs/CLI.md): the `zo` terminal client.
+* [docs/LOGIN.md](docs/LOGIN.md): signing in (desktop, terminal, web), the device flow and its security.
 * [docs/MCP.md](docs/MCP.md): MCP servers, sign-in and the redirect address.
 * [docs/PUBLIC.md](docs/PUBLIC.md), [docs/SERVER.md](docs/SERVER.md), [docs/SYNC.md](docs/SYNC.md), [docs/DEPLOY.md](docs/DEPLOY.md): the public server, sync and deployment.
 

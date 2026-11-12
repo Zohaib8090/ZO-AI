@@ -1,13 +1,13 @@
 # ZO-AI as a public service
 
-Written 2026-11-12. The server is not a personal site: every person who uses Zohara OS / ZO-AI may sign in with Google and use it from
-the web, the desktop app (sync) and the terminal client `zo`. This page is the design, the threat model, the limits, the cost and the
+Written 2026-11-12. The server is not a personal site: every person who uses Zohara OS / ZO-AI may sign in with Google or with e-mail and password and use it from
+the web, the desktop app (sync) and the terminal client `zo`. The web version needs a sign-in; the desktop app works fully without one and sends nothing until the person signs in (`LOGIN.md`). This page is the design, the threat model, the limits, the cost and the
 operator checklist. Privacy and terms texts: `PRIVACY.md`, `TERMS.md` (templates, not legal advice). Cost and quota figures come from
 the vendors' pages read on 2026-11-12 (sources at the end); the per-user usage numbers are my assumptions, not measurements.
 
 ## Who is who
 
-* **Admin**: a Google address in `ZO_ADMIN_EMAILS` (the owner). Unrestricted tools, Claude Code mode, SSH machines, Bypass mode.
+* **Admin**: a verified address (Google or e-mail account) listed in `ZO_ADMIN_EMAILS` (the owner). Unrestricted tools, Claude Code mode, SSH machines, Bypass mode.
 * **Restricted user**: everybody else. Bring-your-own-key chat plus web search, page fetch and memory. Nothing that touches a computer.
 * `ZO_BLOCKED_EMAILS` refuses sign-in; `ZO_MAX_USERS` (default 200) caps registrations.
 
@@ -22,7 +22,7 @@ the vendors' pages read on 2026-11-12 (sources at the end); the per-user usage n
   Firestore on first use, pushed by a loop, evicted from local disk after 30 minutes idle with nothing unsynced).
 * **Keys**: each user's own API key, in `<config>/keys.enc`, AES-256-GCM, key = `sha256("zo-keys" || ZO_SERVER_SECRET || tenant)`;
   the ciphertext syncs to Firestore. There is no shared model key.
-* **Device tokens** replace the old global `ZO_ACCESS_TOKEN`: see "Account API".
+* **Device credentials** replace the old global `ZO_ACCESS_TOKEN`: the desktop app and `zo` get one by signing in (nobody copies a token); see `LOGIN.md` and "Account API".
 
 ## What is restricted, and why
 
@@ -50,7 +50,8 @@ Quotas: message text up to 20,000 characters, tenant data folder up to 25 MB (wr
 | a saved chat names a file of the server as a "picture" | for restricted accounts picture paths are dropped when a chat is synced in and never read when a request is built; for everyone else the kind comes from the file name, not the saved mime | an admin's own chats can still name their own files (they own the computer) |
 | prompt injection: a fetched page tells the model to save false or hostile "memories", or to leak earlier chat text | restricted tools cannot reach anything but the user's own memory, so the harm stays inside that user's own data | a poisoned memory misleads later answers for that user; memory is visible and can be forgotten; a fetch result is data, not instructions (keep that wording in the prompt) |
 | abusing memory, export or delete | the export contains only the caller's chats, memory and personalities, never keys; delete needs `{"confirm":"DELETE"}` and a Firebase token (not a device token) | a stolen browser session can delete; there is no undo, which is stated in the UI |
-| stealing a device token | only the hash is stored; shown once; revocable; scope `sync` reaches only `/api/sync/*`; never logged | a leaked token works until revoked |
+| stealing a device credential | the person never sees or copies it; only the hash is stored on the server; kept in the device's key store; revocable (signed-in devices); scope `sync` reaches only `/api/sync/*`; never logged | a leaked credential works until revoked |
+| device-code phishing: tricking a victim into approving the attacker's sign-in request | the approval page needs the code to be **typed** (links never carry it), shows device name, kind and requesting address with a warning, codes last 10 minutes and are single use, 5 wrong codes per person per 10 minutes, caps on requests per address (10/min, 5 waiting) and overall (1000 waiting) | a person who types a code an attacker dictated and ignores the warning; see `LOGIN.md` |
 | using the server as a free relay to attack the web | fetch is rate limited by the per-user bucket and runs only from the model's tool loop | a user can still make the server fetch public pages; the 8-step cap bounds it |
 
 ## Limits (defaults)
@@ -60,19 +61,18 @@ Quotas: message text up to 20,000 characters, tenant data folder up to 25 MB (wr
 user and 6 overall, bodies 1 MB (`/api/op`, `/api/send`) and 20 MB (`/api/sync/*`) that must arrive within 30 s (120 s for sync), idle
 client connections are dropped after 20 s (a patched `tiny_http` in `vendor/`), `429` with `Retry-After` when over. People who are not
 registered yet may knock 10 times a minute; when the registry is full they are refused for 30 s at a time without a database read.
-Device-token lookups: 60 a minute per source address (the last `X-Forwarded-For` entry), 1200 overall; a real token that was seen in the last
+Sign-in requests (`device_start`): 10 a minute and 5 waiting per source address, 1000 waiting overall. Device-credential lookups: 60 a minute per source address (the last `X-Forwarded-For` entry), 1200 overall; a real token that was seen in the last
 hour still works when a guesser has used up the allowance. Restricted: see the quotas above. Not done: nothing reclaims the places of
 accounts that are never used again (watch the count; `ZO_MAX_USERS` and `ZO_BLOCKED_EMAILS` are the tools).
 
 ## Account API
 
-POST, Firebase-authenticated, under `/api/account/`: `whoami`, `devices_list`, `device_create {name, scope:"sync"|"full"}` (the token
-`zd_...` is shown once; only its sha256 is stored), `device_revoke {id}`, `accept_terms {version}`, `export`, `delete {confirm:"DELETE"}`. Until a person has accepted the current version of the
+POST, Firebase-authenticated, under `/api/account/`: `whoami`, `devices_list` (shown as "signed-in devices"), `device_revoke {id}`, `accept_terms {version}`, `export`, `delete {confirm:"DELETE"}`. Until a person has accepted the current version of the
 notice and terms (recorded in `users/<tenant>/meta/terms`), everything but `whoami`, `accept_terms`, `export` and `delete` answers 403 with
 `terms_required`. A blocked address can still `export` and `delete`. Delete writes a marker (`deleted/<tenant>`, time and whether the
 login was removed) first, so a sign-in token that is still valid cannot bring the account back for two hours (for good when the login could
-not be removed), even after a restart; the answer says `login_removed` and the page tells the person plainly when it is false. Scope `sync` may call only
-`/api/sync/*`; `full` also `/api/op`, `/api/send`, `/api/reply` (for `zo`). Account deletion must also remove the user from Firebase
+not be removed), even after a restart; the answer says `login_removed` and the page tells the person plainly when it is false. Device credentials are not made here any more (`device_create` was removed): they come from the sign-in flows in `LOGIN.md` (`/api/auth/*`, at most 10 per person). Scope `sync` (desktop) may call only
+`/api/sync/*`; `full` (`zo`) also `/api/op`, `/api/send`, `/api/reply` (for `zo`). Account deletion must also remove the user from Firebase
 Authentication (Firebase then purges it from backups within 180 days); confirm this in the code before launch.
 
 ## Capacity and cost (honest numbers)
@@ -101,7 +101,7 @@ Firestore data read.
 ## Operator checklist
 
 Firebase (project `zo-ai-144`):
-* Authentication > Sign-in method: Google on. Authentication > Settings > Authorized domains: the Render address and any custom domain.
+* Authentication > Sign-in method: **Google and Email/Password** on. Authentication > Settings > Authorized domains: the Render address and any custom domain.
 * Firestore created in **eur3**; rules closed (`allow read, write: if false;`), the server uses the service account.
 * Optional: App Check later. Do not load Google Analytics (the measurement id in the web config stays inert); if analytics is ever added, a consent banner becomes necessary.
 * Billing: choose Spark or Blaze knowingly (above), and **create a budget alert** in Google Cloud Billing. Check the Firestore usage page weekly at first.
@@ -109,14 +109,14 @@ Firebase (project `zo-ai-144`):
 
 Render env vars: `FIREBASE_SERVICE_ACCOUNT` (secret), `ZO_ADMIN_EMAILS` (secret not needed, but set), `ZO_SERVER_SECRET` (generated; keep a
 private copy: changing it makes every stored API key unreadable and users must enter them again), `ZO_MAX_USERS`, `ZO_MAX_RUNS`,
-`ZO_TENANT_ROOT`, `ZO_CONTACT_EMAIL`, `ZO_OPERATOR_COUNTRY`, `ZO_HOSTING_REGION`, optional `ZO_BLOCKED_EMAILS`, optional admin-only `CLAUDE_CODE_OAUTH_TOKEN`. `ZO_ACCESS_TOKEN` is gone.
+`ZO_TENANT_ROOT`, `ZO_PUBLIC_URL` (the Render address, `https://...`, for the sign-in approval link; `RENDER_EXTERNAL_URL` is the fallback), `ZO_CONTACT_EMAIL`, `ZO_OPERATOR_COUNTRY`, `ZO_HOSTING_REGION`, optional `ZO_BLOCKED_EMAILS`, optional admin-only `CLAUDE_CODE_OAUTH_TOKEN`. `ZO_ACCESS_TOKEN` is gone.
 
 Before launch: set `ZO_CONTACT_EMAIL`, `ZO_OPERATOR_COUNTRY` and `ZO_HOSTING_REGION` (the pages are filled from them and the server does not start without them; `TERMS_VERSION` in `pages.rs` is the pages' date, change it when the texts change), have them reviewed, check the pages are
-served at `/privacy` and `/terms`; sign in with a second, non-admin Google account and confirm it is restricted (no shell, no files, no MCP,
+served at `/privacy` and `/terms`; sign in with a second, non-admin Google account and with an e-mail and password account (verification e-mail arrives, sign-in works only after the click) and confirm it is restricted (no shell, no files, no MCP,
 no machines); try to read the first account's chats from it; check limits return 429; try an export and a delete.
 
 Incident handling: (1) stop the bleeding: set `ZO_BLOCKED_EMAILS`, or suspend the service in Render. (2) Rotate: new `FIREBASE_SERVICE_ACCOUNT` key
-(and delete the old one in Google Cloud), new `ZO_SERVER_SECRET` if keys may be exposed (users re-enter keys), ask users to revoke provider keys and device tokens.
+(and delete the old one in Google Cloud), new `ZO_SERVER_SECRET` if keys may be exposed (users re-enter keys), ask users to revoke provider keys and sign out lost devices (Account > signed-in devices).
 (3) Look at Render logs (they contain no message text, keys or tokens by design). (4) If personal data was exposed, tell the users and,
 where the law requires, the data protection authority within 72 hours. (5) Write down what happened and fix the cause.
 

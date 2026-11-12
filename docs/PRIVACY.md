@@ -13,12 +13,15 @@ Zohaib Baig ("the operator", {{contact}}) runs the service and decides what happ
 
 | Data | Why | Where |
 |---|---|---|
-| Your Google account's identifier and e-mail address, and the sign-in time | to sign you in and keep your data apart from everybody else's | Google Firebase Authentication |
+| Your Google account's identifier and e-mail address, or, if you sign up with e-mail and password, your e-mail address and a **hash of your password** (never the password itself), and the sign-in time | to sign you in and keep your data apart from everybody else's | Google Firebase Authentication (Google's servers in the United States) |
 | A random per-user id derived from your account id (the raw id and e-mail are not used in file or database paths) | to name your data | the service |
 | Your chats, memory notes, personalities and small settings files | the service's purpose | Firestore, region Europe (eur3), under `users/<your id>` |
 | Your API key(s), encrypted | so the assistant can call the model provider you chose | Firestore (encrypted text) and the server's disk while you are active |
-| Device tokens (only a hash, never the token), names and last use | to let your desktop app or terminal sync | Firestore |
+| Your signed-in devices: a name (for example "ZO-AI desktop on <computer name>"), the kind, when it was created and last used, and only a hash of its sign-in credential (never the credential) | to let your desktop app or terminal sync, and so you can see and sign out devices (Account page > signed-in devices) | Firestore |
+| A waiting sign-in request from your desktop app or terminal (device name, kind, the network address it came from, a short code, for at most 10 minutes) | so you can approve it in the browser | the server's memory only |
 | Technical logs without message text, keys or tokens (time, route, status) | to run the service and stop abuse | the hosting provider (Render) |
+
+**The desktop app sends nothing to this service until you sign in.** Without signing in, the ZO-AI desktop app keeps everything on your computer and works fully; signing in is optional and only turns on sync with the web version. The credential that keeps a signed-in device connected is stored in that device's key store, not in a file. The web version needs a sign-in.
 
 We do not use advertising, analytics or tracking cookies. The browser keeps your sign-in session in its storage because you asked to sign in; nothing else is stored there except your choice that you accepted the notice.
 
@@ -41,11 +44,11 @@ You enter your own key. The service uses it only for your own requests. Create a
 
 ## How long it is kept
 
-Until you delete it. Account page > Delete account removes your chats, memory, files, settings, device tokens, your local working copy and your registration, and cannot be undone. Deleting also removes your sign-in record at Google Firebase Authentication; if that step fails, the page tells you so and you can ask the operator to finish it. Google removes sign-in data from its live and backup systems within about 180 days after it is deleted. After a deletion a minimal marker (your anonymous account number and the time) is kept, so that a sign-in left open on another device cannot silently create the account again. Server logs are kept by the hosting provider for a short period. Accounts that are not used for a long time may be removed after notice.
+Until you delete it. Account page > Delete account removes your chats, memory, files, settings, signed-in devices, your local working copy and your registration, and cannot be undone. Deleting also removes your sign-in record at Google Firebase Authentication; if that step fails, the page tells you so and you can ask the operator to finish it. Google removes sign-in data from its live and backup systems within about 180 days after it is deleted. After a deletion a minimal marker (your anonymous account number and the time) is kept, so that a sign-in left open on another device cannot silently create the account again. Server logs are kept by the hosting provider for a short period. Accounts that are not used for a long time may be removed after notice.
 
 ## Your rights
 
-You can **download** everything (Account page > Export: chats, memory and personalities as one JSON file; keys are never included) and **delete** it (see above). You can also ask the operator for access, correction, restriction or objection, withdraw your consent (stop using the service and delete your account), and complain to your data protection authority. Using the service is voluntary; without signing in it cannot work.
+You can **download** everything (Account page > Export: chats, memory and personalities as one JSON file; keys are never included) and **delete** it (see above). You can also ask the operator for access, correction, restriction or objection, withdraw your consent (stop using the service and delete your account), and complain to your data protection authority. Using the service is voluntary; the web version cannot work without signing in, while the desktop app works without it.
 
 ## Basis
 

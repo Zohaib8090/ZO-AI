@@ -4,14 +4,21 @@ Chats, memory notes and custom personalities written on the desktop show up on t
 round. The phone talks to the desktop, so it follows. Built 2026-11-12. Code: `crates/zo-core/src/sync.rs` (planner, documents,
 client), `crates/zo-server/src/sync_api.rs` (the server's side), Settings > Web sync in `crates/zo-ai`.
 
-## Setup (owner)
+## Setup (every person)
 
-1. Sign in to the web app with your Google account, open the Account page > Devices > New device, name it, scope **sync**. The token (`zd_...`) is shown **once**: copy it. Only its hash is stored; revoke it on the same page any time. (The old global `ZO_ACCESS_TOKEN` no longer exists. Every person has their own tokens and their own data.)
-2. In ZO-AI on the desktop: Settings > Web sync. Server address = `https://<server address>`, Device token = the value, switch
-   "Keep in step" on, Save. "Sync now" runs one round at once; the line under the buttons says when it last worked or why it failed.
-   The token goes into the system keyring (key id `sync-token`), never into a file, and is not shown again. The address and the switch
-   are in `~/.config/zo-ai/sync.json`.
-3. Only `https://` addresses are accepted (plain `http://` only for 127.0.0.1 / localhost), because the token is sent with every call.
+The desktop app **works fully without any login**: nothing is sent to the server until the person signs in, and signing in is optional. It only
+turns on sync with the web. Nobody copies or pastes a token (see `LOGIN.md` for the flow, endpoints and security).
+
+1. In ZO-AI on the desktop: Settings > Web sync > **Sign in**. Choose Google (a browser opens the server's approval page: sign in, type the short
+   code the app shows, check the device name and approve) or e-mail and password (typed into the app; a new account must click the link in the
+   verification e-mail first). Sync switches on by itself and a round runs at once. "Sync now" runs one more; the line under the buttons says when it
+   last worked or why it failed. **Sign out** revokes this device on the server and forgets the sign-in here; chats, memory and personalities stay.
+2. On the web, sign in with the same account. After both are signed in, chats, memory and personalities match.
+3. Behind the scenes the server issues this device a **device credential** (`zd_...`, only its hash is stored on the server). It is kept in the
+   system keyring (key id `sync-token`), never in a file, never shown, and can be revoked on the web Account page under **signed-in devices** (a lost computer).
+   The account's e-mail, the on/off switch and a server address chosen by hand are in `~/.config/zo-ai/sync.json`.
+4. Server address: the default is `https://zo-ai-server.onrender.com`; the environment variable `ZO_SERVER_URL` or the `url` in `sync.json` overrides it. Only
+   `https://` addresses are accepted (plain `http://` only for 127.0.0.1 / localhost), because the credential is sent with every call.
 
 ## How it works
 
@@ -27,7 +34,7 @@ client), `crates/zo-server/src/sync_api.rs` (the server's side), Settings > Web 
 * **Tombstones** are in `tombstones.json` in the data folder (the server's one also goes to Firestore like the other small files).
   They are written when the app deletes a chat, forgets a note, clears the memory or removes a personality, and kept for 90 days.
 * **Safety**: an empty, failing or unreachable server never deletes anything here: only a tombstone deletes. If the server cannot be
-  reached or does not accept the token, the round stops and changes nothing more. An error that belongs to one item (the server refuses
+  reached or does not accept the credential (revoked: sign in again), the round stops and changes nothing more. An error that belongs to one item (the server refuses
   it, it does not parse) skips that item and goes on; the status text says how many were skipped and the first reason. Manifests that do not look like manifests are errors, not "empty".
 * **Not synced**: API keys and the keys file, the chosen model, the permission mode, projects, artifacts, scheduled tasks, MCP servers,
   which personality is in use, and the memory agent's "read N messages" counters. Pinning a note or a chat does not change its `updated`,
@@ -45,7 +52,7 @@ client), `crates/zo-server/src/sync_api.rs` (the server's side), Settings > Web 
   way (an edit), the answer is saved as a separate "(copy)" chat. The window of the desktop app is not covered yet: it saves its own chat
   as it holds it.
 
-## Server API (all need `Authorization: Bearer <device token or Firebase ID token>`; bodies up to 20 MB; they act only on the caller's own tenant)
+## Server API (all need `Authorization: Bearer <device credential or Firebase ID token>`; bodies up to 20 MB; they act only on the caller's own tenant)
 
 | Call | Body | Answer |
 |---|---|---|
@@ -54,7 +61,7 @@ client), `crates/zo-server/src/sync_api.rs` (the server's side), Settings > Web 
 | `POST /api/sync/put` | `{kind, id, doc}` | `{ok, applied}` |
 | `POST /api/sync/delete` | `{kind, id, at}` | `{ok, deleted}` (the tombstone is recorded either way) |
 
-The service also answers `{"op":"sync_status"}` (enabled, url, last_ok, error, pulled, pushed, deleted, running; never the token), for the phone.
+The service also answers `{"op":"sync_status"}` (enabled, url, last_ok, error, pulled, pushed, deleted, running; never the credential), for the phone.
 
 ## Local test server (no Firebase)
 
@@ -67,11 +74,11 @@ Use a private HOME / XDG_* / XDG_RUNTIME_DIR for it (the server shares the app's
 
 Tested: unit tests of the planner (copy, newest wins, ties, tombstones, resurrection by a later edit, empty server), of the tombstone
 hooks, `put`/`apply_delete`, manifests and address checks (zo-core), and of the four calls (zo-server). An integration run with a
-local test server in one sandbox and `syncctl` in another, over HTTP on 127.0.0.1: chat and note created in B appear in A; an edit in A
+local test server in one sandbox and `syncctl` in another, over HTTP on 127.0.0.1 (with the earlier token set-up; the sign-in itself is tested separately, see `LOGIN.md`): chat and note created in B appear in A; an edit in A
 reaches B; a delete in B removes it in A; a delete in A (service op) removes it in B; a forgotten note disappears in A; a conflicting
-edit resolves to the newest in both directions; a personality and a note added in A arrive in B; a wrong token or an unreachable server
-changes nothing in B; the token is not in the server log. The Settings page renders (headless, container `zs-ai-img`).
-Not tested: against Render or a real Firestore, with the Firebase token (a device token takes the same path in `who()`),
-the 30-second background loop and the switch in a running app (only `sync_with` was driven), the keyring storage of the token
+edit resolves to the newest in both directions; a personality and a note added in A arrive in B; a wrong credential or an unreachable server
+changes nothing in B; the credential is not in the server log. The Settings page renders (headless, container `zs-ai-img`).
+Not tested: against Render or a real Firestore, with the Firebase token (a device credential takes the same path in `who()`), the sign-in flows against real Firebase (`LOGIN.md`),
+the 30-second background loop and the switch in a running app (only `sync_with` was driven), the keyring storage of the credential
 (`secret-tool`; tests used `ZOAI_KEY_SYNC_TOKEN`), big chats (megabytes), two computers syncing at once, the `ZO_BIND` listen address.
 The open chat list in the app is not refreshed live when a sync brings something: it shows after the list is rebuilt (new chat, switching view).

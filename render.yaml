@@ -17,6 +17,9 @@ services:
     envVars:
       - key: FIREBASE_SERVICE_ACCOUNT   # the whole service account key file (JSON), pasted as one value
         sync: false
+      - key: ZO_PUBLIC_URL              # NOT a secret. The owner MUST change this to the real Render address after the first deploy
+        value: https://zo-ai-server.onrender.com   # (e.g. https://my-name.onrender.com, no path). It is the base of the sign-in approval link <address>/device.
+                                        # RENDER_EXTERNAL_URL (set by Render) is the fallback if this is empty; the server stops at start if neither is valid.
       - key: ZO_ADMIN_EMAILS            # YOUR Google address(es), comma separated: admins get every tool, everybody else is restricted
         sync: false
       - key: ZO_CONTACT_EMAIL           # shown in the privacy notice and the terms: people reach you here for access and deletion requests
@@ -37,4 +40,5 @@ services:
         sync: false
     # Optional, not set here: ZO_BLOCKED_EMAILS (comma list of addresses refused at sign-in).
     # The server's self-ping (every 8 minutes) only matters on the free plan; a paid instance does not sleep.
-    # ZO_ACCESS_TOKEN no longer exists: devices use per-user device tokens made on the Account page.
+    # ZO_ACCESS_TOKEN no longer exists: the desktop app and `zo` sign in (docs/LOGIN.md); the server issues their device credentials.
+    # Firebase console: Authentication > Sign-in method needs Google and Email/Password on, and the Render address under Authorized domains.

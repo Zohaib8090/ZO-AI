@@ -10,11 +10,17 @@ memory, model choice and permission mode with the app and the phone. Small on pu
   `zo-server`). If nothing listens, `zo` says so and shows how to start the app or use `--remote`.
 * **Remote**: `--remote https://server` (or `ZO_REMOTE_URL`; `--local` ignores it). Calls `POST /api/op`, `POST /api/send`
   (one JSON object per line; first line `{"event":"stream","id":N}`) and `POST /api/reply` (approve, stop), with
-  `Authorization: Bearer <token>`.
-* **The token** is a **device token with scope `full`**, made on the web app's Account page (shown once, revocable; it only reaches your own
-  data). It is read from `--token-file PATH`, else from the environment variable named by `--token-env` (default `ZO_DEVICE_TOKEN`).
-  It is **never accepted as an argument value** (`--token abc` is refused: it would show in the process list). The old global
-  `ZO_ACCESS_TOKEN` no longer exists. A server running without login (`ZO_SERVER_NO_AUTH=1`) needs none; a 401 says which file or variable to check.
+  `Authorization: Bearer <credential>`.
+* **Signing in**: run **`zo login`**. It shows a short code (for example `ABCD-EFGH`) and a web address; open it in any browser, sign in with Google
+  or e-mail and password, **type the code**, check the device name and approve. `zo` waits, then keeps the sign-in: nobody copies or pastes a token.
+  `zo logout` signs out: the server revokes this device and `zo` forgets it. `zo`
+  uses the same sign-in as the desktop app on the same computer and the same default server (`https://zo-ai-server.onrender.com`, overridable with
+  `ZO_SERVER_URL` or `--remote`). Flow, endpoints and security: `LOGIN.md`.
+* **The credential** behind it is a device credential with scope `full` that the server issued to this device (only a hash is stored there; revoke it
+  in the web app under Account > signed-in devices, for example when a computer is lost; it only reaches your own data). It sits in the system key store,
+  never in a file or an argument. For scripts and CI without a keyring, `--token-file PATH` or the environment variable named by `--token-env`
+  (default `ZO_DEVICE_TOKEN`) still work as a fallback; it is **never accepted as an argument value** (`--token abc` is refused: it would show in the
+  process list). The old global `ZO_ACCESS_TOKEN` no longer exists. A server running without login (`ZO_SERVER_NO_AUTH=1`) needs none; a 401 says to run `zo login` again.
   On a public server you are **restricted** unless your address is an admin: the assistant has web search, page fetch and memory only, and
   needs your own API key (set it in the web app's Settings). Computer tools run only against your own local app (`zo` without `--remote`).
 
@@ -27,6 +33,7 @@ memory, model choice and permission mode with the app and the phone. Small on pu
 | `zo chat [chat-id]` | Interactive. Slash commands: `/new`, `/chats`, `/open N` (number from `/chats`, or an id), `/model [name]`, `/mode [Manual\|Auto\|Bypass]`, `/memory`, `/stop`, `/help`, `/quit`. Opening a chat shows its last messages. |
 | `zo chats`, `zo show <id>` | List and print saved chats. |
 | `zo memory`, `zo remember "text"`, `zo forget <id>` | Long-term memory. |
+| `zo login`, `zo logout` | Sign in (browser code or e-mail and password) and out; see above. Not needed for the local app. |
 | `zo status` | Provider, model, permission mode, version. |
 | `zo models [provider]`, `zo use <provider> [model]` | Providers and models; choose one. |
 | `zo mode [Manual\|Auto\|Bypass]` | Show or set the permission mode. |
@@ -60,5 +67,4 @@ End to end (2026-11-12), against a sandboxed `zo-server` (`ZO_SERVER_NO_AUTH=1`,
 fake OpenAI-compatible streaming model: no model chosen (clean error, exit 1), a streamed answer, piped question, a tool
 call with the approval answered y and n on a pseudo-terminal (the file was only created after y), denied without a terminal,
 Ctrl-C once (stopped) and twice (exit 130), the interactive chat with its slash commands, memory, models, mode, error paths.
-Not tested: a real Firebase/Render server with a real token (the server's token check is another agent's work; this client
-sends `Authorization: Bearer <device token>` as specified), real models, Claude Code mode, Windows/macOS.
+Not tested: a real Firebase/Render server with a real credential, and the `zo login` flow against a real server (`LOGIN.md`; the client sends `Authorization: Bearer <credential>` as specified), real models, Claude Code mode, Windows/macOS.

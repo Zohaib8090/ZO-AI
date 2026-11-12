@@ -13,7 +13,7 @@ Render's `PORT` is read by the server. `zo-mcp` must sit next to `zo-server` (Cl
 ## Steps
 
 1. Firebase console (project `zo-ai-144`):
-   * Authentication > Sign-in method > Google: on.
+   * Authentication > Sign-in method > **Google: on** and **Email/Password: on** (without it nobody can create an e-mail account).
    * Firestore Database: create it (production mode). Rules can stay `allow read, write: if false;`, the server uses the service account.
    * Project settings > Service accounts > Generate new private key. This downloads a JSON file. **Never commit it**; you paste it into Render below.
 2. Render dashboard > New > Blueprint > connect the GitHub repository `Zohaib8090/ZO-AI` > branch `main`. Render reads `render.yaml`
@@ -28,18 +28,30 @@ Render's `PORT` is read by the server. `zo-mcp` must sit next to `zo-server` (Cl
    | `CLAUDE_CODE_OAUTH_TOKEN` | optional, see "Claude Code" below. Leave empty if you do not use Claude Code mode | yes |
 
    `ZO_SERVER_SECRET` is created by Render (`generateValue: true`). `ZO_MAX_USERS` (200), `ZO_MAX_RUNS` (8), `ZO_HOSTING_REGION` and `ZO_TENANT_ROOT` are set in `render.yaml`;
-   optional `ZO_BLOCKED_EMAILS` (comma list refused at sign-in) you add yourself. There is no `ZO_ACCESS_TOKEN` any more: devices use per-user device tokens (Account page).
+   optional `ZO_BLOCKED_EMAILS` (comma list refused at sign-in) you add yourself. There is no `ZO_ACCESS_TOKEN` any more: the desktop app and `zo` sign in (`LOGIN.md`) and the server issues their device credentials.
+   `ZO_PUBLIC_URL` is in `render.yaml` with a placeholder: you set it in step 6 once you know the address.
 3. Press Apply. The first build compiles Rust inside Docker: expect roughly 5 to 15 minutes (Render's build command limit is 120 minutes,
    so that is no problem; I could not find a documented memory or image size limit for builds).
-4. Note the address Render gives (for example `https://zo-ai-server.onrender.com`).
-5. Firebase console > Authentication > Settings > **Authorized domains** > Add domain: `zo-ai-server.onrender.com` (the address without
-   `https://`). Without this the Google pop-up refuses to open.
+4. **First-deploy order (the address is only known after the service exists):**
+   1. Create the service (the steps above). `render.yaml` already sets `ZO_PUBLIC_URL` to the placeholder `https://zo-ai-server.onrender.com`. It wins over Render's own `RENDER_EXTERNAL_URL`
+      (the fallback when `ZO_PUBLIC_URL` is empty), so if your service gets a different address the approval links are wrong until you fix it in step 4.
+      The server refuses to start (exit code 2) in login mode if neither value is a valid `https://host` address.
+   2. Read the address Render gives the service (for example `https://zo-ai-server.onrender.com`).
+   3. Firebase console > Authentication > Settings > **Authorized domains** > Add domain: that address without `https://`
+      (for example `zo-ai-server.onrender.com`). Without this the Google pop-up refuses to open.
+   4. Render > the service > Environment > set `ZO_PUBLIC_URL` to the full address with `https://` and no path (`https://zo-ai-server.onrender.com`). It is not a secret.
+      It is the base of the approval link people open to sign in the desktop app and `zo` (`<address>/device`). On a custom domain use that domain, and add it to Authorized domains too.
+   5. Redeploy (saving the variable does it; or Manual Deploy).
+   The desktop app and `zo` find the server by themselves: their default address is `https://zo-ai-server.onrender.com`. If your service has another
+   address, people set `ZO_SERVER_URL` (or the address in the desktop Settings) to it, or change `DEFAULT_SERVER_URL` in `crates/zo-core/src/login.rs` before building.
+5. Check the sign-in: open `https://<address>/device` (it loads the web app); then on a computer run `zo login` or use the desktop app's Settings > Web sync > Sign in,
+   and see that the web address it shows begins with the address you set in step 4.4.
 6. Reading the generated value: Render > the service > Environment > `ZO_SERVER_SECRET` (click the eye icon). Do not paste it into chat, a file in the repository or an issue.
    **Keep a private copy**: every user's API key in Firestore is encrypted with a key derived from it; a new secret means everybody enters their API keys again.
    Then work through the operator checklist in `PUBLIC.md` (Firebase billing alert, Firestore rules, privacy and terms details (the three settings above), a test with a second non-admin account).
 7. Verify:
    * Open `https://<address>/healthz`: it says `ok`. (The first call after sleep takes about a minute.)
-   * Open `https://<address>/`, sign in with Google (your address is admin). Sign in with a second Google account: it must work and be restricted (web search, page fetch and memory only; no machines, MCP, Claude Code or Bypass). `/privacy` and `/terms` must open.
+   * Open `https://<address>/`, sign in with Google (your address is admin). Sign in with a second Google account and with an e-mail and password account (a verification e-mail comes first): both must work and be restricted (web search, page fetch and memory only; no machines, MCP, Claude Code or Bypass). `/privacy` and `/terms` must open.
    * Render > Logs should show `zo-server: fetched N chats and N memory notes from Firestore` and `listening on 0.0.0.0:...`.
    * Settings > pick a provider and enter its API key; send a message. In Firestore, `users/<tenant id>/chats` gets a document within a few seconds.
    * Redeploy once (Manual Deploy) and check that the chat is still there: that proves the Firestore sync.

@@ -2,10 +2,12 @@
 
 Written 2026-11-12 from the owner's request. Status 2026-11-12: the web app, the `zo` terminal client (docs/CLI.md), laptop sync (docs/SYNC.md) and SSH machines (docs/SSH.md) are built and merged on main. Still not built: phone sync, `zo ssh`, and the real Render, Firebase and Firestore set-up has not been tested. The text below is the original brief.
 
+> **Update 2026-11-12 (latest): no manual tokens.** People sign in with a Google account or e-mail and password; the desktop app works fully without any login and sends nothing until the person signs in; the web needs one. The desktop app and `zo` get a server-issued, revocable device credential through a browser device flow or an e-mail exchange, and nobody sees or copies it. Where the text below says "device token" or "made on the Account page", read: the sign-in flows in `LOGIN.md`.
+
 > **Update 2026-11-12 (later): the server is public.** The owner decided that every person who uses Zohara OS / ZO-AI may sign in with
 > Google and use the service. The single-owner assumptions in this plan (one allowed account, one shared data folder, one global
 > `ZO_ACCESS_TOKEN`, shell and file tools on the server) are **replaced** by a multi-tenant, bring-your-own-key design: per-user tenants and
-> encrypted keys, restricted tools for everyone except the admin addresses in `ZO_ADMIN_EMAILS`, per-user device tokens, limits, an Account
+> encrypted keys, restricted tools for everyone except the admin addresses in `ZO_ADMIN_EMAILS`, per-user device credentials (later by sign-in, see LOGIN.md), limits, an Account
 > page with export and delete, `/privacy` and `/terms`. See `PUBLIC.md`. Where the text below says "one allowed account" or "owner only",
 > read it as the admin; Render's free plan is no longer a fit for the public service (see `PUBLIC.md`).
 
@@ -88,7 +90,7 @@ A locked laptop still runs its agent, so tools keep working while it is locked. 
 
 ## Decisions from the owner (2026-11-12)
 
-* **Public service (later the same day)**: any Google account, bring your own API key, restricted tools for non-admins, device tokens instead of a global token. `PUBLIC.md`.
+* **Public service (later the same day)**: any Google account, bring your own API key, restricted tools for non-admins, device credentials instead of a global token (issued by sign-in, `LOGIN.md`). `PUBLIC.md`.
 
 * **Server: Render**, with a self-ping so the free instance does not sleep. Render's free tier has no disk that survives a
   redeploy, so everything that must last lives in Firestore, never on the server's disk.
