@@ -230,7 +230,25 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .field-label{font-size:13px;margin:12px 0 6px}.field-hint{font-size:11px;color:var(--dimmer);margin-top:5px}
 .field-input,select{width:100%;background:var(--input);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:13px;color:var(--text);outline:none}
 .field-input:focus,select:focus{border-color:var(--line2)}textarea{resize:none}
-select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239A9A9A' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
+select{appearance:none;background-color:var(--input);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239A9A9A' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:34px;color:var(--text);border:1px solid var(--line);border-radius:10px}
+select:hover{border-color:var(--line2)}
+select:focus{border-color:var(--accent)}
+select option{background:var(--card2);color:var(--text);padding:9px 12px;font-size:13px}
+select optgroup{background:var(--card);color:var(--accent);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;padding:8px 6px 3px}
+.ctx-bar{display:flex;width:100%;height:10px;border-radius:99px;overflow:hidden;background:var(--input);margin:14px 0 16px;border:1px solid var(--line2)}
+.ctx-seg{height:100%;transition:width .2s ease}
+.ctx-c0{background:#5FD4D4}.ctx-c1{background:#4C9AFF}.ctx-c2{background:#F2B84B}.ctx-c3{background:#8E44AD}.ctx-free{background:var(--card2)}
+.ctx-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;font-size:13px;border-bottom:1px solid var(--line4)}.ctx-row:last-child{border-bottom:none}
+.ctx-dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px;flex:none}
+.term-box{background:#0c0e12;border:1px solid var(--line2);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;margin-top:12px;height:340px;box-shadow:inset 0 2px 10px rgba(0,0,0,.4)}
+.term-head{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:#14171f;border-bottom:1px solid var(--line);font-size:12px;color:var(--dim)}
+.term-log{flex:1;padding:12px 14px;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;color:#d0d7de;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+.term-prompt-wrap{display:flex;align-items:center;background:#14171f;border-top:1px solid var(--line);padding:6px 12px;gap:8px}
+.term-prompt-wrap span{color:var(--accent);font-family:monospace;font-weight:bold}
+.term-input{flex:1;background:transparent;border:none;color:#ECECEC;font-family:monospace;font-size:13px;outline:none}
+.msg-actions button[data-retry]:hover{color:var(--accent)}
+.retry-btn{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 11px;margin-top:6px;border-radius:7px}
+.retry-btn svg{width:13px;height:13px}
 .switch{appearance:none;width:42px;height:24px;border-radius:99px;background:var(--raise);position:relative;cursor:pointer;border:1px solid var(--line);flex:none}
 .switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .12s}
 .switch:checked{background:#3584e4;border-color:#3584e4}.switch:checked::after{left:20px}
@@ -360,6 +378,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
     <button class="nav-item" data-nav="projects"><i data-i="grid"></i>Projects</button>
     <button class="nav-item" data-nav="artifacts"><i data-i="list"></i>Artifacts</button>
     <button class="nav-item" data-nav="scheduled"><i data-i="alarm"></i>Scheduled</button>
+    <button class="nav-item" data-nav="activity"><i data-i="activity"></i>Activity</button>
     <div class="lists" id="lists"></div>
     <div class="side-foot"><button class="user-btn" id="userBtn" title="Running now, settings and sign out" aria-haspopup="menu"><span class="av-wrap"><span class="avatar" id="avatar">Z</span><span class="av-badge hide" id="avBadge"></span></span><span class="side-user" id="uname"></span></button><button class="icon-btn" id="gear" title="Settings" data-i="gear"></button></div>
   </aside>
@@ -387,6 +406,10 @@ const P = {
   plus: '<path d="M12 5v14M5 12h14"/>', chat: '<path d="M5 5h14a1 1 0 011 1v9a1 1 0 01-1 1h-7l-4 3.5V16H5a1 1 0 01-1-1V6a1 1 0 011-1z"/>', search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/>',
   grid: '<rect x="4" y="4" width="7" height="7" rx="1.2"/><rect x="13" y="4" width="7" height="7" rx="1.2"/><rect x="4" y="13" width="7" height="7" rx="1.2"/><rect x="13" y="13" width="7" height="7" rx="1.2"/>',
   list: '<path d="M9 7h11M9 12h11M9 17h11"/><circle cx="5" cy="7" r=".8"/><circle cx="5" cy="12" r=".8"/><circle cx="5" cy="17" r=".8"/>', alarm: '<circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5M5 4L3 6M19 4l2 2"/>',
+  refresh: '<path d="M21 12a9 9 0 00-15.5-6.4L3 8M3 3v5h5M3 12a9 9 0 0015.5 6.4L21 16M21 21v-5h-5"/>',
+  context: '<circle cx="12" cy="12" r="9"/><path d="M12 3v9h9"/>',
+  activity: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
   sidebar: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M10 5v14"/>', gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/>',
   up: '<path d="M6 15l6-6 6 6"/>', chev: '<path d="M9 6l6 6-6 6"/>', down: '<path d="M6 9l6 6 6-6"/>', copy: '<rect x="8" y="8" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/>',
   folder: '<path d="M4 7a1 1 0 011-1h4l2 2h8a1 1 0 011 1v8a1 1 0 01-1 1H5a1 1 0 01-1-1V7z"/>', edit: '<path d="M4 20l4-1 11-11-3-3L5 16l-1 4z"/>', trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>', star: '<path d="M12 4l2.5 5 5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9 5.5-.8z"/>',
@@ -489,7 +512,7 @@ function composerHTML() {
     <button class="tool-btn mic" id="mic" data-i="mic" aria-pressed="false"></button>
     <button class="tool-btn send" id="send" title="Send" data-i="up"></button><button class="tool-btn stop hide" id="stop" title="Stop" data-i="stop"></button></div></div>
     <div class="runnote hide" id="runNote" role="status" aria-live="polite"></div>
-    <div class="pills"><button class="pill pill-run" id="pRun" aria-haspopup="menu" title="Where ZO-AI runs"><span class="pdot" id="pRunDot"></span><span class="pt" id="pRunT">Cloud</span><i data-i="down"></i></button><button class="pill" id="pModel"><span id="pModelT">…</span><i data-i="down"></i></button><button class="pill pill-muted" id="pMode">${esc(mode)}</button></div>
+    <div class="pills"><button class="pill pill-run" id="pRun" aria-haspopup="menu" title="Where ZO-AI runs"><span class="pdot" id="pRunDot"></span><span class="pt" id="pRunT">Cloud</span><i data-i="down"></i></button><button class="pill" id="pModel"><span id="pModelT">…</span><i data-i="down"></i></button><button class="pill pill-muted" id="pMode">${esc(mode)}</button><button class="pill" id="pContext" title="Context usage and token breakdown"><i data-i="context"></i><span id="pContextT">Context</span></button></div>
     <div class="foot-note" id="footNote">ZO-AI can make mistakes. Check what it did.</div>`;
 }
 function wireComposer() {
@@ -505,6 +528,7 @@ function wireComposer() {
   $("pRun").onclick = e => runPopover(e.currentTarget);
   runPaint(); linkRefresh();
   $("pMode").onclick = e => modePopover(e.currentTarget);
+  if ($("pContext")) $("pContext").onclick = () => contextSheet();
   refreshModel(); t.focus();
 }
 function setBusy(b) { busy = b; if ($("send")) { $("send").classList.toggle("hide", b); $("stop").classList.toggle("hide", !b); $("text").disabled = b; voiceMicPaint(); } }
@@ -749,16 +773,33 @@ function showThread(title) {
 const scrollEnd = () => { const s = $("scroller"); if (s) s.scrollTop = s.scrollHeight; };
 const thread = () => $("thread");
 
+let lastUserMsg = "";
+function retryMessage(node) {
+  if (busy) return toast("Wait for the current answer to finish.");
+  if (node && node.parentNode) node.remove();
+  let retryText = "";
+  const userNodes = [...document.querySelectorAll(".msg-user")];
+  if (userNodes.length) retryText = userNodes[userNodes.length - 1].innerText.trim();
+  else retryText = lastUserMsg;
+  if (!retryText) return toast("Nothing to retry.");
+  if ($("text")) {
+    $("text").value = retryText;
+    $("text").style.height = "auto";
+    $("text").style.height = Math.min($("text").scrollHeight, 200) + "px";
+    send();
+  }
+}
 function addUser(text, att) {
+  lastUserMsg = text || lastUserMsg;
   const d = document.createElement("div"); d.className = "msg-user-wrap";
   d.innerHTML = `${text ? `<div class="msg-user">${esc(text)}</div>` : ""}<div class="msg-actions"><button title="Copy" data-copytext>${icon("copy")}</button></div>`;
   if (att && att.length) d.insertBefore(aBubble(att), d.firstChild);
   d.querySelector("[data-copytext]").onclick = () => { navigator.clipboard?.writeText(text); toast("Copied"); };
   thread().appendChild(d); scrollEnd(); return d;
 }
-function aiBox() { const d = document.createElement("div"); d.className = "msg-ai-wrap"; d.innerHTML = '<div class="msg-ai"></div><div class="msg-actions"><button title="Copy" data-copytext>' + icon("copy") + "</button>" + (voiceCanSpeak() ? '<button title="Read aloud" aria-label="Read aloud" data-speak>' + icon("speaker") + "</button>" : "") + "</div>"; const sp = d.querySelector("[data-speak]"); if (sp) sp.onclick = () => voiceSpeaking(d) ? voiceSpeakStop() : voiceSpeak(d._text || "", d); thread().appendChild(d); return d; }
+function aiBox() { const d = document.createElement("div"); d.className = "msg-ai-wrap"; d.innerHTML = '<div class="msg-ai"></div><div class="msg-actions"><button title="Copy" data-copytext>' + icon("copy") + '</button><button title="Try again" aria-label="Try again" data-retry>' + icon("refresh") + '</button>' + (voiceCanSpeak() ? '<button title="Read aloud" aria-label="Read aloud" data-speak>' + icon("speaker") + '</button>' : '') + '</div>'; const sp = d.querySelector("[data-speak]"); if (sp) sp.onclick = () => voiceSpeaking(d) ? voiceSpeakStop() : voiceSpeak(d._text || "", d); const rb = d.querySelector("[data-retry]"); if (rb) rb.onclick = () => retryMessage(d); thread().appendChild(d); return d; }
 function setAi(d, text) { d._text = text; d.querySelector(".msg-ai").innerHTML = md(text); d.querySelector("[data-copytext]").onclick = () => { navigator.clipboard?.writeText(text); toast("Copied"); }; scrollEnd(); }
-function addError(t) { const d = document.createElement("div"); d.className = "msg-error"; d.textContent = t; thread().appendChild(d); scrollEnd(); }
+function addError(t) { const d = document.createElement("div"); d.className = "msg-error"; d.innerHTML = `<div>${esc(t)}</div><div><button class="btn retry-btn" data-retry>${icon("refresh")} Try again</button></div>`; const rb = d.querySelector("[data-retry]"); if (rb) rb.onclick = () => retryMessage(d); thread().appendChild(d); scrollEnd(); }
 
 /* a group of tool runs: one collapsed line, teal while working */
 function newGroup(active) {
@@ -1359,7 +1400,22 @@ async function modelSheet() {
   if (!dsk && cc && cc.admin) { const h = wrap.querySelector("#mCC"); h.classList.remove("hide"); h.textContent = claudeLine(cc); if (!cc.present) prov.providers = prov.providers.filter(p => p.id !== "claude-code"); }
   else if (!dsk && !restricted()) prov.providers = prov.providers.filter(p => p.id !== "claude-code");
   if (!dsk && restricted()) prov.providers = prov.providers.filter(p => !p.local && p.id !== "claude-code" && !/^(ollama|lmstudio|llamacpp|vllm|sglang|claude-code)$/.test(p.id));
-  prov.providers.forEach(p => sp.insertAdjacentHTML("beforeend", `<option value="${esc(p.id)}" ${p.id === prov.current ? "selected" : ""}>${esc(p.name)}${p.has_key ? " ✓" : ""}</option>`));
+  const majorIds = new Set(["anthropic", "openai", "gemini"]);
+  const localIds = new Set(["ollama", "lmstudio", "llamacpp", "vllm", "sglang"]);
+  const major = [], local = [], cloud = [], custom = [];
+  prov.providers.forEach(p => {
+    if (p.id === "custom") custom.push(p);
+    else if (majorIds.has(p.id)) major.push(p);
+    else if (localIds.has(p.id) || p.local) local.push(p);
+    else cloud.push(p);
+  });
+  const opt = p => `<option value="${esc(p.id)}" ${p.id === prov.current ? "selected" : ""}>${esc(p.name)}${p.has_key ? " ✓" : ""}</option>`;
+  sp.innerHTML = "";
+  if (!prov.current) sp.insertAdjacentHTML("beforeend", '<option value="" selected>Choose a provider…</option>');
+  if (major.length) sp.insertAdjacentHTML("beforeend", `<optgroup label="Popular Providers">${major.map(opt).join("")}</optgroup>`);
+  if (cloud.length) sp.insertAdjacentHTML("beforeend", `<optgroup label="Cloud & Open-Weight">${cloud.map(opt).join("")}</optgroup>`);
+  if (local.length) sp.insertAdjacentHTML("beforeend", `<optgroup label="Local Models (This Computer)">${local.map(opt).join("")}</optgroup>`);
+  if (custom.length) sp.insertAdjacentHTML("beforeend", `<optgroup label="Custom Endpoint">${custom.map(opt).join("")}</optgroup>`);
   if (!prov.current) sp.insertAdjacentHTML("afterbegin", '<option value="" selected>Choose…</option>');
   async function models() {
     if (!sp.value) { sm.innerHTML = ""; return; }
@@ -1422,6 +1478,149 @@ async function showScheduled() {
     r.tasks.forEach(t => { const d = document.createElement("div"); d.className = "card project-card"; d.innerHTML = `<div class="pc-icon">${icon("alarm")}</div><div class="pc-col"><div class="pc-name"></div><div class="pc-meta"></div></div><button class="icon-btn" title="Cancel this task" data-i="trash"></button>`; d.querySelector(".pc-name").textContent = t.title || t.prompt; d.querySelector(".pc-meta").textContent = (t.repeat ? t.repeat + " · " : "") + "next " + when(t.next_run); paint(d);
       d.querySelector("button").onclick = () => confirmBox("Cancel this task?", "It will not run again.", "Cancel task", async () => { await op("schedule_cancel", { id: t.id }); showScheduled(); }); b.appendChild(d); });
   } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
+}
+
+/* ---------- context window sheet ---------- */
+async function contextSheet() {
+  const dsk = onDesktop();
+  let mName = (dsk && dstat && dstat.model) ? dstat.model : (status && status.model ? status.model : "model");
+  let chatText = "";
+  if (chatId) {
+    try { const c = await op("chat", { id: chatId }); if (c && Array.isArray(c.entries)) chatText = c.entries.map(e => e.text || "").join(" "); } catch {}
+  }
+  if (!chatText && $("thread")) chatText = $("thread").innerText || "";
+  const charCount = chatText.length;
+  const historyTokens = Math.max(0, Math.round(charCount / 3.8));
+  const sysTokens = 2400, toolTokens = 3200;
+  const usedTokens = historyTokens + sysTokens + toolTokens;
+  let windowTokens = 128000;
+  if (/claude|gpt-4o|gemini/i.test(mName)) windowTokens = 200000;
+  if (/gemini-1\.5|gemini-2/i.test(mName)) windowTokens = 1000000;
+  const pct = Math.min(100, Math.max(1, (usedTokens / windowTokens) * 100)).toFixed(1);
+  const sysPct = Math.max(1, (sysTokens / windowTokens) * 100).toFixed(1);
+  const histPct = Math.max(1, (historyTokens / windowTokens) * 100).toFixed(1);
+  const toolPct = Math.max(1, (toolTokens / windowTokens) * 100).toFixed(1);
+  const freeTokens = Math.max(0, windowTokens - usedTokens);
+
+  const wrap = document.createElement("div");
+  wrap.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span style="font-size:22px;font-weight:600;color:var(--text)">${pct}% used</span><span class="pc-meta" style="font-size:13px">≈ ${usedTokens.toLocaleString()} / ${windowTokens.toLocaleString()} tokens</span></div>`
+    + `<div class="ctx-bar"><div class="ctx-seg ctx-c0" style="width:${sysPct}%" title="System prompt"></div><div class="ctx-seg ctx-c1" style="width:${histPct}%" title="Conversation history"></div><div class="ctx-seg ctx-c2" style="width:${toolPct}%" title="Tool specifications"></div><div class="ctx-seg ctx-free" style="flex:1" title="Free space"></div></div>`
+    + `<div class="card" style="padding:10px 14px;margin-bottom:14px"><div class="ctx-row"><span><span class="ctx-dot ctx-c0"></span>System instructions</span><span class="pc-meta">≈ ${sysTokens.toLocaleString()} tokens</span></div><div class="ctx-row"><span><span class="ctx-dot ctx-c1"></span>Chat history</span><span class="pc-meta">≈ ${historyTokens.toLocaleString()} tokens</span></div><div class="ctx-row"><span><span class="ctx-dot ctx-c2"></span>Tools & MCP</span><span class="pc-meta">≈ ${toolTokens.toLocaleString()} tokens</span></div><div class="ctx-row"><span><span class="ctx-dot ctx-free"></span>Free capacity</span><span class="pc-meta">≈ ${freeTokens.toLocaleString()} tokens</span></div></div>`
+    + `<div class="field-hint" style="margin-bottom:14px">Sizes are estimated from character count; provider usage may differ slightly based on tokenization.</div>`;
+
+  const compactBtn = btn("Compact session", "primary", async () => {
+    compactBtn.disabled = true; compactBtn.textContent = "Summarizing…";
+    try {
+      if (!chatId) throw new Error("No active chat to compact.");
+      await op("compact", { id: chatId });
+      toast("Session compacted."); sh.close(); if (chatId) openChat(chatId);
+    } catch (e) { toast(e.message || "Failed to compact."); compactBtn.disabled = false; compactBtn.textContent = "Compact session"; }
+  });
+  const sh = sheet("Context Window", wrap, [btn("Close", "", () => sh.close()), compactBtn]);
+}
+
+/* ---------- activity & interactive terminal page ---------- */
+async function showActivity() {
+  setNav("activity"); setTitle("Activity"); const b = pageBox("Activity");
+  b.innerHTML = '<div class="pc-meta">Loading…</div>';
+  try {
+    let r = {}; try { r = await op("activity"); } catch {}
+    const items = Array.isArray(r.items) ? r.items : [];
+    const run = items.filter(i => i.kind !== "client");
+    const cli = items.filter(i => i.kind === "client");
+    b.innerHTML = "";
+
+    // 1. Running now
+    b.appendChild(head("Running now"));
+    if (run.length) {
+      run.forEach(i => {
+        const d = document.createElement("div"); d.className = "card project-card";
+        d.innerHTML = `<span class="act-dot" style="margin-right:8px;flex:none"></span><div class="pc-col"><div class="pc-name">${esc(ACT_KIND[i.kind] || "Task")}: ${esc(i.title)}</div><div class="pc-meta">${esc([i.detail, i.started_ms ? actAgo(i.started_ms) : "", i.source].filter(Boolean).join(" · "))}</div></div>${i.can_stop ? `<button class="btn danger" data-stop="${esc(i.id)}">Stop</button>` : ""}`;
+        if (i.can_stop) {
+          d.querySelector("[data-stop]").onclick = async (e) => {
+            e.stopPropagation();
+            try { await op("activity_stop", { id: Number(i.id) }); toast("Stopped"); showActivity(); } catch (err) { toast(err.message); }
+          };
+        }
+        b.appendChild(d);
+      });
+    } else {
+      b.appendChild(cardOf(row("Nothing running", "No background tasks or answers currently generating.")));
+    }
+
+    // 2. Interactive Terminal
+    b.appendChild(head("Interactive Terminal"));
+    const termDiv = document.createElement("div");
+    termDiv.className = "term-box";
+    termDiv.innerHTML = `<div class="term-head"><span>Terminal session ${onDesktop() ? "· " + esc(curDev() ? devName(curDev()) : "Your computer") : "· Cloud session"}</span><button class="btn" id="termClr" style="padding:2px 8px;font-size:11px">Clear</button></div>`
+      + `<div class="term-log" id="termLog">ZO-AI Interactive Terminal\nType a command or shell prompt below.\n${onDesktop() ? "Connected to " + esc(curDev() ? devName(curDev()) : "your computer") + " via desktop link." : "Cloud session active."}\n</div>`
+      + `<div class="term-prompt-wrap"><span>$</span><input type="text" class="term-input" id="termIn" placeholder="Type a shell command (e.g. ls, df -h, uname)..." autocomplete="off"><button class="btn primary" id="termRun" style="padding:4px 12px;font-size:12px">Run</button></div>`;
+    b.appendChild(termDiv);
+
+    const tLog = termDiv.querySelector("#termLog");
+    const tIn = termDiv.querySelector("#termIn");
+    const tRun = termDiv.querySelector("#termRun");
+    termDiv.querySelector("#termClr").onclick = () => { tLog.textContent = ""; };
+    const runCmd = async () => {
+      const cmd = tIn.value.trim(); if (!cmd) return;
+      tIn.value = "";
+      tLog.textContent += `\n$ ${cmd}\n`;
+      tLog.scrollTop = tLog.scrollHeight;
+      try {
+        const dsk = onDesktop();
+        const res = await fetch("/api/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() },
+          body: JSON.stringify({ text: "Run this command in the shell and return its output directly:\n" + cmd, chat: chatId, ...(dsk ? { target: "desktop", device: runOn } : {}) })
+        });
+        if (!res.ok) throw new Error("Terminal error " + res.status);
+        const rd = res.body.getReader(), dec = new TextDecoder();
+        let buf = "", acc = "";
+        for (;;) {
+          const { value, done } = await rd.read(); if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i; while ((i = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue;
+            try {
+              const ev = JSON.parse(line);
+              if (ev.event === "delta") { acc += ev.text; }
+              else if (ev.event === "tool_done" && ev.output) { acc += "\n" + ev.output; }
+              else if (ev.event === "error") { acc += "\nError: " + (ev.message || ev.error); }
+            } catch {}
+          }
+        }
+        tLog.textContent += (acc.trim() || "[Command finished]") + "\n";
+      } catch (err) {
+        tLog.textContent += "Error: " + err.message + "\n";
+      }
+      tLog.scrollTop = tLog.scrollHeight;
+    };
+    tRun.onclick = runCmd;
+    tIn.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); runCmd(); } };
+
+    // 3. Connected devices & clients
+    b.appendChild(head("Connected devices"));
+    const devRows = [];
+    devRows.push(row("Web session", "This browser tab (Active)", null));
+    if (onDesktop()) {
+      devRows.push(row("Linked computer", `${curDev() ? devName(curDev()) : "Your computer"} (Online and ready)`, null));
+    }
+    if (cli.length) {
+      devRows.push(row("Connected clients", `${cli.length} active connection(s) open`, null));
+    }
+    b.appendChild(cardOf(...devRows));
+
+    // 4. Background services
+    b.appendChild(head("Background services"));
+    b.appendChild(cardOf(
+      row("ZO-AI Service", "Listening for the phone, the web app and the command line", null),
+      row("Memory agent", "Active — summarizes and extracts memories between chats", null),
+      row("Sync loop", "On — keeps chats and presets backed up to your account", null),
+      row("Desktop link", onDesktop() ? "Connected to " + devName(curDev()) : "Standby — link a computer in Settings > My computers", null)
+    ));
+  } catch (e) {
+    b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`;
+  }
 }
 
 /* ---------- settings: a list of pages, each with a Back button ---------- */
@@ -1820,7 +2019,7 @@ swInit();
 /* ---------- start ---------- */
 function go(n) {
   sideClose();
-  ({ new: showHome, chats: showChats, search: showSearch, projects: showProjects, artifacts: showArtifacts, scheduled: showScheduled })[n]();
+  ({ new: showHome, chats: showChats, search: showSearch, projects: showProjects, artifacts: showArtifacts, scheduled: showScheduled, activity: showActivity })[n]();
 }
 document.querySelectorAll(".nav-item").forEach(b => b.onclick = () => go(b.dataset.nav));
 $("sideScrim").onclick = () => setPeek(false);
