@@ -11,6 +11,7 @@ pub mod mcp_oauth;
 pub mod policy;
 pub mod service;
 pub mod store;
+pub mod sync;
 pub mod term;
 pub mod uibridge;
 pub mod voice;

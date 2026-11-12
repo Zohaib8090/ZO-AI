@@ -6,6 +6,11 @@ The same brain as the desktop app, on a server that is always on, behind a Fireb
 ## What it does
 
 * Starts zo-core's own service (the one the phone talks to) and puts HTTPS in front of it.
+* **Access token**: `ZO_ACCESS_TOKEN` (at least 32 characters; shorter is ignored with a warning) is the owner's own-devices key.
+  `Authorization: Bearer <it>` is accepted on every `/api` call, next to the Firebase ID token. It is compared in constant time and never logged.
+  Render makes one (`generateValue`); read it in Render's Environment tab and paste it in the desktop app (Settings > Web sync).
+  With `ZO_ACCESS_TOKEN` and no `FIREBASE_SERVICE_ACCOUNT` the server runs **token-only**: no Firebase login, no Firestore (its disk is then the only store),
+  listening on 127.0.0.1 unless `PORT` and `ZO_BIND` (for example `0.0.0.0`) are both set.
 * **Login**: every call needs a Firebase ID token (`Authorization: Bearer ...`). The token is checked against Google's keys, must
   be for this Firebase project, and must belong to an address in `ZO_ALLOWED_EMAILS`.
 * **Firestore**: Render's disk is lost on every redeploy, so at start everything is fetched from Firestore and every change is
@@ -31,6 +36,7 @@ Render address (for example `zo-ai-server.onrender.com`), or the Google pop-up r
 | `GET /healthz` | `ok`, no login |
 | `POST /api/op` | one operation of the service, for example `{"op":"chats"}`, `{"op":"memory"}`; answers JSON |
 | `POST /api/send` | `{"text": "...", "chat": "id or empty"}`; the answer streams as one JSON object per line; the first line is `{"event":"stream","id":N}` |
+| `POST /api/sync/manifest`, `/get`, `/put`, `/delete` | the desktop sync, see `SYNC.md` |
 | `POST /api/reply` | `{"stream": N, ...}`: a line for a running answer (stop it, approve a step) |
 
 ## Setting it up on Render (owner)

@@ -106,6 +106,7 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
                 "version": env!("CARGO_PKG_VERSION"),
             }))
         }
+        "sync_status" => Ok(crate::sync::status_json()),
         "chats" => {
             let all = chats::load();
             Ok(json!({"chats": all.iter().take(60).map(|c| json!({"id": c.id, "title": c.title, "updated": c.updated, "pinned": c.pinned})).collect::<Vec<_>>()}))

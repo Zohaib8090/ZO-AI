@@ -14,7 +14,7 @@ services:
         sync: false
       - key: ZO_SERVER_SECRET           # API keys are encrypted with this before they go to Firestore
         generateValue: true
-      - key: ZO_ACCESS_TOKEN            # a long random token for the terminal client and the phone (read once the token mode of zo-server is merged)
+      - key: ZO_ACCESS_TOKEN            # your own-devices key: paste the same value in the desktop app (Settings > Web sync)
         generateValue: true
       - key: CLAUDE_CODE_OAUTH_TOKEN    # optional: from `claude setup-token`, for Claude Code mode on the server
         sync: false
