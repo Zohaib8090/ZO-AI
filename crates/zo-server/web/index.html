@@ -378,15 +378,14 @@ select optgroup{background:var(--card);color:var(--accent);font-size:11px;font-w
     <button class="nav-item" data-nav="projects"><i data-i="grid"></i>Projects</button>
     <button class="nav-item" data-nav="artifacts"><i data-i="list"></i>Artifacts</button>
     <button class="nav-item" data-nav="scheduled"><i data-i="alarm"></i>Scheduled</button>
-    <button class="nav-item" data-nav="activity"><i data-i="activity"></i>Activity</button>
     <div class="lists" id="lists"></div>
-    <div class="side-foot"><button class="user-btn" id="userBtn" title="Running now, settings and sign out" aria-haspopup="menu"><span class="av-wrap"><span class="avatar" id="avatar">Z</span><span class="av-badge hide" id="avBadge"></span></span><span class="side-user" id="uname"></span></button><button class="icon-btn" id="gear" title="Settings" data-i="gear"></button></div>
+    <div class="side-foot"><button class="user-btn" id="userBtn" title="Running now, settings and sign out" aria-haspopup="menu"><span class="av-wrap"><span class="avatar" id="avatar">Z</span><span class="av-badge hide" id="avBadge"></span></span><span class="side-user" id="uname"></span></button><button class="icon-btn" id="gear" title="Settings" data-i="gear"></button><button class="icon-btn" id="out" title="Sign out" data-i="out"></button></div>
   </aside>
   <div class="side-scrim" id="sideScrim"></div>
   <button class="icon-btn" id="showSide" title="Show the sidebar" data-i="sidebar"></button>
   <div class="space" id="space"></div>
   <section class="main">
-    <div class="topbar"><div class="top-title" id="title"></div><button class="icon-btn" id="out" title="Sign out" data-i="out"></button></div>
+    <div class="topbar"><div class="top-title" id="title"></div></div>
     <div id="view" class="page"></div>
   </section>
 </div>
@@ -512,7 +511,7 @@ function composerHTML() {
     <button class="tool-btn mic" id="mic" data-i="mic" aria-pressed="false"></button>
     <button class="tool-btn send" id="send" title="Send" data-i="up"></button><button class="tool-btn stop hide" id="stop" title="Stop" data-i="stop"></button></div></div>
     <div class="runnote hide" id="runNote" role="status" aria-live="polite"></div>
-    <div class="pills"><button class="pill pill-run" id="pRun" aria-haspopup="menu" title="Where ZO-AI runs"><span class="pdot" id="pRunDot"></span><span class="pt" id="pRunT">Cloud</span><i data-i="down"></i></button><button class="pill" id="pModel"><span id="pModelT">…</span><i data-i="down"></i></button><button class="pill pill-muted" id="pMode">${esc(mode)}</button><button class="pill" id="pContext" title="Context usage and token breakdown"><i data-i="context"></i><span id="pContextT">Context</span></button></div>
+    <div class="pills"><button class="pill pill-run" id="pRun" aria-haspopup="menu" title="Where ZO-AI runs"><span class="pdot" id="pRunDot"></span><span class="pt" id="pRunT">Cloud</span><i data-i="down"></i></button><button class="pill" id="pModel"><span id="pModelT">…</span><i data-i="down"></i></button><button class="pill pill-muted" id="pMode">${esc(mode)}</button><button class="pill" id="pContext" title="Context usage and token breakdown"><i data-i="context"></i><span id="pContextT">Context</span></button><button class="pill" id="pTerminal" title="Interactive terminal"><i data-i="terminal"></i><span id="pTerminalT">Terminal</span></button></div>
     <div class="foot-note" id="footNote">ZO-AI can make mistakes. Check what it did.</div>`;
 }
 function wireComposer() {
@@ -529,6 +528,7 @@ function wireComposer() {
   runPaint(); linkRefresh();
   $("pMode").onclick = e => modePopover(e.currentTarget);
   if ($("pContext")) $("pContext").onclick = () => contextSheet();
+  if ($("pTerminal")) $("pTerminal").onclick = () => terminalSheet();
   refreshModel(); t.focus();
 }
 function setBusy(b) { busy = b; if ($("send")) { $("send").classList.toggle("hide", b); $("stop").classList.toggle("hide", !b); $("text").disabled = b; voiceMicPaint(); } }
@@ -1517,6 +1517,61 @@ async function contextSheet() {
     } catch (e) { toast(e.message || "Failed to compact."); compactBtn.disabled = false; compactBtn.textContent = "Compact session"; }
   });
   const sh = sheet("Context Window", wrap, [btn("Close", "", () => sh.close()), compactBtn]);
+}
+
+/* ---------- interactive terminal sheet ---------- */
+function terminalSheet() {
+  const dsk = onDesktop();
+  const wrap = document.createElement("div");
+  wrap.className = "term-box";
+  wrap.style.marginTop = "0";
+  wrap.style.height = "380px";
+  wrap.innerHTML = `<div class="term-head"><span>Terminal session ${dsk ? "· " + esc(curDev() ? devName(curDev()) : "Your computer") : "· Cloud session"}</span><button class="btn" id="termClr" style="padding:2px 8px;font-size:11px">Clear</button></div>`
+    + `<div class="term-log" id="termLog">ZO-AI Interactive Terminal\nType a shell command or instruction below.\n${dsk ? "Connected to " + esc(curDev() ? devName(curDev()) : "your computer") + " via desktop link." : "Operating in cloud environment."}\n</div>`
+    + `<div class="term-prompt-wrap"><span>$</span><input type="text" class="term-input" id="termIn" placeholder="Type a shell command (e.g. ls, df -h, pwd, uname)..." autocomplete="off"><button class="btn primary" id="termRun" style="padding:4px 12px;font-size:12px">Run</button></div>`;
+
+  const sh = sheet("Terminal", wrap, [btn("Close", "", () => sh.close())], true);
+  const tLog = wrap.querySelector("#termLog");
+  const tIn = wrap.querySelector("#termIn");
+  const tRun = wrap.querySelector("#termRun");
+  wrap.querySelector("#termClr").onclick = () => { tLog.textContent = ""; };
+
+  const runCmd = async () => {
+    const cmd = tIn.value.trim(); if (!cmd) return;
+    tIn.value = "";
+    tLog.textContent += `\n$ ${cmd}\nRunning...\n`;
+    tLog.scrollTop = tLog.scrollHeight;
+    try {
+      const res = await fetch("/api/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() },
+        body: JSON.stringify({ text: "Run this command in the shell and return its exact output directly:\n" + cmd, chat: chatId, ...(dsk ? { target: "desktop", device: runOn } : {}) })
+      });
+      if (!res.ok) throw new Error("Terminal error " + res.status);
+      const rd = res.body.getReader(), dec = new TextDecoder();
+      let buf = "", acc = "";
+      for (;;) {
+        const { value, done } = await rd.read(); if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i; while ((i = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue;
+          try {
+            const ev = JSON.parse(line);
+            if (ev.event === "delta") { acc += ev.text; }
+            else if (ev.event === "tool_done" && ev.output) { acc += "\n" + ev.output; }
+            else if (ev.event === "error") { acc += "\nError: " + (ev.message || ev.error); }
+          } catch {}
+        }
+      }
+      tLog.textContent += (acc.trim() || "[Command finished]") + "\n";
+    } catch (err) {
+      tLog.textContent += "Error: " + err.message + "\n";
+    }
+    tLog.scrollTop = tLog.scrollHeight;
+  };
+  tRun.onclick = runCmd;
+  tIn.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); runCmd(); } };
+  setTimeout(() => tIn.focus(), 60);
 }
 
 /* ---------- activity & interactive terminal page ---------- */
