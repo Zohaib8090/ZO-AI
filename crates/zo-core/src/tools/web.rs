@@ -247,6 +247,94 @@ pub fn fetch(a: &Value) -> Result<String, String> {
     Ok(if n > max { format!("{}\n[cut: {n} characters in all; ask again with a bigger max_chars or open the page in the browser]", text.chars().take(max).collect::<String>()) } else { text })
 }
 
+/// The value of an attribute inside one tag (`name="x"`, `name='x'` or `name=x`), compared without regard to case.
+fn attr(tag: &str, name: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(p) = lower[from..].find(name) {
+        let at = from + p;
+        from = at + name.len();
+        let before_ok = at == 0 || lower.as_bytes()[at - 1].is_ascii_whitespace();
+        let rest = tag[at + name.len()..].trim_start();
+        if !before_ok || !rest.starts_with('=') {
+            continue;
+        }
+        let v = rest[1..].trim_start();
+        let q = v.chars().next()?;
+        return Some(if q == '"' || q == '\'' { v[1..].split(q).next()?.to_string() } else { v.split(|c: char| c.is_whitespace() || c == '>').next()?.to_string() });
+    }
+    None
+}
+
+/// The title and description a page gives about itself (its `og:` or `meta` tags and `<title>`).
+pub fn page_summary(html: &str) -> (String, String) {
+    let lower = html.to_ascii_lowercase();
+    let (mut og_title, mut og_desc, mut desc) = (None, None, None);
+    for (i, _) in lower.match_indices("<meta") {
+        let Some(end) = html[i..].find('>') else { continue };
+        let tag = &html[i..i + end];
+        let key = attr(tag, "property").or_else(|| attr(tag, "name")).unwrap_or_default().to_ascii_lowercase();
+        let content = attr(tag, "content").map(|c| entities(&c).split_whitespace().collect::<Vec<_>>().join(" ")).filter(|c| !c.is_empty());
+        match key.as_str() {
+            "og:title" => og_title = og_title.or(content),
+            "og:description" => og_desc = og_desc.or(content),
+            "description" => desc = desc.or(content),
+            _ => {}
+        }
+    }
+    let title = og_title
+        .or_else(|| {
+            let a = lower.find("<title")?;
+            let from = html[a..].find('>')? + a + 1;
+            let to = lower[from..].find("</title>")? + from;
+            Some(strip_tags(&html[from..to])).filter(|t| !t.is_empty())
+        })
+        .unwrap_or_default();
+    let cut = |s: String, n: usize| s.chars().take(n).collect::<String>();
+    (cut(title, 160), cut(og_desc.or(desc).unwrap_or_default(), 300))
+}
+
+/// Calls to `preview` that were made lately, by tenant (the desktop app is one "local" tenant).
+static PREVIEWS: std::sync::Mutex<Vec<(String, std::time::Instant)>> = std::sync::Mutex::new(Vec::new());
+const PREVIEWS_PER_MINUTE: usize = 12;
+
+fn preview_allowed() -> bool {
+    let who = crate::tenant::current().map(|t| t.id).unwrap_or_else(|| "local".into());
+    let now = std::time::Instant::now();
+    let mut all = PREVIEWS.lock().unwrap_or_else(|e| e.into_inner());
+    all.retain(|(_, t)| now.duration_since(*t) < Duration::from_secs(60));
+    if all.iter().filter(|(w, _)| *w == who).count() >= PREVIEWS_PER_MINUTE {
+        return false;
+    }
+    all.push((who, now));
+    true
+}
+
+/// A link chip's title: `{"title", "description", "host"}` of a public web page. Same address checks as the fetch tool (only public
+/// addresses are connected to, redirects included); at most 300 KB of the page is read; a few calls a minute per person.
+pub fn preview(url: &str) -> Result<Value, String> {
+    let url = url.trim();
+    if url.len() > 2000 || url.chars().any(|c| c.is_control() || c == ' ') {
+        return Err("That is not a web address.".into());
+    }
+    host_is_public(url)?;
+    if !preview_allowed() {
+        return Err("Too many previews just now. Wait a minute.".into());
+    }
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("").rsplit('@').next().unwrap_or("").to_lowercase();
+    let host = host.rsplit_once(':').filter(|(_, p)| p.chars().all(|c| c.is_ascii_digit())).map(|(h, _)| h.to_string()).unwrap_or(host);
+    let resp = agent().get(url).set("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5").call().map_err(|e| format!("The page could not be fetched: {e}"))?;
+    let kind = resp.header("content-type").unwrap_or("").to_lowercase();
+    if !(kind.is_empty() || kind.contains("html")) {
+        return Ok(serde_json::json!({"title": "", "description": "", "host": host}));
+    }
+    let mut body = Vec::new();
+    resp.into_reader().take(300_000).read_to_end(&mut body).map_err(|e| format!("The page could not be read: {e}"))?;
+    let (title, description) = page_summary(&String::from_utf8_lossy(&body));
+    Ok(serde_json::json!({"title": title, "description": description, "host": host}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,6 +375,35 @@ mod tests {
             let e = fetch(&serde_json::json!({ "url": bad })).unwrap_err();
             assert!(!e.contains("Connection refused"), "{bad}: {e}");
         }
+    }
+
+    #[test]
+    fn a_pages_title_and_description_are_read_from_its_tags() {
+        let (t, d) = page_summary(r#"<html><head><title> Plain &amp; simple </title><meta name="Description" content="The  plain description"><meta property='og:title' content='Open Graph title'><meta content="OG desc" property="og:description"></head>"#);
+        assert_eq!((t.as_str(), d.as_str()), ("Open Graph title", "OG desc"));
+        let (t, d) = page_summary("<title>Only a title</title><meta name=description content=bare>");
+        assert_eq!((t.as_str(), d.as_str()), ("Only a title", "bare"));
+        assert_eq!(page_summary("no tags at all"), (String::new(), String::new()));
+        assert_eq!(page_summary(&format!("<title>{}</title>", "x".repeat(500))).0.chars().count(), 160);
+    }
+
+    #[test]
+    fn a_preview_refuses_private_addresses_and_is_rate_limited() {
+        for bad in ["http://127.0.0.1:9/", "http://localhost/", "http://192.168.0.1/", "ftp://example.com/", "javascript:alert(1)", "http://[::1]/", "https://exa mple.com/", "http://169.254.169.254/"] {
+            assert!(preview(bad).is_err(), "{bad}");
+        }
+        // the refusals above did not use up the allowance (they fail before it is counted)
+        PREVIEWS.lock().unwrap().clear();
+        let who = "local".to_string();
+        {
+            let mut all = PREVIEWS.lock().unwrap();
+            for _ in 0..PREVIEWS_PER_MINUTE {
+                all.push((who.clone(), std::time::Instant::now()));
+            }
+        }
+        assert!(!preview_allowed());
+        assert_eq!(preview("https://example.com/").unwrap_err(), "Too many previews just now. Wait a minute.");
+        PREVIEWS.lock().unwrap().clear();
     }
 
     #[test]

@@ -51,6 +51,11 @@ use tiny_http::{Header, Method, Request, Response, Server};
 /// Request bodies: /api/op, /api/send and /api/reply, and the desktop sync.
 const BODY_LIMIT: usize = 1_000_000;
 const SYNC_BODY_LIMIT: usize = 20_000_000;
+/// A message with attachments (a few shrunken pictures and the text of files) is the only other body that is allowed to be big.
+const SEND_BODY_LIMIT: usize = 14_000_000;
+/// Message bodies bigger than a plain one that are being read at the same time, for the whole server (each is held in memory).
+const MAX_BIG_SENDS: usize = 16;
+static BIG_SENDS: AtomicUsize = AtomicUsize::new(0);
 /// Requests being handled at the same time, for the whole server.
 const MAX_CONNECTIONS: usize = 400;
 
@@ -111,6 +116,25 @@ pub fn route_of(method: &Method, path: &str) -> Option<Route> {
         "/api/auth/signout" => Some(Route::Signout),
         p if p.strip_prefix("/api/auth/").is_some_and(|n| loginapi::PERSON_CALLS.contains(&n)) => Some(Route::Auth),
         p => p.strip_prefix("/api/account/").filter(|n| account::CALLS.contains(n)).map(|_| Route::Account),
+    }
+}
+
+/// A place among the big message bodies being read (see `MAX_BIG_SENDS`); given back when dropped.
+struct BigSend<'a>(&'a AtomicUsize);
+
+impl<'a> BigSend<'a> {
+    fn take(n: &'a AtomicUsize) -> Option<BigSend<'a>> {
+        if n.fetch_add(1, Ordering::SeqCst) >= MAX_BIG_SENDS {
+            n.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(BigSend(n))
+    }
+}
+
+impl Drop for BigSend<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -347,6 +371,8 @@ fn who(app: &App, req: &Request, path: &str) -> Result<Who, Fail> {
 /// How long a request may take to send its body (the sockets also drop a client that is silent for 20 s, see vendor/tiny_http).
 const BODY_SECS: u64 = 30;
 const SYNC_BODY_SECS: u64 = 120;
+/// 14 MB over a slow phone connection: more time than a plain message gets, but not unlimited.
+const SEND_BODY_SECS: u64 = 90;
 /// The sign-in calls are small, and the two that need no login give a client even less time.
 const SMALL_BODY_LIMIT: usize = 4096;
 const PUBLIC_BODY_SECS: u64 = 10;
@@ -528,13 +554,39 @@ fn route(app: Arc<App>, mut req: Request) {
     };
     let limit = match r {
         Route::Sync => SYNC_BODY_LIMIT,
+        Route::Send => SEND_BODY_LIMIT,
         Route::Auth | Route::Signout => SMALL_BODY_LIMIT,
         _ => BODY_LIMIT,
     };
-    let v = match body(&mut req, limit, if r == Route::Sync { SYNC_BODY_SECS } else { BODY_SECS }) {
+    let secs = match r {
+        Route::Sync => SYNC_BODY_SECS,
+        Route::Send => SEND_BODY_SECS,
+        _ => BODY_SECS,
+    };
+    // a message body may be 14 MB and is held in memory while it arrives: only a few big ones at a time (a plain message is small)
+    let _big = if r == Route::Send && req.body_length().is_none_or(|n| n > BODY_LIMIT) {
+        match BigSend::take(&BIG_SENDS) {
+            Some(g) => Some(g),
+            None => return fail(&app, req, Fail { status: 429, error: "Too many large messages are being sent right now. Try again in a moment.".into(), retry: Some(5) }),
+        }
+    } else {
+        None
+    };
+    let mut v = match body(&mut req, limit, secs) {
         Ok(v) => v,
         Err(f) => return fail(&app, req, f),
     };
+    drop(_big);
+    if r == Route::Send {
+        // strict checks before anything is passed on (the service checks again): what goes on is rebuilt from the checked fields only
+        match zo_core::attach::parse(v.get("attachments")) {
+            Ok(a) if a.is_empty() => {
+                v.as_object_mut().map(|o| o.remove("attachments"));
+            }
+            Ok(a) => v["attachments"] = a.to_json(),
+            Err(e) => return reply(&app, req, 400, json!({"ok": false, "error": e})),
+        }
+    }
     match r {
         Route::Send => send(&app, req, v, lease, tenant),
         Route::Sync => match sync_api::handle(&path, &v, &tenant) {

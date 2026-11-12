@@ -288,7 +288,7 @@ mod tests {
     use crate::store::TEST_ENV_LOCK;
 
     fn e(kind: &str, text: &str) -> Entry {
-        Entry { kind: kind.into(), text: text.into() }
+        Entry { kind: kind.into(), text: text.into(), ..Default::default() }
     }
 
     #[test]

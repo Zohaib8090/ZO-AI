@@ -549,7 +549,7 @@ mod tests {
             sel.base_urls.insert("ollama".into(), url.clone());
             sel.save();
         });
-        let e = |k: &str, t: &str| chats::Entry { kind: k.into(), text: t.into() };
+        let e = |k: &str, t: &str| chats::Entry { kind: k.into(), text: t.into(), ..Default::default() };
         let es = vec![e("msg-user", "one"), e("msg-ai", "a"), e("msg-user", "two"), e("msg-ai", "a"), e("msg-user", "I am building a boat"), e("msg-ai", "nice")];
         // A's job is busy: B's still starts (its own key), A's second one does not
         assert!(crate::ai::memory_agent::__begin_for_test(&a.id));
@@ -586,7 +586,7 @@ mod tests {
             std::fs::write(t.data.join("junk.bin"), vec![0u8; (MAX_DATA_BYTES - 1000) as usize]).unwrap();
             // a write that would go over is dropped, what is there stays
             let mut big = chat("big", "x");
-            big.entries = vec![chats::Entry { kind: "msg-user".into(), text: "y".repeat(5000) }];
+            big.entries = vec![chats::Entry { kind: "msg-user".into(), text: "y".repeat(5000), ..Default::default() }];
             chats::upsert(big);
             assert_eq!(chats::load().len(), 1, "the chat that does not fit was not written");
             std::fs::write(t.data.join("junk.bin"), vec![0u8; MAX_DATA_BYTES as usize]).unwrap();

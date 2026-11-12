@@ -248,6 +248,86 @@ fn a_message_reaches_the_service_for_a_restricted_person_and_streams_back() {
     assert_eq!(r.app.tenants.running_answers(), 0);
 }
 
+const PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+fn b64(data: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for c in data.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        out.push(A[(n >> 18) as usize & 63] as char);
+        out.push(A[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { A[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { A[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// A PNG that is `n` bytes long (a real header, then filler).
+fn big_png(n: usize) -> String {
+    let mut d = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    d.resize(n, 9);
+    b64(&d)
+}
+
+fn send_raw(r: &Rig, token: &str, body: &Value) -> (u16, String) {
+    match ureq::post(&format!("{}/api/send", r.base)).set("Authorization", &format!("Bearer {token}")).send_string(&body.to_string()) {
+        Ok(res) => (res.status(), res.into_string().unwrap_or_default()),
+        Err(ureq::Error::Status(c, res)) => (c, res.into_string().unwrap_or_default()),
+        Err(e) => panic!("{e}"),
+    }
+}
+
+#[test]
+fn attachments_are_checked_by_the_server_before_anything_is_passed_on_and_a_message_may_be_big() {
+    let u = uniq("attach");
+    let r = rig(&[("tok", &u, "a@x.test")], "", 200, 600);
+    let img = |mime: &str, data: &str| json!({"kind": "image", "mime": mime, "name": "a.png", "data_b64": data});
+    let refused = |what: &str, att: Value, want: &str| {
+        let (code, body) = send_raw(&r, "tok", &json!({"text": "hi", "attachments": att}));
+        assert_eq!(code, 400, "{what}: {body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].as_str().unwrap().contains(want), "{what}: {body}");
+        assert!(!body.contains("\"event\""), "{what}: nothing was streamed");
+    };
+    refused("not a list", json!("x"), "list");
+    refused("wrong mime", json!([img("image/svg+xml", PNG_B64)]), "PNG, JPEG");
+    refused("bad base64", json!([img("image/png", "%%%")]), "not valid base64");
+    refused("magic bytes", json!([img("image/jpeg", PNG_B64)]), "not really");
+    refused("a text file under a picture mime", json!([img("image/png", &b64(b"just some words here"))]), "not really");
+    refused("too many pictures", Value::Array(vec![img("image/png", PNG_B64); 5]), "Too many pictures");
+    refused("too many files", Value::Array((0..7).map(|_| json!({"kind": "text", "name": "t", "text": "x"})).collect()), "Too many files");
+    refused("a picture over 3 MB", json!([img("image/png", &big_png(3 * 1024 * 1024 + 1))]), "too big");
+    refused("text over 200 KB", json!([{"kind": "text", "name": "t", "text": "a".repeat(200 * 1024 + 1)}]), "too much text");
+    refused("text over 400 KB together", json!([{"kind": "text", "name": "t", "text": "a".repeat(200 * 1024)}, {"kind": "text", "name": "u", "text": "a".repeat(200 * 1024)}, {"kind": "text", "name": "v", "text": "a"}]), "together");
+    refused("a binary file as text", json!([{"kind": "text", "name": "x.bin", "text": "a\u{0}b"}]), "not a text file");
+    refused("an unknown kind", json!([{"kind": "video", "name": "x"}]), "not supported");
+    refused("a server path instead of data", json!([{"kind": "image", "mime": "image/png", "name": "x", "path": "/etc/passwd"}]), "no data");
+    // a big message is allowed: three pictures of 3 MB (about 12 MB on the wire) pass the size limit and the checks, and reach the service
+    // (which answers that no model is chosen: this person has not set one up)
+    let three = Value::Array(vec![img("image/png", &big_png(3 * 1024 * 1024)); 3]);
+    let (code, body) = send_raw(&r, "tok", &json!({"text": "look at these", "attachments": three}));
+    assert_eq!(code, 200, "{}", &body[..body.len().min(300)]);
+    assert!(body.contains("\"event\":\"stream\"") && body.contains("\"event\":\"done\""), "{body}");
+    // plain messages and messages with an empty list still work, and the place is free afterwards
+    assert_eq!(send_raw(&r, "tok", &json!({"text": "hello", "attachments": []})).0, 200);
+    assert_eq!(r.app.tenants.running_answers(), 0);
+    // the other routes keep the small limit
+    assert_eq!(call(&r, "tok", "/api/op", json!({"op": "chats", "pad": "x".repeat(BODY_LIMIT)})).status, 413);
+}
+
+#[test]
+fn there_is_only_a_limited_number_of_big_message_bodies_at_one_time() {
+    let n = AtomicUsize::new(0);
+    let held: Vec<_> = (0..MAX_BIG_SENDS).map(|_| BigSend::take(&n).expect("a place")).collect();
+    assert!(BigSend::take(&n).is_none());
+    assert_eq!(n.load(Ordering::SeqCst), MAX_BIG_SENDS, "a refused try takes nothing");
+    drop(held);
+    assert_eq!(n.load(Ordering::SeqCst), 0);
+    assert!(BigSend::take(&n).is_some());
+}
+
 #[test]
 fn device_credentials_a_desktop_one_cannot_call_the_api_a_cli_one_can_a_revoked_one_stops() {
     let u = uniq("dev");
@@ -395,7 +475,9 @@ fn bodies_over_the_limit_are_refused_with_413() {
     let r = rig(&[("tok", &u, "b@x.test")], "", 200, 600);
     let big = json!({"op": "chats", "pad": "x".repeat(BODY_LIMIT)});
     assert_eq!(call(&r, "tok", "/api/op", big.clone()).status, 413);
-    assert_eq!(call(&r, "tok", "/api/send", big).status, 413);
+    // a message may carry attachments, so it has a bigger limit of its own: 1 MB passes it, 14 MB does not
+    assert_ne!(call(&r, "tok", "/api/send", big).status, 413);
+    assert_eq!(call(&r, "tok", "/api/send", json!({"text": "x", "pad": "x".repeat(SEND_BODY_LIMIT)})).status, 413);
     // the sync takes more (this one is refused for another reason: it is not a chat)
     let sync = call(&r, "tok", "/api/sync/put", json!({"kind": "chats", "id": "c", "doc": {"pad": "x".repeat(BODY_LIMIT + 10)}}));
     assert_ne!(sync.status, 413);

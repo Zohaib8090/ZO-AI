@@ -153,7 +153,7 @@ impl Ctl {
         self.scroll.set_visible(true);
         self.chat.set_valign(gtk::Align::Fill);
         for e in chat.entries {
-            self.add(&e.text, &e.kind);
+            self.readd(&e);
         }
         self.end_group();
     }
@@ -227,7 +227,7 @@ impl Ctl {
             .borrow()
             .iter()
             .filter_map(|e| match e.kind.as_str() {
-                "msg-user" => Some(format!("You: {}", e.text)),
+                "msg-user" => Some(format!("You: {}", e.display_text())),
                 "msg-ai" => Some(format!("ZO-AI: {}", e.text)),
                 _ => None,
             })
@@ -285,7 +285,7 @@ impl Ctl {
         *self.last_retry.borrow_mut() = None;
         self.entries.borrow_mut().clear();
         for e in &entries[..at] {
-            self.add(&e.text, &e.kind);
+            self.readd(e);
         }
         self.end_group();
         // whatever was being typed in the box stays
@@ -371,7 +371,7 @@ impl Ctl {
         *self.last_nav.borrow_mut() = None;
         self.entries.borrow_mut().clear();
         for e in &entries {
-            self.add(&e.text, &e.kind);
+            self.readd(e);
         }
         self.end_group();
     }
@@ -475,9 +475,16 @@ impl Ctl {
         self.chat.set_valign(gtk::Align::Center);
     }
 
+    /// Shows a saved line again and remembers it for saving. A message that came with pictures or files from the web app shows their
+    /// names, and the facts about them are kept.
+    fn readd(&self, e: &Entry) {
+        self.entries.borrow_mut().push(e.clone());
+        self.add_plain(&e.display_text(), &e.kind);
+    }
+
     /// Shows a line and remembers it for saving.
     fn add(&self, text: &str, class: &str) -> gtk::Widget {
-        self.entries.borrow_mut().push(Entry { kind: class.to_string(), text: text.to_string() });
+        self.entries.borrow_mut().push(Entry { kind: class.to_string(), text: text.to_string(), ..Default::default() });
         self.add_plain(text, class)
     }
 

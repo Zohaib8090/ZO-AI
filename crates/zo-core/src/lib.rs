@@ -4,6 +4,7 @@
 pub mod activity;
 pub mod ai;
 pub mod approval;
+pub mod attach;
 pub mod audit;
 pub mod exec;
 pub mod login;

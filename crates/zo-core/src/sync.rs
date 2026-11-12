@@ -254,6 +254,8 @@ pub fn put_doc(kind: &str, id: &str, doc: &Value) -> Result<bool, String> {
                 // pictures are files on this computer's disk: a chat that came from a client names none of them
                 crate::ai::agent::strip_images(&mut c.history);
             }
+            // the web page draws what a chat says about attachments: only plain names and real small previews get through
+            c.clean_attach();
             (c.updated, Parsed::Chat(c))
         }
         "memory" if id == STATE_ID => {
@@ -924,6 +926,39 @@ mod tests {
     }
 
     #[test]
+    fn attachment_facts_in_a_synced_chat_are_cleaned_and_survive_a_round_trip_and_old_chats_still_load() {
+        let (_g, dir) = sandbox("attach");
+        let png = crate::attach::testkit::PNG_1X1_B64;
+        let good = format!("data:image/png;base64,{png}");
+        let mut d = chat("c1", "with pictures", 100);
+        d["entries"] = json!([
+            {"kind": "msg-user", "text": "look", "attach": [
+                {"kind": "image", "name": "ok.png", "size": 70, "thumb": good},
+                {"kind": "image", "name": "<img src=x onerror=alert(1)>/../a\u{0}b.png", "size": 1, "thumb": "javascript:alert(1)"},
+                {"kind": "image", "name": "x", "size": 1, "thumb": "data:text/html;base64,PHNjcmlwdD4="},
+                {"kind": "file", "name": "gone"},
+                {"kind": "text", "name": "notes.txt", "size": 9, "thumb": good}
+            ]},
+            {"kind": "msg-ai", "text": "a picture"}
+        ]);
+        assert!(put_doc("chats", "c1", &d).unwrap());
+        let c = chats::load().into_iter().next().unwrap();
+        let a = &c.entries[0].attach;
+        assert_eq!(a.len(), 4, "the unknown kind is dropped");
+        assert_eq!((a[0].name.as_str(), a[0].thumb.as_str()), ("ok.png", good.as_str()));
+        assert!(!a[1].name.contains(['<', '>', '/', '\u{0}']) && a[1].thumb.is_empty());
+        assert!(a[2].thumb.is_empty(), "a data address that is not a picture is not kept");
+        assert_eq!((a[3].kind.as_str(), a[3].thumb.as_str()), ("text", ""), "a file has no preview picture");
+        // what is stored is what is synced out again, and a chat without the field loads as before
+        let out = serde_json::to_value(&c).unwrap();
+        assert_eq!(out["entries"][0]["attach"][0]["name"], "ok.png");
+        assert!(out["entries"][1].get("attach").is_none());
+        let old: chats::Chat = serde_json::from_value(chat("c2", "old", 5)).unwrap();
+        assert!(old.entries[0].attach.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn deleting_leaves_a_tombstone_and_a_newer_put_brings_the_item_back() {
         let (_g, dir) = sandbox("tomb");
         assert!(put_doc("chats", "c1", &chat("c1", "one", 100)).unwrap());
@@ -1049,7 +1084,7 @@ mod tests {
     #[test]
     fn a_chat_that_grew_while_it_was_answered_keeps_the_new_messages() {
         let (_g, dir) = sandbox("merge");
-        let e = |k: &str, t: &str| chats::Entry { kind: k.into(), text: t.into() };
+        let e = |k: &str, t: &str| chats::Entry { kind: k.into(), text: t.into(), ..Default::default() };
         let mut c = chats::Chat { id: "c1".into(), title: "t".into(), updated: 100, entries: vec![e("msg-user", "one")], ..Default::default() };
         chats::upsert(c.clone());
         let base = chats::Base::of(&c);

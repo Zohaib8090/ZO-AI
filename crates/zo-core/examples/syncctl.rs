@@ -19,7 +19,7 @@ fn main() {
     let arg = |i: usize| a.get(i).cloned().unwrap_or_default();
     match arg(0).as_str() {
         "chat" => {
-            let c = chats::Chat { id: arg(1), title: arg(2), updated: chats::now_millis(), entries: vec![chats::Entry { kind: "msg-user".into(), text: arg(2) }], ..Default::default() };
+            let c = chats::Chat { id: arg(1), title: arg(2), updated: chats::now_millis(), entries: vec![chats::Entry { kind: "msg-user".into(), text: arg(2), ..Default::default() }], ..Default::default() };
             chats::upsert(c);
         }
         "note" => println!("{:?}", memory::remember(&arg(1), "fact", "")),
