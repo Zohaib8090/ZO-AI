@@ -13,15 +13,15 @@
   --bg:#191919;--card:#202020;--card2:#242424;--raise:#2E2E2E;--comp:#303030;--user:#2B2B2B;--input:#171717;--pop:#262626;--sheet:#202020;
   --text:#ECECEC;--text2:#D0D0D0;--text3:#BDBDBD;--dim:#8C8C8C;--dimmer:#7C7C7C;--icon:#9A9A9A;
   --accent:#5FD4D4;--accent2:#7EE0E0;--onaccent:#0B0E14;--check:#4C9AFF;--danger:#E5736A;
-  --line:rgba(255,255,255,.07);--line2:rgba(255,255,255,.12);--hov:rgba(255,255,255,.06);--act:rgba(255,255,255,.09);--scrim:rgba(0,0,0,.55);
-  --btn:#ECECEC;--btnfg:#191919;--btnhov:#fff;--code:#202020;--shadow:rgba(0,0,0,.28);color-scheme:dark;
+  --line:rgba(255,255,255,.07);--line4:rgba(255,255,255,.04);--line8:rgba(255,255,255,.08);--line2:rgba(255,255,255,.12);--hov:rgba(255,255,255,.06);--act:rgba(255,255,255,.09);--scrim:rgba(0,0,0,.55);
+  --btn:#ECECEC;--btnfg:#191919;--btnhov:#fff;--code:#202020;--codefg:#E4E4E4;--shadow:rgba(0,0,0,.28);color-scheme:dark;
 }
 :root[data-theme=light]{
   --bg:#FAF9F5;--card:#FFFFFF;--card2:#F3F1EA;--raise:#EDEAE0;--comp:#FFFFFF;--user:#E9E6DC;--input:#F1EFE8;--pop:#FFFFFF;--sheet:#FFFFFF;
   --text:#1F1E1D;--text2:#3D3C39;--text3:#55534E;--dim:#7A776F;--dimmer:#8A877F;--icon:#6B6963;
   --accent:#1FA5A5;--accent2:#2BB8B8;--onaccent:#FFFFFF;
-  --line:rgba(0,0,0,.07);--line2:rgba(0,0,0,.12);--hov:rgba(0,0,0,.06);--act:rgba(0,0,0,.09);--scrim:rgba(0,0,0,.35);
-  --btn:#1F1E1D;--btnfg:#FAF9F5;--btnhov:#000;--code:#FFFFFF;--shadow:rgba(0,0,0,.12);color-scheme:light;
+  --line:rgba(0,0,0,.07);--line4:rgba(0,0,0,.04);--line8:rgba(0,0,0,.08);--line2:rgba(0,0,0,.12);--hov:rgba(0,0,0,.06);--act:rgba(0,0,0,.09);--scrim:rgba(0,0,0,.35);
+  --btn:#1F1E1D;--btnfg:#FAF9F5;--btnhov:#000;--code:#FFFFFF;--codefg:#2A2926;--shadow:rgba(0,0,0,.12);color-scheme:light;
 }
 *{box-sizing:border-box;font-family:"Inter","Noto Sans","Cantarell",system-ui,sans-serif}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-size:14px;line-height:1.45}
@@ -48,13 +48,13 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .icon-btn{min-width:34px;min-height:34px;border-radius:8px;color:var(--icon)}
 .icon-btn:hover{background:var(--card2);color:var(--text)}
 .brand .icon-btn{margin-bottom:6px}
-.nav-item{display:flex;justify-content:flex-start;width:100%;padding:7px 10px;border-radius:8px;font-size:14px;color:var(--text)}
+.nav-item{display:flex;justify-content:flex-start;gap:12px;width:100%;padding:7px 10px;border-radius:8px;font-size:14px;color:var(--text)}
 .nav-item svg{color:var(--icon);width:18px;height:18px}.nav-item.active svg{color:var(--text)}
 .nav-item:hover{background:var(--hov)}.nav-item.active{background:var(--act)}
 .lists{flex:1;overflow:auto;margin-top:2px}
 .side-label{font-size:12px;color:var(--dimmer);padding:16px 10px 5px 10px}
 .side-row{position:relative;display:flex;align-items:center;border-radius:8px}
-.side-item{flex:1;min-width:0;justify-content:flex-start;padding:6px 10px;font-size:13.5px;color:var(--text2)}
+.side-item{flex:1;min-width:0;justify-content:flex-start;gap:10px;padding:6px 10px;font-size:13.5px;color:var(--text2)}
 .side-item svg{color:var(--icon);width:14px;height:14px}.side-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .side-row:hover,.side-row.active{background:var(--hov)}.side-row.active{background:var(--act)}
 .side-del{opacity:0;min-width:26px;min-height:26px;border-radius:7px;color:var(--dim)}.side-row:hover .side-del{opacity:1}.side-del:hover{color:var(--text)}
@@ -69,7 +69,7 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 #showSide{display:none}.sidebar.closed~.main #showSide{display:inline-flex}
 
 .page{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column}
-.thread{width:100%;max-width:640px;margin:0 auto;padding:24px 20px 8px;display:flex;flex-direction:column;gap:14px}
+.thread{width:calc(100% - 48px);max-width:760px;margin:0 auto;padding:24px 0 8px;display:flex;flex-direction:column;gap:10px}
 .msg-user-wrap{align-self:flex-end;margin-left:120px;max-width:100%;display:flex;flex-direction:column;align-items:flex-end}
 .msg-user{background:var(--user);border-radius:14px;padding:9px 14px;font-size:15px;white-space:pre-wrap;word-break:break-word}
 .msg-ai-wrap{display:flex;flex-direction:column}
@@ -83,10 +83,10 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .code-block{background:var(--code);border:1px solid var(--line);border-radius:10px;margin:2px 0 .75em;overflow:hidden}
 .code-head{display:flex;align-items:center;padding:4px 6px 0 12px;min-height:30px}
 .code-lang{flex:1;font-size:12px;color:var(--dim)}
-.code-body{margin:0;font-family:ui-monospace,"DejaVu Sans Mono",monospace;font-size:13px;padding:4px 12px 12px;color:var(--text);overflow:auto;white-space:pre}
+.code-body{margin:0;font-family:ui-monospace,"DejaVu Sans Mono",monospace;font-size:13px;padding:4px 12px 12px;color:var(--codefg);overflow:auto;white-space:pre}
 .msg-actions{display:flex;margin-top:2px;opacity:0;transition:opacity .12s}.msg-ai-wrap:hover .msg-actions,.msg-user-wrap:hover .msg-actions{opacity:1}
 .msg-actions button{min-width:28px;min-height:28px;color:var(--dim);border-radius:7px}.msg-actions button:hover{background:var(--hov);color:var(--text)}
-.msg-error{color:#c0392b;font-size:13px;padding:2px}:root:not([data-theme=light]) .msg-error{color:#E5736A}
+.msg-error{color:#c0392b;font-size:13px;padding:2px}
 .tool-line{color:var(--dim);font-size:12.5px;padding:0 2px}
 .tool-group{margin:2px 0 4px}
 .tool-head{padding:4px 8px;border-radius:9px;color:var(--dim);font-size:13.5px;justify-content:flex-start}
@@ -100,26 +100,26 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 
 /* home and composer */
 .home{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;gap:0}
-.hero{display:flex;align-items:center;gap:12px;margin-bottom:18px}.hero .mark{width:34px;height:34px;margin:0}
+.hero{display:flex;align-items:center;gap:14px;margin-bottom:28px}.hero .mark{width:40px;height:40px;margin:0}
 .hero-title{font-size:32px;color:var(--text)}
-.composer-wrap{width:100%;max-width:468px;display:flex;flex-direction:column;align-items:stretch}
-.chat-foot{padding:6px 20px 8px;display:flex;justify-content:center}
+.composer-wrap{width:100%;max-width:720px;padding:0 24px;display:flex;flex-direction:column;align-items:stretch}
+.chat-foot{padding:6px 0 8px;display:flex;justify-content:center}
 .composer{background:var(--comp);border:1px solid var(--line);border-radius:16px;padding:10px 12px 8px;box-shadow:0 2px 12px var(--shadow)}
 .composer textarea{width:100%;border:none;outline:none;background:transparent;color:var(--text);font-size:15px;line-height:1.5;resize:none;padding:6px 4px 12px;max-height:200px;display:block}
 .composer textarea::placeholder{color:var(--dim)}
 .composer .row{display:flex;align-items:center;gap:4px}.row .grow{flex:1}
 .tool-btn{min-width:32px;min-height:32px;border-radius:9px;color:var(--text3);padding:0 6px}
 .tool-btn:hover{background:var(--hov);color:var(--text)}
-.tool-btn.send{background:var(--accent);color:var(--onaccent);border-radius:10px;width:38px}.tool-btn.send:hover{background:var(--accent2)}
-.tool-btn.stop{background:#E5484D;color:#fff;border-radius:10px;width:38px}
+.tool-btn.send{background:var(--accent);color:var(--onaccent);border-radius:10px;width:32px}.tool-btn.send:hover{background:var(--accent2)}
+.tool-btn.stop{background:#E5484D;color:#fff;border-radius:10px;width:32px}
 .pills{display:flex;justify-content:flex-end;gap:2px;padding:6px 8px 0}
 .pill{border-radius:9px;color:var(--text3);padding:6px 10px;font-size:13px}.pill:hover{background:var(--hov);color:var(--text)}.pill-muted{color:var(--dim)}
 .pill svg{width:11px;height:11px}
 .foot-note{font-size:12px;color:var(--dimmer);text-align:center;padding:12px 0 0}
 
 /* pages */
-.pagebox{width:100%;max-width:700px;margin:0 auto;padding:20px 24px 40px}
-.page-head{display:flex;align-items:center;gap:10px;margin:14px 0 24px}
+.pagebox{width:100%;padding:0 44px 44px}.pagebox.narrow{max-width:760px;margin:0 auto;padding:0 30px 34px}
+.page-head{display:flex;align-items:center;gap:8px;margin:34px 0 24px}
 .page-title{flex:1;font-size:30px;color:var(--text)}
 .page-btn{border:1px solid var(--line2);border-radius:999px;padding:7px 16px;font-size:13.5px;color:var(--text)}.page-btn:hover{background:var(--hov)}
 .page-btn.primary{background:var(--btn);border-color:var(--btn);color:var(--btnfg);font-weight:500}.page-btn.primary:hover{background:var(--btnhov)}
@@ -127,39 +127,39 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .back{border:1px solid var(--line2);border-radius:999px;padding:5px 12px;font-size:13px}.back:hover{background:var(--hov)}
 .empty-box{border:1px dashed var(--line2);border-radius:14px;padding:56px 20px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:8px}
 .empty-title{font-size:15px;font-weight:600}.empty-text{font-size:13px;color:var(--dimmer);max-width:420px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px}
+.card{background:var(--card);border:1px solid var(--line4);border-radius:10px}
 .project-card{display:flex;align-items:center;gap:12px;padding:12px 14px;margin-bottom:8px;cursor:pointer;width:100%;text-align:left;justify-content:flex-start}
-.project-card:hover{background:var(--pop);border-color:var(--line2)}
-.pc-icon{background:var(--raise);border-radius:8px;padding:9px;color:var(--text3);display:flex}.pc-icon svg{width:18px;height:18px}
+.project-card:hover{background:var(--pop);border-color:var(--line8)}
+.pc-icon{background:var(--user);border-radius:8px;padding:9px;color:var(--text3);display:flex}.pc-icon svg{width:18px;height:18px}
 .pc-name{font-size:15px}.pc-meta{font-size:13px;color:var(--dim)}.pc-col{flex:1;min-width:0}
 .pc-col>*{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .search-input{width:100%;background:var(--card);color:var(--text);border:1px solid var(--line2);border-radius:12px;padding:10px 14px;font-size:15px;outline:none;margin-bottom:14px}
 .search-input:focus{border-color:var(--dimmer)}
 
 /* settings */
-.settings-head{font-size:13px;color:var(--dim);padding:0 0 8px 4px;margin-top:22px}
+.settings-head{font-size:13px;color:var(--dim);padding:0 0 8px 4px;margin-top:26px}.settings-head:first-child{margin-top:0}
 .settings-card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .settings-row{display:flex;align-items:center;gap:14px;padding:14px 16px;border-bottom:1px solid var(--line)}.settings-row:last-child{border-bottom:none}
-.settings-row .col{flex:1;min-width:0}.pc-name2{font-size:14px}.pc-meta2{font-size:12.5px;color:var(--dim);margin-top:2px}
+.settings-row .col{flex:1;min-width:0}.pc-name2{font-size:15px}.pc-meta2{font-size:13px;color:var(--dim);margin-top:3px;max-width:440px}
 .settings-row.click{cursor:pointer}.settings-row.click:hover{background:var(--hov)}
 .btn{background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:8px 15px;font-size:13px;color:var(--text)}.btn:hover{background:var(--raise)}
 .btn.primary{background:var(--btn);border-color:var(--btn);color:var(--btnfg);font-weight:600}.btn.primary:hover{background:var(--btnhov)}
 .btn.danger{color:var(--danger)}
 .field-label{font-size:13px;margin:12px 0 6px}.field-hint{font-size:11px;color:var(--dimmer);margin-top:5px}
 .field-input,select{width:100%;background:var(--input);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:13px;color:var(--text);outline:none}
-.field-input:focus,select:focus{border-color:var(--line2)}
+.field-input:focus,select:focus{border-color:var(--line2)}textarea{resize:none}
 select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239A9A9A' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
 .switch{appearance:none;width:42px;height:24px;border-radius:99px;background:var(--raise);position:relative;cursor:pointer;border:1px solid var(--line);flex:none}
 .switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .12s}
 .switch:checked{background:#3584e4;border-color:#3584e4}.switch:checked::after{left:20px}
-.mem-group{font-size:12px;color:var(--dim);padding:14px 16px 4px}
+.mem-group{font-size:13px;color:var(--dim);padding:14px 16px 4px}
 .mem-text{font-size:13.5px}
 
 /* sheets and popovers */
 .scrim{position:fixed;inset:0;background:var(--scrim);display:flex;align-items:center;justify-content:center;padding:24px;z-index:20}
 .sheet-card{background:var(--sheet);border:1px solid var(--line2);border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.5);width:100%;max-width:440px;max-height:86vh;display:flex;flex-direction:column}
 .sheet-card.wide{max-width:640px}
-.sheet-head{display:flex;align-items:center;padding:16px 18px 6px 22px}.sheet-title{flex:1;font-size:19px}
+.sheet-head{display:flex;align-items:center;padding:16px 18px 6px 22px}.sheet-head .icon-btn{min-width:30px;min-height:30px;border-radius:7px}.sheet-title{flex:1;font-size:19px}
 .sheet-body{padding:8px 22px 12px;overflow:auto}.sheet-foot{padding:10px 22px 18px;display:flex;justify-content:flex-end;gap:8px}
 .popover{position:fixed;background:var(--pop);border:1px solid var(--line2);border-radius:12px;padding:6px;box-shadow:0 12px 32px rgba(0,0,0,.5);z-index:30;min-width:240px;max-height:60vh;overflow:auto}
 .pop-head{font-size:12px;color:var(--dim);padding:6px 10px 4px}
@@ -168,12 +168,20 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .chat-line{display:flex;gap:10px;align-items:baseline;margin:8px 0}.chat-line.you{justify-content:flex-end}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--pop);border:1px solid var(--line2);border-radius:999px;padding:8px 16px;font-size:13px;z-index:40;box-shadow:0 8px 24px rgba(0,0,0,.4)}
 
-@media(max-width:860px){.sidebar{position:fixed;inset:0 auto 0 0;z-index:10;width:268px;margin-left:0;transform:translateX(0);transition:transform .18s;background:var(--bg)}.sidebar.closed{transform:translateX(-100%);margin-left:0}#showSide{display:inline-flex!important}.msg-user-wrap{margin-left:40px}}
+.side-scrim{display:none}
+@media(max-width:860px){
+  .sidebar,.sidebar.closed{position:fixed;inset:0 auto 0 0;z-index:10;width:268px;max-width:86vw;margin-left:0;transform:translateX(-100%);transition:transform .18s}
+  .sidebar.open{transform:none;box-shadow:0 0 40px rgba(0,0,0,.4)}
+  .sidebar.open+.side-scrim{display:block;position:fixed;inset:0;z-index:9;background:var(--scrim)}
+  #showSide{display:inline-flex!important}.msg-user-wrap{margin-left:40px}
+  .pagebox,.pagebox.narrow{padding-left:16px;padding-right:16px}.page-head{margin-top:16px;flex-wrap:wrap}.page-title{font-size:26px}
+  .composer-wrap{padding:0 12px}.thread{width:calc(100% - 32px)}.settings-row{flex-wrap:wrap}.settings-row .col{flex:1 1 200px}.pc-meta2{max-width:none}
+}
 </style>
 </head>
 <body>
 <div id="login" class="hide">
-  <div class="hero-title"><svg class="mark" id="loginMark" viewBox="0 0 32 32"></svg>ZO-AI</div>
+  <div class="hero-title"><svg class="mark" id="loginMark" viewBox="0 0 120 120"></svg>ZO-AI</div>
   <p>Your AI, from any browser. Sign in with the Google account that owns it.</p>
   <button class="page-btn primary" id="signin">Sign in with Google</button>
   <div id="err"></div>
@@ -181,7 +189,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 
 <div id="app" class="hide">
   <aside class="sidebar" id="side">
-    <div class="brand"><svg class="mark" viewBox="0 0 32 32" data-mark></svg><div class="wordmark">ZO-AI</div><button class="icon-btn" id="hideSide" title="Hide the sidebar" data-i="sidebar"></button></div>
+    <div class="brand"><svg class="mark" viewBox="0 0 120 120" data-mark></svg><div class="wordmark">ZO-AI</div><button class="icon-btn" id="hideSide" title="Hide the sidebar" data-i="sidebar"></button></div>
     <button class="nav-item" data-nav="new"><i data-i="plus"></i>New</button>
     <button class="nav-item" data-nav="chats"><i data-i="chat"></i>Chats</button>
     <button class="nav-item" data-nav="search"><i data-i="search"></i>Search</button>
@@ -191,6 +199,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
     <div class="lists" id="lists"></div>
     <div class="side-foot"><div class="avatar" id="avatar">Z</div><div class="side-user" id="uname"></div><button class="icon-btn" id="gear" title="Settings" data-i="gear"></button></div>
   </aside>
+  <div class="side-scrim" id="sideScrim"></div>
   <section class="main">
     <div class="topbar"><button class="icon-btn" id="showSide" title="Show the sidebar" data-i="sidebar"></button><div class="top-title" id="title"></div><button class="icon-btn" id="out" title="Sign out" data-i="out"></button></div>
     <div id="view" class="page"></div>
@@ -214,11 +223,12 @@ const P = {
   list: '<path d="M9 7h11M9 12h11M9 17h11"/><circle cx="5" cy="7" r=".8"/><circle cx="5" cy="12" r=".8"/><circle cx="5" cy="17" r=".8"/>', alarm: '<circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5M5 4L3 6M19 4l2 2"/>',
   sidebar: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M10 5v14"/>', gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/>',
   up: '<path d="M6 15l6-6 6 6"/>', chev: '<path d="M9 6l6 6-6 6"/>', down: '<path d="M6 9l6 6 6-6"/>', copy: '<rect x="8" y="8" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/>',
-  edit: '<path d="M4 20l4-1 11-11-3-3L5 16l-1 4z"/>', trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>', star: '<path d="M12 4l2.5 5 5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9 5.5-.8z"/>',
+  folder: '<path d="M4 7a1 1 0 011-1h4l2 2h8a1 1 0 011 1v8a1 1 0 01-1 1H5a1 1 0 01-1-1V7z"/>', edit: '<path d="M4 20l4-1 11-11-3-3L5 16l-1 4z"/>', trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>', star: '<path d="M12 4l2.5 5 5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9 5.5-.8z"/>',
   out: '<path d="M14 5h4a1 1 0 011 1v12a1 1 0 01-1 1h-4M10 8l-4 4 4 4M6 12h10"/>', stop: '<rect x="7" y="7" width="10" height="10" rx="2"/>', check: '<path d="M5 12l5 5 9-10"/>', pin: '<path d="M9 4h6l-1 6 3 3H7l3-3-1-6zM12 13v7"/>',
 };
 const icon = n => `<svg viewBox="0 0 24 24">${P[n] || ""}</svg>`;
-const MARK = '<circle cx="16" cy="16" r="12.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M15 9c.5 3.9 2.6 6 6.5 6.5-3.9.5-6 2.6-6.5 6.5-.5-3.9-2.6-6-6.5-6.5C12.4 15 14.5 12.9 15 9z" fill="currentColor" stroke="none"/><path d="M23 8.5c.2 1.4 1 2.2 2.4 2.4-1.4.2-2.2 1-2.4 2.4-.2-1.4-1-2.2-2.4-2.4 1.4-.2 2.2-1 2.4-2.4z" fill="currentColor" stroke="none"/>';
+const MARK = '<circle cx="60" cy="60" r="48" fill="none" stroke="currentColor" stroke-width="8" mask="url(#zoGap)"/><path d="M60 30Q60 60 90 60Q60 60 60 90Q60 60 30 60Q60 60 60 30Z" fill="var(--accent2)" stroke="none"/><path d="M94 14Q94 26 106 26Q94 26 94 38Q94 26 82 26Q94 26 94 14Z" fill="#F2B84B" stroke="none"/>'; // the exact shapes of crates/zo-ai/data/zo-ai-mark.svg
+document.body.insertAdjacentHTML("afterbegin", '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><mask id="zoGap"><rect width="120" height="120" fill="#fff"/><circle cx="94" cy="26" r="16" fill="#000"/></mask></defs></svg>');
 function paint(root = document) {
   root.querySelectorAll("[data-i]").forEach(e => { if (!e.dataset.done) { e.innerHTML = icon(e.dataset.i); e.dataset.done = 1; } });
   root.querySelectorAll("[data-mark]").forEach(e => e.innerHTML = MARK);
@@ -311,7 +321,7 @@ async function refreshModel() {
 /* ---------- home and chat ---------- */
 function showHome() {
   chatId = ""; setNav("new"); setTitle("");
-  view().innerHTML = `<div class="home"><div class="hero"><svg class="mark" viewBox="0 0 32 32" data-mark></svg><div class="hero-title">${esc(greet())}</div></div><div class="composer-wrap">${composerHTML()}</div></div>`;
+  view().innerHTML = `<div class="home"><div class="hero"><svg class="mark" viewBox="0 0 120 120" data-mark></svg><div class="hero-title">${esc(greet())}</div></div><div class="composer-wrap">${composerHTML()}</div></div>`;
   wireComposer();
 }
 function showThread(title) {
@@ -477,8 +487,8 @@ async function modelSheet() {
 }
 
 /* ---------- pages ---------- */
-function pageBox(title, right) {
-  view().style.overflow = ""; view().innerHTML = `<div class="pagebox"><div class="page-head"><div class="page-title"></div><div class="right" style="display:flex;gap:8px"></div></div><div id="pbody"></div></div>`;
+function pageBox(title, right, narrow) {
+  view().style.overflow = ""; view().innerHTML = `<div class="pagebox${narrow ? " narrow" : ""}"><div class="page-head"><div class="page-title"></div><div class="right" style="display:flex;gap:8px"></div></div><div id="pbody"></div></div>`;
   view().querySelector(".page-title").textContent = title; if (right) right.forEach(b => view().querySelector(".right").appendChild(b));
   return $("pbody");
 }
@@ -494,8 +504,8 @@ async function showChats() {
 function showSearch() {
   setNav("search"); setTitle("Search"); const b = pageBox("Search");
   b.innerHTML = '<input class="search-input" id="q" placeholder="Search your chats" autocomplete="off"><div id="hits"></div>';
-  let timer; const run = async () => { try { const r = await op("search", { query: $("q").value }); const h = $("hits"); h.innerHTML = r.hits.length ? "" : empty("Nothing found", "Try other words.");
-    r.hits.forEach(x => { const d = document.createElement("div"); d.className = "card project-card"; d.innerHTML = `<div class="pc-icon">${icon("chat")}</div><div class="pc-col"><div class="pc-name"></div><div class="pc-meta"></div></div>`; d.querySelector(".pc-name").textContent = x.title || "Untitled"; d.querySelector(".pc-meta").textContent = x.snippet || ""; d.onclick = () => openChat(x.id); h.appendChild(d); }); } catch (e) { $("hits").innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; } };
+  let timer; const run = async () => { try { const r = await op("search", { query: $("q").value }); const h = $("hits"); if (!h) return; h.innerHTML = r.hits.length ? "" : empty("Nothing found", "Try other words.");
+    r.hits.forEach(x => { const d = document.createElement("div"); d.className = "card project-card"; d.innerHTML = `<div class="pc-icon">${icon("chat")}</div><div class="pc-col"><div class="pc-name"></div><div class="pc-meta"></div></div>`; d.querySelector(".pc-name").textContent = x.title || "Untitled"; d.querySelector(".pc-meta").textContent = x.snippet || ""; d.onclick = () => openChat(x.id); h.appendChild(d); }); } catch (e) { if ($("hits")) $("hits").innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; } };
   $("q").oninput = () => { clearTimeout(timer); timer = setTimeout(run, 200); }; run(); $("q").focus();
 }
 async function showProjects() {
@@ -504,9 +514,11 @@ async function showProjects() {
   const b = pageBox("Projects", [nb]); nb.onclick = () => {
     const w = document.createElement("div"); w.innerHTML = '<div class="field-label">Name</div><input class="field-input" id="pn"><div class="field-label">Goal</div><input class="field-input" id="pg" placeholder="What is it for?">';
     const sh = sheet("New project", w, [btn("Cancel", "", () => sh.close()), btn("Create", "primary", async () => { try { await op("project_create", { name: w.querySelector("#pn").value, goal: w.querySelector("#pg").value }); sh.close(); showProjects(); } catch (e) { toast(e.message); } })]); };
-  try { const r = await op("projects"); const t = (r.text || "").trim();
-    b.innerHTML = t && !/no projects/i.test(t) ? `<div class="card" style="padding:16px"><pre style="margin:0;white-space:pre-wrap;font:13.5px/1.5 Inter,sans-serif"></pre></div>` : empty("No projects yet", "Projects keep one long-running thing together — its files, notes and context — so ZO-AI keeps working inside it.");
-    const pre = b.querySelector("pre"); if (pre) pre.textContent = t;
+  try { const r = await op("projects"); const t = (r.text || "").trim(); b.innerHTML = "";
+    const lines = /no projects/i.test(t) ? [] : t.split("\n").map(l => l.split("|").map(x => x.trim())).filter(c => c.length >= 2);
+    if (!lines.length) return b.innerHTML = empty("No projects yet", "Projects keep one long-running thing together — its files, notes and context — so ZO-AI keeps working inside it.");
+    lines.forEach(c => { const d = document.createElement("div"); d.className = "card project-card"; d.style.cursor = "default"; d.innerHTML = `<div class="pc-icon">${icon("folder")}</div><div class="pc-col"><div class="pc-name"></div><div class="pc-meta"></div></div>`;
+      d.querySelector(".pc-name").textContent = c[1]; d.querySelector(".pc-meta").textContent = c.slice(2).filter(Boolean).join(" · "); b.appendChild(d); });
   } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
 }
 async function showArtifacts() {
@@ -532,14 +544,14 @@ function cardOf(...rows) { const c = document.createElement("div"); c.className 
 function head(t) { const h = document.createElement("div"); h.className = "settings-head"; h.textContent = t; return h; }
 
 function settingsHome() {
-  setNav("settings"); setTitle("Settings"); const b = pageBox("Settings"); const c = document.createElement("div"); c.className = "settings-card";
+  setNav("settings"); setTitle("Settings"); const b = pageBox("Settings", null, true); const c = document.createElement("div"); c.className = "settings-card";
   PAGES.forEach(([id, name, sub]) => { const arrow = btn("Open  ›", "", null); arrow.style.pointerEvents = "none"; const r = row(name, sub, arrow); r.classList.add("click"); r.onclick = () => settingsPage(id); c.appendChild(r); });
   b.appendChild(c);
 }
 async function settingsPage(id) {
   setNav("settings"); const name = PAGES.find(p => p[0] === id)[1]; setTitle("Settings");
   const bk = document.createElement("button"); bk.className = "back"; bk.textContent = "‹ Settings"; bk.onclick = settingsHome;
-  view().style.overflow = ""; view().innerHTML = `<div class="pagebox"><div class="page-head" id="ph"></div><div id="pbody"></div></div>`;
+  view().style.overflow = ""; view().innerHTML = `<div class="pagebox narrow"><div class="page-head" id="ph" style="gap:10px"></div><div id="pbody"></div></div>`;
   $("ph").appendChild(bk); $("ph").insertAdjacentHTML("beforeend", '<div class="page-title"></div>'); $("ph").querySelector(".page-title").textContent = name;
   const b = $("pbody"); b.innerHTML = '<div class="pc-meta">Loading…</div>';
   try { await ({ model: pageModel, personality: pagePersonality, memory: pageMemory, general: pageGeneral, apps: pageApps, data: pageData, about: pageAbout })[id](b); } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
@@ -547,48 +559,49 @@ async function settingsPage(id) {
 async function pageModel(b) {
   const [s, prof] = await Promise.all([op("status"), op("profiles")]); b.innerHTML = "";
   const change = btn("Change", "", modelSheet);
+  b.appendChild(head("Model"));
   b.appendChild(cardOf(row("Provider and model", s.ready ? (s.provider + " · " + (s.model || "no model chosen")) : "Nothing chosen yet", change)));
   b.appendChild(head("Profiles"));
   const rows = prof.profiles.map(p => { const on = prof.active === p.id; const u = btn(on ? "In use" : "Use", on ? "" : "primary", async () => { await op("profile_use", { id: p.id }); settingsPage("model"); }); u.disabled = on; return row(p.name, p.provider + " · " + p.model, u); });
-  b.appendChild(rows.length ? cardOf(...rows) : cardOf(row("No profiles yet", "A profile is a preset: a provider, a model and its own key. Make them on the computer; they sync here.")));
+  b.appendChild(rows.length ? cardOf(...rows) : cardOf(row("No profiles yet", "A profile is a preset: a provider, a model, its address, how hard it thinks and its own API key. Make several and switch between them here. Profiles made on the computer sync here.")));
 }
 async function pagePersonality(b) {
   const st = await op("personalities"); b.innerHTML = "";
   const mk = (id, name, sub, on, del) => { const c = document.createElement("div"); c.style.cssText = "display:flex;gap:6px"; const u = btn(on ? "In use" : "Use", on ? "" : "primary", async () => { await op("personality_use", { id }); pagePersonality(b); }); u.disabled = on; c.appendChild(u);
     if (del) c.appendChild(btn("Delete", "danger", async () => { await op("personality_remove", { id }); pagePersonality(b); })); return row(name, sub, c); };
   const rows = [mk("", "Plain", "ZO-AI's own manner: clear and to the point.", !st.active, false), ...st.items.map(p => mk(p.id, p.name + (p.generated ? " · written by the AI" : ""), p.prompt, st.active === p.id, !p.builtin))];
-  b.appendChild(cardOf(...rows));
   const own = btn("Write my own…", "", () => { const w = document.createElement("div"); w.innerHTML = '<div class="field-label">Name</div><input class="field-input" id="n"><div class="field-label">How should it sound? (4 to 7 sentences)</div><textarea class="field-input" id="p" rows="5"></textarea>';
     const sh = sheet("Write a personality", w, [btn("Cancel", "", () => sh.close()), btn("Save", "primary", async () => { try { await op("personality_add", { name: w.querySelector("#n").value, prompt: w.querySelector("#p").value }); sh.close(); pagePersonality(b); } catch (e) { toast(e.message); } })]); });
   const gen = btn("Describe one…", "primary", () => { const w = document.createElement("div"); w.innerHTML = '<div class="field-label">What should it be like?</div><textarea class="field-input" id="d" rows="4" placeholder="A patient teacher who explains with small everyday examples"></textarea><div class="field-hint" id="gm"></div>';
     const go = btn("Write it", "primary", async () => { go.disabled = true; w.querySelector("#gm").textContent = "Working on it…"; try { await op("personality_generate", { description: w.querySelector("#d").value }); sh.close(); pagePersonality(b); } catch (e) { w.querySelector("#gm").textContent = e.message; go.disabled = false; } });
     const sh = sheet("Make a personality", w, [btn("Cancel", "", () => sh.close()), go]); });
   const both = document.createElement("div"); both.style.cssText = "display:flex;gap:6px"; both.append(own, gen);
-  b.appendChild(head("")); b.appendChild(cardOf(row("Add a personality", "The AI can write one from a description. A personality changes the voice only, never the rules.", both)));
+  b.appendChild(head("Personality")); b.appendChild(cardOf(...rows, row("Add a personality", "The AI can write one from a description (it uses the model you chose). A personality changes the voice only, never the rules or what ZO-AI may do.", both)));
 }
 async function pageMemory(b) {
   const m = await op("memory"); b.innerHTML = "";
   const sw = document.createElement("input"); sw.type = "checkbox"; sw.className = "switch"; sw.checked = m.enabled; sw.onchange = () => op("memory_enable", { on: sw.checked });
   const notes = m.items.filter(i => i.kind !== "episode").length;
   const talk = btn("Chat about memory…", "primary", () => memoryChat(b));
-  const c = cardOf(row("Remember things between chats", `${notes} notes about you and ${m.items.length - notes} chat summaries, shared with the computer and the phone. After every ${m.every} messages of yours, ZO-AI reads the chat in the background and keeps what is worth remembering. Never passwords or keys.`, sw),
-    row("Edit by talking", 'Tell ZO-AI what to change: "join my preferences into one note", "forget the old laptop". This chat only edits the notes.', talk));
-  b.appendChild(c);
-  const groups = [["person", "About you"], ["preference", "Preferences"], ["project", "Projects"], ["fact", "Facts"], ["episode", "Chat summaries"]];
-  const list = document.createElement("div"); list.className = "settings-card"; list.style.marginTop = "16px";
-  groups.forEach(([k, label]) => { const mine = m.items.filter(i => i.kind === k); if (!mine.length) return;
-    const h = document.createElement("div"); h.className = "mem-group"; h.textContent = label; list.appendChild(h);
-    mine.forEach(i => { const ctl = document.createElement("div"); ctl.style.cssText = "display:flex;gap:2px";
-      if (k !== "episode") { const e = document.createElement("button"); e.className = "icon-btn"; e.title = "Edit this note"; e.innerHTML = icon("edit"); e.onclick = () => { const w = document.createElement("div"); w.innerHTML = '<textarea class="field-input" rows="4"></textarea>'; w.firstChild.value = i.text;
-          const sh = sheet("Edit note", w, [btn("Cancel", "", () => sh.close()), btn("Save", "primary", async () => { try { await op("memory_update", { id: i.id, text: w.firstChild.value }); sh.close(); pageMemory(b); } catch (er) { toast(er.message); } })]); }; ctl.appendChild(e); }
-      const p = document.createElement("button"); p.className = "icon-btn"; p.title = i.pinned ? "Always tell the AI (pinned)" : "Pin: always tell the AI"; p.innerHTML = icon("star"); if (i.pinned) p.querySelector("svg").style.fill = "currentColor"; p.onclick = async () => { await op("memory_pin", { id: i.id, on: !i.pinned }); pageMemory(b); };
-      const d = document.createElement("button"); d.className = "icon-btn"; d.title = "Forget this"; d.innerHTML = icon("trash"); d.onclick = async () => { await op("memory_forget", { id: i.id }); pageMemory(b); };
-      ctl.append(p, d); const r = row(k === "episode" ? i.title : "", i.text, ctl); if (k !== "episode") r.querySelector(".pc-name2").remove(); list.appendChild(r); }); });
-  if (list.children.length) b.appendChild(list);
-  const add = btn("Add a note…", "", () => { const w = document.createElement("div"); w.innerHTML = '<textarea class="field-input" rows="3" placeholder="I prefer short answers"></textarea>'; const sh = sheet("Add a note", w, [btn("Cancel", "", () => sh.close()), btn("Add", "primary", async () => { try { await op("memory_add", { text: w.firstChild.value }); sh.close(); pageMemory(b); } catch (e) { toast(e.message); } })]); });
+  const card = cardOf(row("Remember things between chats", `${notes} notes about you and ${m.items.length - notes} chat summaries, shared with the computer and the phone. After every ${m.every} messages of yours, ZO-AI reads the chat in the background and keeps what is worth remembering. Never passwords or keys.`, sw),
+    row("Edit by talking", 'Tell ZO-AI what to change, in your own words: "join my preferences into one note", "forget the old laptop", "my name is spelled Zohaib". This chat only edits the notes.', talk));
+  b.appendChild(head("Memory")); b.appendChild(card);
+  const items = [...m.items].sort((x, y) => (y.pinned - x.pinned) || (y.updated - x.updated));
+  const textSheet = (title, ok, text, run) => { const w = document.createElement("div"); w.innerHTML = '<div class="field-label">What should ZO-AI remember?</div><textarea class="field-input" rows="4" placeholder="I prefer short answers"></textarea>'; const ta = w.querySelector("textarea"); ta.value = text;
+    const sh = sheet(title, w, [btn("Cancel", "", () => sh.close()), btn(ok, "primary", async () => { try { await run(ta.value); sh.close(); pageMemory(b); } catch (er) { toast(er.message); } })]); };
+  [["person", "About you"], ["preference", "Preferences"], ["project", "Projects"], ["fact", "Facts"], ["episode", "Chat summaries"]].forEach(([k, label]) => { const mine = items.filter(i => i.kind === k).slice(0, 80); if (!mine.length) return;
+    const h = document.createElement("div"); h.className = "mem-group"; h.textContent = label; card.appendChild(h);
+    mine.forEach(i => { const ctl = document.createElement("div"); ctl.style.cssText = "display:flex;gap:6px";
+      const mkb = (t, ic, fn) => { const e = document.createElement("button"); e.className = "icon-btn"; e.title = t; e.innerHTML = icon(ic); e.onclick = fn; ctl.appendChild(e); return e; };
+      if (k !== "episode") mkb("Edit this note", "edit", () => textSheet("Edit note", "Save", i.text, t => op("memory_update", { id: i.id, text: t })));
+      const p = mkb(i.pinned ? "Always tell the AI (pinned)" : "Pin: always tell the AI", "star", async () => { await op("memory_pin", { id: i.id, on: !i.pinned }); pageMemory(b); }); if (i.pinned) p.querySelector("svg").style.fill = "currentColor";
+      mkb("Forget this", "trash", async () => { await op("memory_forget", { id: i.id }); pageMemory(b); });
+      const r = row(k === "episode" ? i.title : "", i.text, ctl); if (k !== "episode") r.querySelector(".pc-name2").remove(); card.appendChild(r); }); });
+  if (items.length > 80) card.appendChild(row("…", `${items.length - 80} more are kept; the AI can search all of them.`));
+  const add = btn("Add a note…", "", () => textSheet("Add a note", "Add", "", t => op("memory_add", { text: t })));
   const forget = btn("Forget everything", "danger", () => confirmBox("Forget everything?", "All notes and chat summaries are removed, on every device. Saved chats stay.", "Forget", async () => { await op("memory_clear"); pageMemory(b); }));
   const both = document.createElement("div"); both.style.cssText = "display:flex;gap:6px"; both.append(add, forget);
-  b.appendChild(head("")); b.appendChild(cardOf(row("Your notes", 'Pin a note so the AI always knows it. You can also just tell ZO-AI in a chat: "remember that ..." or "forget that ...".', both)));
+  card.appendChild(row("Your notes", 'Pin a note to make sure the AI always knows it. Delete one that is wrong. You can also just tell ZO-AI: "remember that ..." or "forget that ...".', both));
 }
 function memoryChat(b) {
   const w = document.createElement("div"); w.innerHTML = '<div id="ml" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px"><div class="pc-meta">Say what to change. ZO-AI edits the notes and tells you what it did.</div></div><input class="field-input" id="mi" placeholder="For example: join all my preferences into one note">';
@@ -601,6 +614,7 @@ function memoryChat(b) {
 async function pageGeneral(b) {
   const m = await op("mode"); b.innerHTML = "";
   const th = document.createElement("select"); th.style.width = "180px"; [["system", "Follow the system"], ["dark", "Dark"], ["light", "Light"]].forEach(([v, t]) => th.insertAdjacentHTML("beforeend", `<option value="${v}" ${theme() === v ? "selected" : ""}>${t}</option>`)); th.onchange = () => { try { localStorage.setItem("zo-theme", th.value); } catch {} applyTheme(); };
+  b.appendChild(head("Appearance"));
   b.appendChild(cardOf(row("Theme", "Light or dark, or the same as the rest of the system.", th)));
   b.appendChild(head("Permissions"));
   const pm = document.createElement("select"); pm.style.width = "140px"; ["Manual", "Auto", "Bypass"].forEach(v => pm.insertAdjacentHTML("beforeend", `<option ${m.mode === v ? "selected" : ""}>${v}</option>`)); pm.onchange = async () => { await op("mode", { set: pm.value }); mode = pm.value; };
@@ -608,15 +622,17 @@ async function pageGeneral(b) {
 }
 async function pageApps(b) {
   const r = await op("mcp_list"); b.innerHTML = "";
+  b.appendChild(head("MCP servers ZO-AI can use"));
   if (!r.servers.length) return b.appendChild(cardOf(row("No servers yet", "Add MCP servers on the computer; they sync here.")));
   b.appendChild(cardOf(...r.servers.map(s => { const sw = document.createElement("input"); sw.type = "checkbox"; sw.className = "switch"; sw.checked = s.enabled; sw.onchange = () => op("mcp_toggle", { name: s.name, enabled: sw.checked }); return row(s.name, s.command, sw); })));
 }
 async function pageData(b) {
   const r = await op("chats"); b.innerHTML = "";
   const open = btn("View chats", "", showChats); const del = btn("Delete all chats", "danger", () => confirmBox("Delete all saved chats?", "This cannot be undone. Projects and scheduled tasks stay.", "Delete", async () => { for (const c of r.chats) await op("delete_chat", { id: c.id }); refreshChats(); settingsPage("data"); }));
+  b.appendChild(head("Data"));
   b.appendChild(cardOf(row("Saved chats, projects and tasks", r.chats.length + " saved chats, kept on the server.", open), row("Delete all chats", "Removes the saved conversations.", del)));
 }
-async function pageAbout(b) { const s = await op("status"); b.innerHTML = ""; b.appendChild(cardOf(row("ZO-AI", "Version " + (s.version || "") + " · the AI built into Zohara OS, on the web"))); }
+async function pageAbout(b) { const s = await op("status"); b.innerHTML = ""; b.appendChild(head("About")); b.appendChild(cardOf(row("ZO-AI", "Version " + (s.version || "") + " · the AI built into Zohara OS, on the web"))); }
 
 /* ---------- start ---------- */
 function go(n) {
@@ -624,6 +640,7 @@ function go(n) {
   ({ new: showHome, chats: showChats, search: showSearch, projects: showProjects, artifacts: showArtifacts, scheduled: showScheduled })[n]();
 }
 document.querySelectorAll(".nav-item").forEach(b => b.onclick = () => go(b.dataset.nav));
+$("sideScrim").onclick = () => $("side").classList.remove("open");
 $("gear").onclick = () => { $("side").classList.remove("open"); settingsHome(); };
 $("hideSide").onclick = () => { if (innerWidth <= 860) $("side").classList.remove("open"); else $("side").classList.add("closed"); };
 $("showSide").onclick = () => { if (innerWidth <= 860) $("side").classList.toggle("open"); else $("side").classList.remove("closed"); };
