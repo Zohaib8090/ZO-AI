@@ -281,7 +281,7 @@ mod tests {
     use super::testkit::*;
     use super::*;
     use crate::ai::agent::{self, Config, Event};
-    use crate::approval::Deny;
+    use crate::approval::{Deny, NoQuestions};
     use crate::policy::Mode;
     use crate::store::{chats, memory, personality, TEST_ENV_LOCK};
     use serde_json::json;
@@ -408,7 +408,7 @@ mod tests {
         let (dirs, loaded, key_err, tools_err, restricted, n_tools) = result;
         assert!(dirs.0.starts_with("/dev/null") && dirs.1.starts_with("/dev/null"), "{dirs:?}");
         assert_eq!((loaded.0, loaded.1, loaded.2.as_str(), loaded.3), (0, 0, "", None));
-        assert!(key_err && tools_err && restricted && n_tools == 5);
+        assert!(key_err && tools_err && restricted && n_tools == crate::tools::RESTRICTED_TOOLS.len());
         assert!(!std::path::Path::new("/tmp/zo-no-tenant-must-not-exist").exists());
         assert!(!owner.join("data").exists() && !owner.join("config").exists(), "the default folders were not touched");
         assert!(!a.data.join("chats.json").exists());
@@ -464,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn a_restricted_tenant_has_exactly_five_tools_and_everything_else_is_refused() {
+    fn a_restricted_tenant_has_only_its_allowed_tools_and_everything_else_is_refused() {
         let _g = lock();
         let t = fresh(true);
         let admin = fresh(false);
@@ -476,7 +476,7 @@ mod tests {
             let mut want = crate::tools::RESTRICTED_TOOLS.to_vec();
             want.sort();
             assert_eq!(listed, want);
-            assert_eq!(crate::ai::wire::builtin_specs().len(), 5);
+            assert_eq!(crate::ai::wire::builtin_specs().len(), crate::tools::RESTRICTED_TOOLS.len());
             for n in names.iter().filter(|n| !crate::tools::allowed_for_restricted(n)) {
                 let e = crate::tools::call(n, &json!({"path": "/etc/passwd", "cmd": "id", "query": "x"})).expect_err(n);
                 assert!(e.contains("not available"), "{n}: {e}");
@@ -615,7 +615,7 @@ mod tests {
         let call = tool_reply(&[("zohara_web_search", json!({"query": ""}))]);
         let (url, seen) = fake_model(vec![call; 8]);
         let mut hist = Vec::new();
-        let r = scope(&t, || agent::run(&cfg_for(&url), &mut hist, "look something up", Mode::Bypass, &Deny, &AtomicBool::new(false), &mut |_| {}));
+        let r = scope(&t, || agent::run(&cfg_for(&url), &mut hist, "look something up", Mode::Bypass, &Deny, &NoQuestions, &AtomicBool::new(false), &mut |_| {}));
         let e = r.unwrap_err();
         assert!(e.contains("8 steps"), "{e}");
         let seen = seen.join().unwrap();
@@ -623,7 +623,7 @@ mod tests {
         let system = seen[0]["messages"][0]["content"].as_str().unwrap();
         assert!(system.contains("no access to the person's computer") && !system.contains("Waydroid") && !system.contains("zohara_ss"), "{system}");
         let tools: Vec<&str> = seen[0]["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap()).collect();
-        assert_eq!(tools.len(), 5, "{tools:?}");
+        assert_eq!(tools.len(), crate::tools::RESTRICTED_TOOLS.len(), "{tools:?}");
         assert!(tools.iter().all(|n| crate::tools::RESTRICTED_TOOLS.contains(n)));
         // not restricted: the old limit of 15 and the full prompt
         let admin = fresh(false);
@@ -631,7 +631,7 @@ mod tests {
         let mut hist = Vec::new();
         let mut c = cfg_for(&url);
         c.provider = crate::ai::providers::find("ollama").unwrap();
-        let e = scope(&admin, || agent::run(&c, &mut hist, "x", Mode::Bypass, &Deny, &AtomicBool::new(false), &mut |_| {})).unwrap_err();
+        let e = scope(&admin, || agent::run(&c, &mut hist, "x", Mode::Bypass, &Deny, &NoQuestions, &AtomicBool::new(false), &mut |_| {})).unwrap_err();
         assert!(e.contains("15 steps"), "{e}");
         assert!(seen.join().unwrap()[0]["messages"][0]["content"].as_str().unwrap().contains("Waydroid"));
     }
@@ -642,13 +642,13 @@ mod tests {
         let t = fresh(true);
         crate::ai::agent::test_allow_local(&t.id);
         let long = "x".repeat(MAX_MESSAGE_CHARS + 1);
-        let e = scope(&t, || agent::run(&cfg_for("http://127.0.0.1:1/v1"), &mut Vec::new(), &long, Mode::Auto, &Deny, &AtomicBool::new(false), &mut |_| {})).unwrap_err();
+        let e = scope(&t, || agent::run(&cfg_for("http://127.0.0.1:1/v1"), &mut Vec::new(), &long, Mode::Auto, &Deny, &NoQuestions, &AtomicBool::new(false), &mut |_| {})).unwrap_err();
         assert!(e.contains("too long"), "{e}");
         // a picture path in the message is sent as text only
         let png = std::env::temp_dir().join(format!("zo-secret-pic-{}.png", std::process::id()));
         std::fs::write(&png, b"\x89PNG not really").unwrap();
         let (url, seen) = fake_model(vec![chat_reply("ok")]);
-        scope(&t, || agent::run(&cfg_for(&url), &mut Vec::new(), &format!("look at {}", png.display()), Mode::Auto, &Deny, &AtomicBool::new(false), &mut |_| {})).unwrap();
+        scope(&t, || agent::run(&cfg_for(&url), &mut Vec::new(), &format!("look at {}", png.display()), Mode::Auto, &Deny, &NoQuestions, &AtomicBool::new(false), &mut |_| {})).unwrap();
         let body = seen.join().unwrap()[0].to_string();
         assert!(!body.contains("image_url") && !body.contains("base64"), "{body}");
         let _ = std::fs::remove_file(png);
@@ -669,7 +669,7 @@ mod tests {
         });
         test_answer_secs(Some(1));
         let started = std::time::Instant::now();
-        let e = scope(&t, || agent::run(&cfg_for(&url), &mut Vec::new(), "hi", Mode::Auto, &Deny, &AtomicBool::new(false), &mut |_: Event| {})).unwrap_err();
+        let e = scope(&t, || agent::run(&cfg_for(&url), &mut Vec::new(), "hi", Mode::Auto, &Deny, &NoQuestions, &AtomicBool::new(false), &mut |_: Event| {})).unwrap_err();
         test_answer_secs(None);
         assert!(e.contains("longer than 1 seconds"), "{e}");
         assert!(started.elapsed() < std::time::Duration::from_secs(3));

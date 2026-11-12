@@ -69,8 +69,8 @@ pub fn app_definitions() -> &'static [ToolDef] {
     ]
 }
 
-/// The only tools a restricted account has: the web and its own memory.
-pub const RESTRICTED_TOOLS: [&str; 5] = ["zohara_web_search", "zohara_web_fetch", "zohara_memory_search", "zohara_memory_save", "zohara_memory_forget"];
+/// The only tools a restricted account has: the web, its own memory, and asking questions.
+pub const RESTRICTED_TOOLS: [&str; 6] = ["zohara_web_search", "zohara_web_fetch", "zohara_memory_search", "zohara_memory_save", "zohara_memory_forget", "zohara_ask_user"];
 
 pub fn allowed_for_restricted(name: &str) -> bool {
     RESTRICTED_TOOLS.contains(&name)
@@ -232,6 +232,8 @@ pub fn definitions() -> &'static [ToolDef] {
             params: &[("machine", "string", "The machine name", true), ("path", "string", "Path on the machine (~ is the home folder there)", true), ("content", "string", "Text to write", true), ("append", "boolean", "Add to the end instead of replacing", false)] },
         ToolDef { name: "zohara_waydroid_shell", description: "Run a command inside Waydroid (asks for your password).", risk: Change,
             params: &[("cmds", "string", "Command line", true)] },
+        ToolDef { name: "zohara_ask_user", description: "Ask the person a question with ready-made options. Use it only when the answer changes what you do and a sensible default does not exist; never for yes/no confirmations of actions (those are approvals); keep questions short; at most one call per turn.", risk: Read,
+            params: &[("questions", "array", "1 to 4 questions, each: {question (string, <=300 chars), header (string, <=24 chars, shown as a chip), multi_select (bool), options: [{label (string, <=60), description (string, <=200)}] (2 to 6 options)}. The client adds an Other choice; do not add one.", true)] },
     ]
 }
 

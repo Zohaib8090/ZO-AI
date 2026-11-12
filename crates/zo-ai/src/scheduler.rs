@@ -56,7 +56,7 @@ fn run_task(task: &Task) -> Chat {
             claude_code::run(&model, sel.effort.as_deref(), &mut session, &task.prompt, &system, &cancel, &mut on)
         } else {
             match Config::from_selection(&sel, &system) {
-                Ok(cfg) => agent::run(&cfg, &mut history, &task.prompt, zo_core::Mode::load(), &zo_core::approval::AppApprover, &cancel, &mut on),
+                Ok(cfg) => agent::run(&cfg, &mut history, &task.prompt, zo_core::Mode::load(), &zo_core::approval::AppApprover, &zo_core::approval::NoQuestions, &cancel, &mut on),
                 Err(e) => Err(e),
             }
         }

@@ -615,7 +615,7 @@ fn prefs_json() -> Value {
 struct RemoteApprover {
     out: Arc<Mutex<UnixStream>>,
     pending: Arc<Mutex<HashMap<u64, mpsc::Sender<bool>>>>,
-    next: AtomicU64,
+    next: Arc<AtomicU64>,
     /// Nobody is connected any more (an answer that was kept running): nothing can be approved.
     gone: Arc<AtomicBool>,
 }
@@ -634,6 +634,30 @@ impl Approver for RemoteApprover {
         let yes = rx.recv_timeout(Duration::from_secs(180)).unwrap_or(false);
         self.pending.lock().unwrap().remove(&id);
         yes
+    }
+}
+
+/// Asks the connected client for answers to questions (zohara_ask_user).
+struct RemoteQuestioner {
+    out: Arc<Mutex<UnixStream>>,
+    pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Option<Vec<crate::approval::QuestionAnswer>>>>>>,
+    next: Arc<AtomicU64>,  // shared counter with approvals to avoid id collisions
+    gone: Arc<AtomicBool>,
+}
+
+impl crate::approval::Questioner for RemoteQuestioner {
+    fn ask_questions(&self, questions: &[crate::approval::Question]) -> Option<Vec<crate::approval::QuestionAnswer>> {
+        if self.gone.load(Ordering::SeqCst) { return None; }
+        let id = self.next.fetch_add(1, Ordering::SeqCst);
+        let (tx, rx) = mpsc::channel();
+        self.pending.lock().unwrap().insert(id, tx);
+        if !line(&self.out, &json!({"event": "question", "id": id, "questions": questions})) {
+            return None;
+        }
+        // 10-minute timeout per INTERACTION.md; 3 minutes when no notification channel exists (handled client-side)
+        let result = rx.recv_timeout(Duration::from_secs(600)).unwrap_or(None);
+        self.pending.lock().unwrap().remove(&id);
+        result
     }
 }
 
@@ -725,8 +749,10 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
     let cancel = Arc::new(AtomicBool::new(false));
     let gone = Arc::new(AtomicBool::new(false));
     let pending: Arc<Mutex<HashMap<u64, mpsc::Sender<bool>>>> = Arc::new(Mutex::new(HashMap::new()));
+    let q_pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Option<Vec<crate::approval::QuestionAnswer>>>>>> = Arc::new(Mutex::new(HashMap::new()));
+    let shared_next = Arc::new(AtomicU64::new(1));
     {
-        let (cancel, pending, gone) = (cancel.clone(), pending.clone(), gone.clone());
+        let (cancel, pending, q_pending, gone) = (cancel.clone(), pending.clone(), q_pending.clone(), gone.clone());
         tenant::spawn(move || {
             let mut buf = String::new();
             loop {
@@ -739,6 +765,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
                         gone.store(true, Ordering::SeqCst);
                         // nobody is left to answer
                         pending.lock().unwrap().clear();
+                        q_pending.lock().unwrap().clear();
                         return;
                     }
                     Ok(_) => {
@@ -750,11 +777,31 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
                                     let _ = tx.send(v.get("yes").and_then(Value::as_bool).unwrap_or(false));
                                 }
                             }
+                            Some("answer") => {
+                                let id = v.get("id").and_then(Value::as_u64).unwrap_or(u64::MAX);
+                                if let Some(tx) = q_pending.lock().unwrap().get(&id) {
+                                    if v.get("cancelled").and_then(Value::as_bool) == Some(true) {
+                                        let _ = tx.send(None);
+                                    } else if let Some(answers) = v.get("answers").and_then(Value::as_array) {
+                                        let parsed: Vec<crate::approval::QuestionAnswer> = answers.iter().map(|a| {
+                                            crate::approval::QuestionAnswer {
+                                                selected: a.get("selected").and_then(Value::as_array)
+                                                    .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
+                                                    .unwrap_or_default(),
+                                                other: a.get("other").and_then(Value::as_str)
+                                                    .map(|s| s.chars().take(2000).collect()),
+                                            }
+                                        }).collect();
+                                        let _ = tx.send(Some(parsed));
+                                    }
+                                }
+                            }
                             Some("stop") => cancel.store(true, Ordering::SeqCst),
                             // the server tells a kept-running answer that its person left: approvals can no longer be answered
                             Some("detached") if keep => {
                                 gone.store(true, Ordering::SeqCst);
                                 pending.lock().unwrap().clear();
+                                q_pending.lock().unwrap().clear();
                             }
                             _ => {}
                         }
@@ -763,7 +810,8 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
             }
         });
     }
-    let approver = RemoteApprover { out: out.clone(), pending, next: AtomicU64::new(1), gone };
+    let approver = RemoteApprover { out: out.clone(), pending, next: shared_next.clone(), gone: gone.clone() };
+    let questioner = RemoteQuestioner { out: out.clone(), pending: q_pending, next: shared_next, gone };
     let activity = crate::activity::start(
         if sel.provider == "claude-code" { crate::activity::Kind::ClaudeCode } else { crate::activity::Kind::Answer },
         &if client_source(req) == "web-link" { format!("Web session: {}", chat.title) } else { chat.title.clone() },
@@ -845,7 +893,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
             claude_code::run_in_mode(req.get("mode").and_then(Value::as_str).and_then(Mode::parse_known), &model, sel.effort.as_deref(), &mut session, &prompt_text, &system, &cancel, &mut on)
         } else {
             match Config::from_selection(&sel, &system) {
-                Ok(cfg) => agent::run_with(&cfg, &mut history, &ask_text, extra, mode, &approver, &cancel, &mut on),
+                Ok(cfg) => agent::run_with(&cfg, &mut history, &ask_text, extra, mode, &approver, &questioner, &cancel, &mut on),
                 Err(e) => Err(e),
             }
         }
@@ -1298,7 +1346,7 @@ mod tenant_tests {
         assert_eq!(done("zohara_memory_save")["ok"], true, "saved before the web was touched");
         let seen = seen.join().unwrap();
         let names: Vec<&str> = seen[0]["tools"].as_array().unwrap().iter().map(|x| x["function"]["name"].as_str().unwrap()).collect();
-        assert_eq!(names.len(), 5, "{names:?}");
+        assert_eq!(names.len(), crate::tools::RESTRICTED_TOOLS.len(), "{names:?}");
         // its chat and its memory are in its own folder, nobody else's
         crate::tenant::scope(&t, || {
             assert_eq!(chats::load().len(), 1);

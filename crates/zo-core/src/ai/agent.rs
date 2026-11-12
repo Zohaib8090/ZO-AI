@@ -5,7 +5,7 @@ use super::providers::{self, Protocol, Provider};
 use std::io::BufRead;
 use super::wire::{self, Reply, ToolResult, Turn, Usage};
 use super::Selection;
-use crate::approval::Approver;
+use crate::approval::{Approver, Questioner};
 use crate::policy::Mode;
 use crate::{mcp, mcp_client};
 use serde_json::Value;
@@ -309,12 +309,12 @@ pub struct Extra {
     pub text: String,
 }
 
-pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approver: &dyn Approver, cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
-    run_with(cfg, history, user, Extra::default(), mode, approver, cancel, on_event)
+pub fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approver: &dyn Approver, questioner: &dyn Questioner, cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+    run_with(cfg, history, user, Extra::default(), mode, approver, questioner, cancel, on_event)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn run_with(cfg: &Config, history: &mut Vec<Turn>, user: &str, extra: Extra, mode: Mode, approver: &dyn Approver, cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+pub fn run_with(cfg: &Config, history: &mut Vec<Turn>, user: &str, extra: Extra, mode: Mode, approver: &dyn Approver, questioner: &dyn Questioner, cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     let restricted = crate::tenant::is_restricted();
     crate::tools::begin_answer();
     crate::tools::note_attachment(user);
@@ -421,6 +421,8 @@ pub fn run_with(cfg: &Config, history: &mut Vec<Turn>, user: &str, extra: Extra,
             on_event(Event::ToolStart { name: call.name.clone(), summary: mcp::summarize(&call.name, &call.args) });
             let outcome = if restricted && !crate::tools::allowed_for_restricted(&call.name) {
                 Err(crate::tools::refusal(&call.name))
+            } else if call.name == "zohara_ask_user" {
+                execute_ask_user(&call.args, questioner)
             } else if call.name == "zohara_ai_subagent" && crate::term::enabled() {
                 subagent(cfg, &call.args, mode, approver, cancel)
             } else if external.owns(&call.name) { external.execute(&call.name, &call.args, mode, approver) } else { mcp::execute(&call.name, &call.args, mode, approver) };
@@ -467,6 +469,62 @@ thread_local! {
     static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
+/// Execute the `zohara_ask_user` tool: validate parameters, ask the person, format the reply for the model.
+fn execute_ask_user(args: &Value, questioner: &dyn Questioner) -> Result<String, String> {
+    use crate::approval::{Question, QuestionOption};
+    let qs = args.get("questions").and_then(Value::as_array)
+        .ok_or("Missing or invalid 'questions' parameter.")?;
+    if qs.is_empty() || qs.len() > 4 {
+        return Err("Must have 1 to 4 questions.".into());
+    }
+    let mut parsed = Vec::new();
+    for q in qs {
+        let question = q.get("question").and_then(Value::as_str).unwrap_or("").to_string();
+        let header = q.get("header").and_then(Value::as_str).unwrap_or("").to_string();
+        if question.is_empty() || question.chars().count() > 300 {
+            return Err("Each question must be 1–300 characters.".into());
+        }
+        if header.chars().count() > 24 {
+            return Err("Each header must be at most 24 characters.".into());
+        }
+        let multi = q.get("multi_select").and_then(Value::as_bool).unwrap_or(false);
+        let opts = q.get("options").and_then(Value::as_array)
+            .ok_or("Each question needs an 'options' array.")?;
+        if opts.len() < 2 || opts.len() > 6 {
+            return Err("Each question needs 2 to 6 options.".into());
+        }
+        let mut popts = Vec::new();
+        for o in opts {
+            let label = o.get("label").and_then(Value::as_str).unwrap_or("").to_string();
+            let desc = o.get("description").and_then(Value::as_str).unwrap_or("").to_string();
+            if label.is_empty() || label.chars().count() > 60 {
+                return Err("Each option label must be 1–60 characters.".into());
+            }
+            if desc.chars().count() > 200 {
+                return Err("Each option description must be at most 200 characters.".into());
+            }
+            popts.push(QuestionOption { label, description: desc });
+        }
+        parsed.push(Question { question, header, multi_select: multi, options: popts });
+    }
+    match questioner.ask_questions(&parsed) {
+        Some(answers) => {
+            let mut out = String::new();
+            for (q, a) in parsed.iter().zip(answers.iter()) {
+                if !out.is_empty() { out.push('\n'); }
+                out.push_str(&format!("Q: {}\nA: {}", q.question, a.selected.join(", ")));
+                if let Some(ref other) = a.other {
+                    if !other.is_empty() {
+                        out.push_str(&format!(" [Other: {}]", other));
+                    }
+                }
+            }
+            Ok(out)
+        }
+        None => Ok("The person declined to answer.".into()),
+    }
+}
+
 /// A sub-agent: the same model and tools, a fresh conversation about one job, and only its final report comes back.
 fn subagent(cfg: &Config, args: &Value, mode: Mode, approver: &dyn Approver, cancel: &AtomicBool) -> Result<String, String> {
     if DEPTH.with(|d| d.get()) > 0 {
@@ -483,7 +541,7 @@ fn subagent(cfg: &Config, args: &Value, mode: Mode, approver: &dyn Approver, can
     };
     let mut hist: Vec<Turn> = Vec::new();
     DEPTH.with(|d| d.set(1));
-    let r = run(&sub_cfg, &mut hist, task, mode, approver, cancel, &mut |_| {});
+    let r = run(&sub_cfg, &mut hist, task, mode, approver, &crate::approval::NoQuestions, cancel, &mut |_| {});
     DEPTH.with(|d| d.set(0));
     r?;
     let report = hist.iter().rev().find_map(|t| match t { Turn::Assistant { text, .. } if !text.trim().is_empty() => Some(text.clone()), _ => None });
@@ -631,10 +689,14 @@ pub fn detect_local() -> Vec<&'static Provider> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::approval::Deny;
+    use crate::approval::{Deny, NoQuestions, Question, QuestionAnswer, QuestionOption, Questioner};
     use serde_json::json;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approver: &dyn Approver, cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
+        super::run(cfg, history, user, mode, approver, &NoQuestions, cancel, on_event)
+    }
 
     /// A server that answers the given bodies in order and hands back every request body it saw.
     fn mock(answers: Vec<Value>) -> (String, std::thread::JoinHandle<Vec<Value>>) {
@@ -974,5 +1036,58 @@ mod tests {
         assert!(seen[0]["tools"].to_string().contains("zohara_ai_subagent"));
         // the main model got the report as the tool result
         assert!(seen[2]["messages"].to_string().contains("Mars has 2 moons."));
+    }
+
+    struct MockQuestioner(Option<Vec<QuestionAnswer>>);
+    impl Questioner for MockQuestioner {
+        fn ask_questions(&self, _: &[Question]) -> Option<Vec<QuestionAnswer>> {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn ask_user_tool_formats_answers_or_handles_declined() {
+        let q_args = json!({
+            "questions": [{
+                "question": "Which database do you want?",
+                "header": "Database",
+                "multi_select": false,
+                "options": [
+                    {"label": "PostgreSQL", "description": "Relational SQL database"},
+                    {"label": "SQLite", "description": "Embedded file database"}
+                ]
+            }]
+        });
+
+        // 1. Answered with selection and other
+        let questioner = MockQuestioner(Some(vec![QuestionAnswer {
+            selected: vec!["PostgreSQL".into()],
+            other: Some("version 16".into()),
+        }]));
+        let res = execute_ask_user(&q_args, &questioner).unwrap();
+        assert_eq!(res, "Q: Which database do you want?\nA: PostgreSQL [Other: version 16]");
+
+        // 2. Declined / cancelled
+        let declined = MockQuestioner(None);
+        let res = execute_ask_user(&q_args, &declined).unwrap();
+        assert_eq!(res, "The person declined to answer.");
+
+        // 3. Validation: empty questions
+        assert!(execute_ask_user(&json!({"questions": []}), &questioner).is_err());
+
+        // 4. Validation: too many questions (> 4)
+        let too_many: Vec<_> = (0..5).map(|_| q_args["questions"][0].clone()).collect();
+        assert!(execute_ask_user(&json!({"questions": too_many}), &questioner).is_err());
+
+        // 5. Validation: options < 2
+        let bad_opts = json!({
+            "questions": [{
+                "question": "Only one?",
+                "header": "Chip",
+                "multi_select": false,
+                "options": [{"label": "Only", "description": "alone"}]
+            }]
+        });
+        assert!(execute_ask_user(&bad_opts, &questioner).is_err());
     }
 }

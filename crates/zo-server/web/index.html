@@ -161,6 +161,21 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .tool-group.open .tool-body{display:block}.tool-body pre{margin:2px 0 6px;font:12px ui-monospace,monospace;white-space:pre-wrap;word-break:break-word}
 .ask{border:1px solid var(--line2);background:var(--card);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
 .ask .row{display:flex;gap:8px}
+.q-card{border:1px solid var(--line2);background:var(--card);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px;margin:8px 0;outline:none}
+.q-chip{display:inline-flex;align-items:center;background:var(--card2);border:1px solid var(--line2);color:var(--text2);padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;letter-spacing:0.02em}
+.q-title{font-size:14.5px;font-weight:500;color:var(--text);line-height:1.4}
+.q-step{font-size:11.5px;color:var(--dim);margin-left:auto}
+.q-opts{display:flex;flex-direction:column;gap:6px}
+.q-opt{display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--card2);cursor:pointer;transition:border-color .15s, background .15s}
+.q-opt:hover{border-color:var(--line2);background:var(--hov)}
+.q-opt.selected{border-color:var(--accent);background:var(--card)}
+.q-opt input[type=radio],.q-opt input[type=checkbox]{margin-top:2px;accent-color:var(--accent);cursor:pointer}
+.q-opt-body{display:flex;flex-direction:column;gap:2px;flex:1}
+.q-opt-label{font-size:13.5px;color:var(--text);font-weight:500}
+.q-opt-desc{font-size:12px;color:var(--dim);line-height:1.3}
+.q-other-input{width:100%;background:var(--bg);border:1px solid var(--line2);border-radius:7px;padding:6px 10px;font-size:13px;color:var(--text);margin-top:4px;box-sizing:border-box}
+.q-other-input:focus{outline:none;border-color:var(--accent)}
+.q-foot{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
 
 /* home and composer */
 .home{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;gap:0}
@@ -946,6 +961,7 @@ async function send(opts) {
           case "tool_done": clearWait(); if (group && ev.output) groupOut(group, ev.output); break;
           case "approval": if (dsk && !dcaps(curDev()).approvals_from_web) waitApproval(ev.summary || ev.tool); else ask(ev); break;
           case "approval_wait": case "waiting_approval": if (dsk) waitApproval(ev.summary); break;
+          case "question": askQuestion(ev); break;
           case "error": if (ev.error === "desktop_offline") { addError(OFFLINE_MSG); linkRefresh(); } else addError(ev.message && dsk ? ev.message : ev.error); break;
           case "stopped": clearWait(); addError("Stopped."); gotDone = true; break;
         }
@@ -969,6 +985,160 @@ function ask(ev) {
   const [yes, no] = d.querySelectorAll("button");
   const answer = ok => { api("/api/reply", { stream, op: "approve", id: ev.id, yes: ok }).catch(() => {}); d.innerHTML = `<span class="pc-meta">${ok ? "Allowed" : "Denied"}: ${esc(ev.summary || ev.tool)}</span>`; };
   yes.onclick = () => answer(true); no.onclick = () => answer(false);
+}
+function askQuestion(ev) {
+  noteQuestion(ev);
+  if ($("text")) $("text").disabled = true;
+  const questions = ev.questions || [];
+  if (!questions.length) return;
+  const d = document.createElement("div"); d.className = "q-card";
+  let cur = 0;
+  const state = questions.map(() => ({ selected: new Set(), other: "" }));
+
+  const finish = (cancelled, summaryText) => {
+    if ($("text")) { $("text").disabled = false; $("text").focus(); }
+    if (cancelled) {
+      api("/api/reply", { stream, op: "answer", id: ev.id, cancelled: true }).catch(() => {});
+      d.innerHTML = `<span class="pc-meta">Declined to answer.</span>`;
+    } else {
+      const answers = state.map(s => ({
+        selected: Array.from(s.selected).filter(x => x !== "__other__"),
+        other: s.other.trim() || null
+      }));
+      api("/api/reply", { stream, op: "answer", id: ev.id, answers }).catch(() => {});
+      d.innerHTML = `<span class="pc-meta">You answered: ${esc(summaryText || "Done")}</span>`;
+    }
+  };
+
+  const render = () => {
+    const q = questions[cur];
+    const s = state[cur];
+    const isMulti = !!q.multi_select;
+    const isLast = cur === questions.length - 1;
+    const isFirst = cur === 0;
+
+    let html = `<div style="display:flex;align-items:center;gap:8px">`;
+    if (q.header) html += `<span class="q-chip">${esc(q.header)}</span>`;
+    if (questions.length > 1) html += `<span class="q-step">Question ${cur + 1} of ${questions.length}</span>`;
+    html += `</div>`;
+    html += `<div class="q-title">${esc(q.question)}</div>`;
+    html += `<div class="q-opts">`;
+    (q.options || []).forEach(opt => {
+      const sel = s.selected.has(opt.label);
+      html += `<label class="q-opt${sel ? " selected" : ""}">
+        <input type="${isMulti ? "checkbox" : "radio"}" name="q_${ev.id}_${cur}" value="${esc(opt.label)}"${sel ? " checked" : ""}>
+        <div class="q-opt-body">
+          <div class="q-opt-label">${esc(opt.label)}</div>
+          ${opt.description ? `<div class="q-opt-desc">${esc(opt.description)}</div>` : ""}
+        </div>
+      </label>`;
+    });
+    const otherSel = !!s.other || s.selected.has("__other__");
+    html += `<label class="q-opt${otherSel ? " selected" : ""}">
+      <input type="${isMulti ? "checkbox" : "radio"}" name="q_${ev.id}_${cur}" value="__other__"${otherSel ? " checked" : ""}>
+      <div class="q-opt-body">
+        <div class="q-opt-label">Other</div>
+        <input type="text" class="q-other-input" placeholder="Type your own answer" value="${esc(s.other)}">
+      </div>
+    </label>`;
+    html += `</div>`;
+
+    html += `<div class="q-foot">
+      <div><button class="btn q-skip">Skip</button></div>
+      <div style="display:flex;gap:6px">
+        ${!isFirst ? `<button class="btn q-back">Back</button>` : ""}
+        <button class="btn primary q-next">${isLast ? "Send" : "Next"}</button>
+      </div>
+    </div>`;
+
+    d.innerHTML = html;
+    scrollEnd();
+
+    const otherInput = d.querySelector(".q-other-input");
+    otherInput.oninput = e => {
+      s.other = e.target.value;
+      if (s.other) {
+        if (!isMulti) s.selected.clear();
+        s.selected.add("__other__");
+      }
+    };
+    otherInput.onfocus = () => {
+      if (!isMulti) s.selected.clear();
+      s.selected.add("__other__");
+      render();
+      const inp = d.querySelector(".q-other-input");
+      if (inp) { inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length; }
+    };
+
+    d.querySelectorAll(`input[name="q_${ev.id}_${cur}"]`).forEach(inp => {
+      inp.onchange = () => {
+        if (isMulti) {
+          if (inp.value === "__other__") {
+            if (!inp.checked) { s.other = ""; s.selected.delete("__other__"); }
+            else s.selected.add("__other__");
+          } else {
+            if (inp.checked) s.selected.add(inp.value); else s.selected.delete(inp.value);
+          }
+        } else {
+          s.selected.clear();
+          if (inp.value === "__other__") {
+            s.selected.add("__other__");
+          } else {
+            s.other = "";
+            s.selected.add(inp.value);
+          }
+        }
+        render();
+      };
+    });
+
+    d.querySelector(".q-skip").onclick = () => finish(true);
+    if (!isFirst) d.querySelector(".q-back").onclick = () => { cur--; render(); };
+    d.querySelector(".q-next").onclick = () => {
+      if (isLast) {
+        const summary = state.map(st => {
+          const chosen = Array.from(st.selected).filter(x => x !== "__other__");
+          if (st.other.trim()) chosen.push(st.other.trim());
+          return chosen.join(", ");
+        }).filter(Boolean).join("; ");
+        finish(false, summary);
+      } else {
+        cur++;
+        render();
+      }
+    };
+  };
+
+  d.tabIndex = 0;
+  d.onkeydown = e => {
+    if (e.target.tagName === "INPUT" && e.target.type === "text") {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        d.querySelector(".q-next")?.click();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        finish(true);
+      }
+      return;
+    }
+    if (e.key >= "1" && e.key <= "6") {
+      const idx = parseInt(e.key, 10) - 1;
+      const inputs = d.querySelectorAll(`input[name="q_${ev.id}_${cur}"]`);
+      if (inputs[idx]) {
+        inputs[idx].checked = !inputs[idx].checked;
+        inputs[idx].dispatchEvent(new Event("change"));
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      finish(true);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      d.querySelector(".q-next")?.click();
+    }
+  };
+
+  thread().appendChild(d);
+  render();
 }
 document.addEventListener("click", e => { const b = e.target.closest("[data-copy]"); if (b) { navigator.clipboard?.writeText(b.closest(".code-block").querySelector("pre").textContent); toast("Copied"); } });
 
@@ -2310,6 +2480,14 @@ function noteApproval(ev) {
   const c = noteCfg(); if (!c.approval || notePerm() !== "granted") return;
   setUnseen(noteUnseen + 1);
   showNote("ZO-AI needs your approval", "A step is waiting for a yes or a no.", "zo-approve-" + (ev && ev.id), chatId);
+}
+/* ZO-AI asks a question (zohara_ask_user) */
+function noteQuestion(ev) {
+  if (document.visibilityState === "visible") return;
+  const c = noteCfg(); if (!c.bg || notePerm() !== "granted") return;
+  setUnseen(noteUnseen + 1);
+  const q0 = ev && ev.questions && ev.questions[0] ? (c.title ? ev.questions[0].question : "ZO-AI is asking a question.") : "ZO-AI needs your answer.";
+  showNote("ZO-AI needs your answer", q0, "zo-question-" + (ev && ev.id), chatId);
 }
 /* the person tapped a notification (or opened /?chat=...): show that chat */
 function openFromNote(chat) {

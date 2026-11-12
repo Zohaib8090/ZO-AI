@@ -541,7 +541,25 @@ impl Link {
                 self.pollers.notify_all();
                 Replied::Sent
             }
-            _ => Replied::Bad("Only stop and approve can be sent to a running request."),
+            Some("answer") => {
+                let Some(d) = inner.devs.get_mut(&key) else { return Replied::NotFound };
+                let aid = match v.get("id") {
+                    Some(Value::String(s)) if !s.is_empty() && s.len() <= 100 => json!(s),
+                    Some(Value::Number(n)) if n.is_u64() => json!(n),
+                    _ => return Replied::Bad("The question has no valid id."),
+                };
+                let payload = if v.get("cancelled").and_then(Value::as_bool) == Some(true) {
+                    json!({"id": new_id(), "type": "answer_reply", "job_id": job, "question_id": aid, "cancelled": true})
+                } else if let Some(answers) = v.get("answers").and_then(Value::as_array) {
+                    json!({"id": new_id(), "type": "answer_reply", "job_id": job, "question_id": aid, "answers": answers})
+                } else {
+                    return Replied::Bad("The question needs answers or cancelled: true.");
+                };
+                d.queue.push_back(QItem { job: None, payload, at: Instant::now() });
+                self.pollers.notify_all();
+                Replied::Sent
+            }
+            _ => Replied::Bad("Only stop, approve and answer can be sent to a running request."),
         }
     }
 

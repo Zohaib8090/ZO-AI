@@ -791,7 +791,7 @@ impl Ctl {
             };
             let r = match &cfg {
                 None => claude_code::run(&model, effort.as_deref(), &mut session, &text, &extra, &cancel, &mut emit),
-                Some(cfg) => agent::run(cfg, &mut history, &text, zo_core::Mode::load(), &zo_core::approval::AppApprover, &cancel, &mut emit),
+                Some(cfg) => agent::run(cfg, &mut history, &text, zo_core::Mode::load(), &zo_core::approval::AppApprover, &zo_core::approval::NoQuestions, &cancel, &mut emit),
             };
             let _ = tx.send(Msg::Done(r, history, session));
         });

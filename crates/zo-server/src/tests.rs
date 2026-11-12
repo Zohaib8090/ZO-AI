@@ -237,6 +237,11 @@ fn a_running_answer_can_only_be_reached_by_its_owner() {
     let mut line = String::new();
     BufReader::new(&theirs).read_line(&mut line).unwrap();
     assert!(line.contains("\"stop\"") && !line.contains("tenant"));
+    // also answer op passes through to the stream
+    assert_eq!(call(&r, "tok-a", "/api/reply", json!({"stream": 77, "op": "answer", "id": 1, "answers": [{"selected": ["PostgreSQL"]}]})).status, 200);
+    let mut line2 = String::new();
+    BufReader::new(&theirs).read_line(&mut line2).unwrap();
+    assert!(line2.contains("\"answer\"") && line2.contains("PostgreSQL"));
 }
 
 #[test]
@@ -246,7 +251,7 @@ fn the_restricted_person_gets_the_five_tools_and_the_admin_does_not_get_refused(
     // the tool list the model would see
     let restricted = zo_core::tenant::Tenant::open_in(&testenv::env(), &tenant_of(&ur), true).unwrap();
     let names: HashSet<&str> = zo_core::tenant::scope(&restricted, || zo_core::tools::active().iter().map(|d| d.name).collect());
-    assert_eq!(names, HashSet::from(["zohara_web_search", "zohara_web_fetch", "zohara_memory_search", "zohara_memory_save", "zohara_memory_forget"]));
+    assert_eq!(names, HashSet::from(["zohara_web_search", "zohara_web_fetch", "zohara_memory_search", "zohara_memory_save", "zohara_memory_forget", "zohara_ask_user"]));
     // through the service: refused for the restricted person, allowed for the admin
     let w = call(&r, "tok-r", "/api/account/whoami", json!({}));
     assert_eq!((w.body["admin"].clone(), w.body["restricted"].clone()), (json!(false), json!(true)));

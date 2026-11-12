@@ -1,11 +1,14 @@
 //! Asking the person. The app listens on a Unix socket; the MCP server (a separate process) connects to it
 //! when a tool needs approval. If the app is not running there is nobody to ask, so the answer is no.
+//! Also: the question tool (`zohara_ask_user`) lets the AI ask questions with ready-made options.
 
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::time::Duration;
+
+// ── Approvals ──
 
 pub trait Approver {
     fn approve(&self, tool: &str, summary: &str) -> bool;
@@ -16,6 +19,44 @@ pub struct Deny;
 impl Approver for Deny {
     fn approve(&self, _: &str, _: &str) -> bool {
         false
+    }
+}
+
+// ── Questions (zohara_ask_user) ──
+
+/// One option inside a question card.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QuestionOption {
+    pub label: String,
+    pub description: String,
+}
+
+/// A single question with its header chip and options.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Question {
+    pub question: String,
+    pub header: String,
+    pub multi_select: bool,
+    pub options: Vec<QuestionOption>,
+}
+
+/// The person's answer to one question.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QuestionAnswer {
+    pub selected: Vec<String>,
+    pub other: Option<String>,
+}
+
+/// Ask the person questions with ready-made options. Returns `None` on cancel / timeout.
+pub trait Questioner {
+    fn ask_questions(&self, questions: &[Question]) -> Option<Vec<QuestionAnswer>>;
+}
+
+/// Never gets an answer: for when there is no one to ask (CLI, sub-agents, tests).
+pub struct NoQuestions;
+impl Questioner for NoQuestions {
+    fn ask_questions(&self, _: &[Question]) -> Option<Vec<QuestionAnswer>> {
+        None
     }
 }
 
