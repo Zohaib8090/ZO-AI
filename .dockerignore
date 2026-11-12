@@ -1,2 +1,3 @@
-target
+# Keeps the build context small: compiled output and git history are not needed (the image compiles the server itself).
+**/target
 .git

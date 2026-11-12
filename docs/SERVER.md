@@ -35,6 +35,8 @@ Render address (for example `zo-ai-server.onrender.com`), or the Google pop-up r
 
 ## Setting it up on Render (owner)
 
+Full steps, free-plan facts and the Claude Code token: `docs/DEPLOY.md`. Short version:
+
 1. Render > New > Blueprint > this repository (`render.yaml`).
 2. Fill in `FIREBASE_SERVICE_ACCOUNT` (paste the whole JSON key file) and `ZO_ALLOWED_EMAILS` (your Google address).
    `ZO_SERVER_SECRET` is made by Render. `CLAUDE_CODE_OAUTH_TOKEN` is optional (from `claude setup-token`).
@@ -53,8 +55,9 @@ Use a separate `XDG_RUNTIME_DIR`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME` if the d
 Tested: unit tests (cutting and joining long texts, the document layout, key encryption), and a local run without login
 (`status`, `memory_add`, `set_key` into the keys file, a streamed `send`, CORS preflight).
 The web page was opened against the local test server (`/?noauth` skips only the sign-in screen; a real server still refuses calls without a token): it renders, a message reaches the service (answered "No model is chosen yet"), the settings page lists the providers.
-Not tested yet: the Google sign-in itself, the login check and Firestore against the real project (needs the owner's Firebase key), the Docker image,
-Render itself, Claude Code mode on the server.
+The Docker image was built and run with podman (health, web page, status, non-root, `claude`, `ssh`, Claude Code mode reaching `claude` with a made-up token): see `docs/DEPLOY.md`.
+Not tested yet: the Google sign-in itself, the login check and Firestore against the real project (needs the owner's Firebase key),
+Render itself, Claude Code mode with a real token.
 
 ## Not built yet
 
