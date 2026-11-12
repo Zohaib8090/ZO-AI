@@ -1,5 +1,6 @@
-//! Who is asking. A person signs in with Google through Firebase; every request carries the Firebase ID token. The token is checked
-//! against Google's public keys, must be for this project, must come from Google sign-in, and must have a verified e-mail address.
+//! Who is asking. A person signs in with Google or with e-mail and password through Firebase; every request carries the Firebase ID
+//! token. The token is checked against Google's public keys, must be for this project, must come from Google or e-mail/password
+//! sign-in, and must have a verified e-mail address (an e-mail account that never confirmed its address is refused like any other).
 //! After that, who the person is (admin, restricted, blocked) is decided by `Policy`, from the server's settings.
 //!
 //! `Verifier` is a trait so the tests can stand in identities without Google.
@@ -18,7 +19,7 @@ const KEYS_URL: &str = "https://www.googleapis.com/service_accounts/v1/jwk/secur
 pub struct Identity {
     /// Firebase's user id (never used in a path: see `tenant_id`).
     pub uid: String,
-    /// Lower case, and verified by Google.
+    /// Lower case, and verified (by Google, or by the link Firebase sent to an e-mail/password account).
     pub email: String,
 }
 
@@ -127,8 +128,8 @@ pub fn identity_from_claims(claims: &Value) -> Result<Identity, String> {
     let email = claims.get("email").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
     let verified = claims.get("email_verified").and_then(Value::as_bool).unwrap_or(false);
     let provider = claims.pointer("/firebase/sign_in_provider").and_then(Value::as_str).unwrap_or("");
-    if uid.is_empty() || email.is_empty() || !verified || provider != "google.com" {
-        return Err("Sign in with a Google account whose e-mail address is verified.".into());
+    if uid.is_empty() || email.is_empty() || !verified || !matches!(provider, "google.com" | "password") {
+        return Err("Sign in with a Google account or an e-mail account whose address is verified.".into());
     }
     Ok(Identity { uid: uid.to_string(), email })
 }
@@ -270,13 +271,19 @@ mod tests {
     }
 
     #[test]
-    fn any_verified_google_account_is_accepted_and_nothing_else() {
+    fn any_verified_google_or_email_account_is_accepted_and_nothing_else() {
         let ok = json!({"sub": "u1", "email": " Me@Example.COM ", "email_verified": true, "firebase": {"sign_in_provider": "google.com"}});
         assert_eq!(identity_from_claims(&ok).unwrap(), Identity { uid: "u1".into(), email: "me@example.com".into() });
+        // an e-mail and password account counts when (and only when) its address was verified
+        let pw = json!({"sub": "u2", "email": "Pw@Example.com", "email_verified": true, "firebase": {"sign_in_provider": "password"}});
+        assert_eq!(identity_from_claims(&pw).unwrap(), Identity { uid: "u2".into(), email: "pw@example.com".into() });
         for bad in [
             json!({"sub": "u1", "email": "a@b.c", "email_verified": false, "firebase": {"sign_in_provider": "google.com"}}),
             json!({"sub": "u1", "email": "a@b.c", "firebase": {"sign_in_provider": "google.com"}}),
-            json!({"sub": "u1", "email": "a@b.c", "email_verified": true, "firebase": {"sign_in_provider": "password"}}),
+            json!({"sub": "u1", "email": "a@b.c", "email_verified": false, "firebase": {"sign_in_provider": "password"}}),
+            json!({"sub": "u1", "email": "a@b.c", "firebase": {"sign_in_provider": "password"}}),
+            json!({"sub": "u1", "email": "a@b.c", "email_verified": true, "firebase": {"sign_in_provider": "custom"}}),
+            json!({"sub": "u1", "email": "a@b.c", "email_verified": true, "firebase": {"sign_in_provider": "phone"}}),
             json!({"sub": "u1", "email": "a@b.c", "email_verified": true, "firebase": {"sign_in_provider": "anonymous"}}),
             json!({"sub": "u1", "email": "a@b.c", "email_verified": true}),
             json!({"sub": "", "email": "a@b.c", "email_verified": true, "firebase": {"sign_in_provider": "google.com"}}),

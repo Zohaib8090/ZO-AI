@@ -1,7 +1,9 @@
-//! Device tokens: what the desktop app's sync and the `zo` terminal client use instead of a Google sign-in. A person makes one on
-//! their Account page. It is `zd_` plus 32 random bytes (base64url), shown once; only its sha256 is stored: in the person's own
-//! list (`users/<tenant>/meta/devices`, to show and revoke it) and in the index `deviceidx/<sha256>` (to find the person from the
-//! token). Scope `sync` reaches only `/api/sync/*`; `full` also `/api/op`, `/api/send` and `/api/reply`. A token is never logged.
+//! Device credentials: what the desktop app's sync and the `zo` terminal client use instead of a Firebase sign-in. Nobody ever sees
+//! or types one: the server issues it when a person signs in on a device (the browser device login in `devicelogin.rs`, or
+//! `/api/auth/exchange` after an e-mail sign-in) and the device keeps it in its key store. It is `zd_` plus 32 random bytes
+//! (base64url); only its sha256 is stored: in the person's own list (`users/<tenant>/meta/devices`, shown as "signed-in devices" and
+//! revocable) and in the index `deviceidx/<sha256>` (to find the person from the credential). Kind `desktop` has scope `sync` (only
+//! `/api/sync/*`); kind `cli` has scope `full` (also `/api/op`, `/api/send` and `/api/reply`). A credential is never logged.
 
 use crate::db::Db;
 use crate::tenants::Bucket;
@@ -50,6 +52,56 @@ impl Scope {
     }
 }
 
+/// What kind of device signed in. The kind decides the scope: a desktop app only syncs, the terminal client may do everything the API does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Desktop,
+    Cli,
+}
+
+impl Kind {
+    pub fn parse(s: &str) -> Option<Kind> {
+        match s {
+            "desktop" => Some(Kind::Desktop),
+            "cli" => Some(Kind::Cli),
+            _ => None,
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Desktop => "desktop",
+            Kind::Cli => "cli",
+        }
+    }
+    pub fn scope(self) -> Scope {
+        match self {
+            Kind::Desktop => Scope::Sync,
+            Kind::Cli => Scope::Full,
+        }
+    }
+}
+
+/// Why a credential could not be made.
+#[derive(Debug, PartialEq, Eq)]
+pub enum MakeErr {
+    /// The person has `MAX_DEVICES` signed-in devices already.
+    Full,
+    Storage(String),
+}
+
+/// A name as it is shown on the approval screen and in the list, without control or direction-changing characters (a name must not
+/// be able to disguise itself), trimmed.
+pub fn strip_name(name: &str) -> String {
+    let hidden = |c: char| c.is_control() || ('\u{200b}'..='\u{200f}').contains(&c) || ('\u{202a}'..='\u{202e}').contains(&c) || ('\u{2066}'..='\u{2069}').contains(&c) || c == '\u{feff}';
+    name.chars().filter(|c| !hidden(*c)).collect::<String>().trim().to_string()
+}
+
+/// The same, at most 60 characters.
+pub fn clean_name(name: &str) -> String {
+    strip_name(name).chars().take(60).collect()
+}
+
 /// One entry of a person's own list.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Device {
@@ -60,12 +112,16 @@ pub struct Device {
     pub last_used: u64,
     /// sha256 of the token, hex: the name of its index document.
     pub hash: String,
+    /// Missing in entries made before kinds existed.
+    #[serde(default)]
+    pub kind: Option<Kind>,
 }
 
 impl Device {
     /// What the Account page gets (no hash).
     pub fn public(&self) -> Value {
-        json!({"id": self.id, "name": self.name, "scope": self.scope.name(), "created": self.created, "last_used": self.last_used})
+        let kind = self.kind.unwrap_or(if self.scope == Scope::Sync { Kind::Desktop } else { Kind::Cli });
+        json!({"id": self.id, "name": self.name, "kind": kind.name(), "scope": self.scope.name(), "created": self.created, "last_used": self.last_used})
     }
 }
 
@@ -97,10 +153,15 @@ pub fn well_formed(token: &str) -> bool {
     token.len() == PREFIX.len() + 43 && token.starts_with(PREFIX) && token[PREFIX.len()..].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-fn random_token() -> Result<String, String> {
-    let mut b = [0u8; 32];
+/// Random bytes from the system.
+pub fn random_bytes<const N: usize>() -> Result<[u8; N], String> {
+    let mut b = [0u8; N];
     std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut b)).map_err(|e| format!("no random numbers: {e}"))?;
-    Ok(format!("{PREFIX}{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)))
+    Ok(b)
+}
+
+fn random_token() -> Result<String, String> {
+    Ok(format!("{PREFIX}{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random_bytes::<32>()?)))
 }
 
 fn now_secs() -> u64 {
@@ -149,25 +210,26 @@ impl Devices {
         self.read(tenant)
     }
 
-    /// Makes a token. Returns it (this is the only time it exists in clear) with its list entry. `eh` is `auth::email_hash`.
-    pub fn create(&self, tenant: &str, eh: &str, restricted: bool, name: &str, scope: Scope) -> Result<(String, Device), String> {
+    /// Makes a credential. Returns it (this is the only time it exists in clear) with its list entry. `eh` is `auth::email_hash`.
+    pub fn create(&self, tenant: &str, eh: &str, restricted: bool, name: &str, kind: Kind) -> Result<(String, Device), MakeErr> {
         let _g = self.edit.lock().unwrap_or_else(|e| e.into_inner());
-        let mut list = self.read(tenant)?;
+        let mut list = self.read(tenant).map_err(MakeErr::Storage)?;
         if list.len() >= MAX_DEVICES {
-            return Err(format!("You have {MAX_DEVICES} devices already. Revoke one first."));
+            return Err(MakeErr::Full);
         }
-        let name: String = name.chars().filter(|c| !c.is_control()).take(60).collect::<String>().trim().to_string();
-        let token = random_token()?;
+        let scope = kind.scope();
+        let name = clean_name(name);
+        let token = random_token().map_err(MakeErr::Storage)?;
         let hash = hash_token(&token);
         let id = hash[..12].to_string();
-        let dev = Device { id, name: if name.is_empty() { "Device".into() } else { name }, scope, created: now_secs(), last_used: 0, hash: hash.clone() };
+        let dev = Device { id, name: if name.is_empty() { "Device".into() } else { name }, scope, created: now_secs(), last_used: 0, hash: hash.clone(), kind: Some(kind) };
         // the index first: a token that is in the index but not in the list is only an orphan that "delete account" sweeps away
         let entry = json!({"tenant": tenant, "id": dev.id, "scope": scope.name(), "restricted": restricted, "eh": eh});
-        self.db.put_doc(INDEX, &hash, &entry.to_string())?;
+        self.db.put_doc(INDEX, &hash, &entry.to_string()).map_err(MakeErr::Storage)?;
         list.push(dev.clone());
         if let Err(e) = self.write(tenant, &list) {
             let _ = self.db.delete_doc(INDEX, &hash);
-            return Err(e);
+            return Err(MakeErr::Storage(e));
         }
         Ok((token, dev))
     }
@@ -298,7 +360,7 @@ mod tests {
     fn a_token_has_the_documented_shape_and_only_its_hash_is_stored() {
         let db = Arc::new(MemDb::default());
         let d = Devices::new(db.clone());
-        let (token, dev) = d.create(&id(1), "eh1", true, "  My laptop ", Scope::Sync).unwrap();
+        let (token, dev) = d.create(&id(1), "eh1", true, "  My laptop ", Kind::Desktop).unwrap();
         assert!(token.starts_with("zd_") && token.len() == 46 && well_formed(&token));
         assert_eq!(dev.name, "My laptop");
         let everything: String = db.docs.lock().unwrap().iter().map(|((c, i), t)| format!("{c}/{i}={t}")).collect();
@@ -308,14 +370,14 @@ mod tests {
         let v: Value = serde_json::from_str(&idx).unwrap();
         assert_eq!((v["tenant"].as_str().unwrap(), v["scope"].as_str().unwrap(), v["restricted"].as_bool().unwrap()), (id(1).as_str(), "sync", true));
         // two tokens are never the same
-        assert_ne!(d.create(&id(1), "eh1", true, "", Scope::Full).unwrap().0, token);
+        assert_ne!(d.create(&id(1), "eh1", true, "", Kind::Cli).unwrap().0, token);
     }
 
     #[test]
     fn a_token_finds_its_owner_a_made_up_one_finds_nobody_and_a_revoked_one_stops_working() {
         let db = Arc::new(MemDb::default());
         let d = Devices::new(db.clone());
-        let (token, dev) = d.create(&id(1), "eh", true, "x", Scope::Full).unwrap();
+        let (token, dev) = d.create(&id(1), "eh", true, "x", Kind::Cli).unwrap();
         let r = d.resolve(&token).unwrap();
         assert_eq!((r.tenant.as_str(), r.id.as_str(), r.scope), (id(1).as_str(), dev.id.as_str(), Scope::Full));
         assert_eq!(d.resolve(&format!("zd_{}", "A".repeat(43))), Err(Miss::Unknown));
@@ -334,7 +396,7 @@ mod tests {
     fn use_is_noted_and_lists_never_show_the_hash() {
         let db = Arc::new(MemDb::default());
         let d = Devices::new(db);
-        let (token, _) = d.create(&id(1), "eh", false, "x", Scope::Sync).unwrap();
+        let (token, _) = d.create(&id(1), "eh", false, "x", Kind::Desktop).unwrap();
         d.resolve(&token).unwrap();
         let l = d.list(&id(1)).unwrap();
         assert!(l[0].last_used > 0);
@@ -347,10 +409,10 @@ mod tests {
         let db = Arc::new(MemDb::default());
         let d = Devices::new(db);
         for _ in 0..MAX_DEVICES {
-            d.create(&id(1), "eh", false, "x", Scope::Sync).unwrap();
+            d.create(&id(1), "eh", false, "x", Kind::Desktop).unwrap();
         }
-        assert!(d.create(&id(1), "eh", false, "x", Scope::Sync).is_err());
-        assert!(d.create(&id(2), "eh", false, "x", Scope::Sync).is_ok(), "another person has their own ten");
+        assert!(d.create(&id(1), "eh", false, "x", Kind::Desktop).is_err());
+        assert!(d.create(&id(2), "eh", false, "x", Kind::Desktop).is_ok(), "another person has their own ten");
         let mut limited = false;
         for n in 0..(LOOKUPS_PER_MIN as usize + 20) {
             let guess = format!("zd_{n:043}");
@@ -361,7 +423,7 @@ mod tests {
         }
         assert!(limited, "unknown tokens cannot reach the database without limit");
         // another source is not affected by the guesser, and a real token still works for its holder
-        let (token, _) = d.create(&id(3), "eh", false, "x", Scope::Sync).unwrap();
+        let (token, _) = d.create(&id(3), "eh", false, "x", Kind::Desktop).unwrap();
         assert!(d.resolve_from(&token, "5.6.7.8").is_ok());
         d.cache.lock().unwrap().get_mut(&hash_token(&token)).unwrap().at = Instant::now() - KNOWN_FOR - Duration::from_secs(1);
         assert!(d.resolve_from(&token, "1.2.3.4").is_ok(), "stale but real token served although the guesser used up the allowance");
@@ -371,9 +433,9 @@ mod tests {
     fn purge_removes_every_token_of_one_person_even_orphans_and_leaves_others() {
         let db = Arc::new(MemDb::default());
         let d = Devices::new(db.clone());
-        let (a1, _) = d.create(&id(1), "eh", false, "a1", Scope::Sync).unwrap();
-        let (a2, _) = d.create(&id(1), "eh", false, "a2", Scope::Full).unwrap();
-        let (b1, _) = d.create(&id(2), "eh2", false, "b1", Scope::Full).unwrap();
+        let (a1, _) = d.create(&id(1), "eh", false, "a1", Kind::Desktop).unwrap();
+        let (a2, _) = d.create(&id(1), "eh", false, "a2", Kind::Cli).unwrap();
+        let (b1, _) = d.create(&id(2), "eh2", false, "b1", Kind::Cli).unwrap();
         // a half-finished earlier delete: the list is gone but the index entries remain
         db.delete_doc(&list_collection(&id(1)), "devices").unwrap();
         assert_eq!(d.purge(&id(1)).unwrap(), 2);

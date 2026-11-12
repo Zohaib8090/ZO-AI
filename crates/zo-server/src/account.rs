@@ -1,15 +1,14 @@
 //! /api/account/*: what a person can do about their own account. Always about the caller's own tenant (taken from the verified
 //! token, never from the request) and only for a signed-in person (a device token cannot reach any of this).
 
-use crate::auth::email_hash;
-use crate::devices::Scope;
 use crate::tenants::{Lease, Registry};
 use crate::{App, Cred, Who};
 use serde_json::{json, Value};
 use zo_core::tenant::{self, Tenant};
 
 /// The names under /api/account/.
-pub const CALLS: [&str; 7] = ["whoami", "devices_list", "device_create", "device_revoke", "export", "delete", "accept_terms"];
+/// There is no call that makes a device credential here: they only come from the device login and `/api/auth/exchange`.
+pub const CALLS: [&str; 6] = ["whoami", "devices_list", "device_revoke", "export", "delete", "accept_terms"];
 
 fn text<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(Value::as_str).unwrap_or("")
@@ -90,19 +89,6 @@ pub fn handle(app: &App, name: &str, v: &Value, who: &Who, lease: &Lease) -> (u1
                 Err(e) => err(503, &e),
             },
         },
-        "device_create" => {
-            let Some(d) = &app.devices else { return err(400, "Device tokens need the cloud database, which this server does not have.") };
-            let Some(scope) = Scope::parse(text(v, "scope")) else { return err(400, "The scope must be \"sync\" or \"full\".") };
-            let eh = match &who.cred {
-                Cred::Account { email, .. } => email_hash(email),
-                _ => String::new(),
-            };
-            match d.create(id, &eh, !who.admin, text(v, "name"), scope) {
-                // the token is in this answer and nowhere else
-                Ok((token, dev)) => (200, json!({"ok": true, "id": dev.id, "token": token, "name": dev.name, "scope": scope.name()})),
-                Err(e) => err(400, &e),
-            }
-        }
         "device_revoke" => {
             let Some(d) = &app.devices else { return err(404, "There is no such device.") };
             match d.revoke(id, text(v, "id")) {

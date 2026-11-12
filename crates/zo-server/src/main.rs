@@ -14,6 +14,9 @@
 //!   ZO_OPERATOR_COUNTRY        whose law the terms name (required)
 //!   ZO_SERVER_SECRET           a long random text: each person's API keys are encrypted with a key derived from it
 //!   ZO_TENANT_ROOT             where the people's folders live on the disk (default /tmp/zo-tenants; emptied at start, Firestore is the record)
+//!   ZO_PUBLIC_URL              the server's public address, https://host with no path (for example https://zo-ai-server.onrender.com):
+//!                              devices show people `<it>/device` to sign in. Else RENDER_EXTERNAL_URL is used. One of the two is
+//!                              required (the server does not start with the login on and neither set, or one that is not https://host)
 //!   RENDER_EXTERNAL_URL        the server's own address (Render sets it): it calls itself every few minutes so it is not put to sleep
 //!   ZO_SERVER_NO_AUTH=1        for testing on your own computer only: no login, listens on 127.0.0.1 only, no Firestore, one fixed
 //!                              (restricted) person; ZO_NOAUTH_ADMIN=1 makes that person an admin
@@ -21,8 +24,10 @@
 mod account;
 mod auth;
 mod db;
+mod devicelogin;
 mod devices;
 mod firestore;
+mod loginapi;
 mod pages;
 mod sync;
 mod sync_api;
@@ -32,6 +37,7 @@ mod testenv;
 
 use auth::{Policy, Verifier};
 use devices::{Devices, Miss, Scope};
+use devicelogin::DeviceLogin;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -56,6 +62,13 @@ pub enum Route {
     Reply,
     Sync,
     Account,
+    /// /api/auth/device_start and device_poll: nobody is signed in yet.
+    DeviceStart,
+    DevicePoll,
+    /// /api/auth/device_lookup, device_approve and exchange: a person signed in with Firebase.
+    Auth,
+    /// /api/auth/signout: a device (or a person) signing out.
+    Signout,
 }
 
 /// How a caller proved who they are.
@@ -63,7 +76,8 @@ pub enum Route {
 pub enum Cred {
     /// A Firebase sign-in (or the local test person).
     Account { uid: String, email: String },
-    Device { scope: Scope },
+    /// A device credential; `id` is its entry in the person's list of signed-in devices.
+    Device { scope: Scope, id: String },
 }
 
 #[derive(Clone, Debug)]
@@ -73,12 +87,13 @@ pub struct Who {
     pub admin: bool,
 }
 
-/// Which routes a credential may call. A signed-in person: all. A `full` device: the API and the sync. A `sync` device: the sync.
+/// Which routes a credential may call. A signed-in person: all. A `full` device: the API, the sync and signing out. A `sync` device:
+/// the sync and signing out. Approving a device and the account page are for a person signed in with Firebase only.
 pub fn permits(cred: &Cred, route: Route) -> bool {
     match cred {
         Cred::Account { .. } => true,
-        Cred::Device { scope: Scope::Full } => route != Route::Account,
-        Cred::Device { scope: Scope::Sync } => route == Route::Sync,
+        Cred::Device { scope: Scope::Full, .. } => !matches!(route, Route::Account | Route::Auth),
+        Cred::Device { scope: Scope::Sync, .. } => matches!(route, Route::Sync | Route::Signout),
     }
 }
 
@@ -91,6 +106,10 @@ pub fn route_of(method: &Method, path: &str) -> Option<Route> {
         "/api/send" => Some(Route::Send),
         "/api/reply" => Some(Route::Reply),
         "/api/sync/manifest" | "/api/sync/get" | "/api/sync/put" | "/api/sync/delete" => Some(Route::Sync),
+        "/api/auth/device_start" => Some(Route::DeviceStart),
+        "/api/auth/device_poll" => Some(Route::DevicePoll),
+        "/api/auth/signout" => Some(Route::Signout),
+        p if p.strip_prefix("/api/auth/").is_some_and(|n| loginapi::PERSON_CALLS.contains(&n)) => Some(Route::Auth),
         p => p.strip_prefix("/api/account/").filter(|n| account::CALLS.contains(n)).map(|_| Route::Account),
     }
 }
@@ -102,6 +121,10 @@ pub struct App {
     pub policy: Policy,
     pub tenants: Arc<TenantMap>,
     pub devices: Option<Devices>,
+    /// The waiting requests of the browser device login (`devicelogin.rs`).
+    pub login: DeviceLogin,
+    /// `https://host`, validated: the approval page is `<it>/device`.
+    pub public_url: Option<String>,
     /// Answers running right now, with the person they belong to: the web app can talk to one (approve a step, stop it) by its number.
     pub streams: Mutex<HashMap<u64, (String, UnixStream)>>,
     pub next: AtomicU64,
@@ -202,7 +225,7 @@ pub struct Fail {
 }
 
 impl Fail {
-    fn new(status: u16, error: impl Into<String>) -> Fail {
+    pub(crate) fn new(status: u16, error: impl Into<String>) -> Fail {
         Fail { status, error: error.into(), retry: None }
     }
 }
@@ -292,7 +315,7 @@ fn who(app: &App, req: &Request, path: &str) -> Result<Who, Fail> {
         if app.policy.is_blocked_hash(&r.eh) {
             return Err(Fail::new(403, "This account is blocked."));
         }
-        return Ok(Who { cred: Cred::Device { scope: r.scope }, tenant: r.tenant, admin: !r.eh.is_empty() && app.policy.is_admin_hash(&r.eh) });
+        return Ok(Who { cred: Cred::Device { scope: r.scope, id: r.id }, tenant: r.tenant, admin: !r.eh.is_empty() && app.policy.is_admin_hash(&r.eh) });
     }
     let verifier = app.verifier.as_ref().ok_or_else(|| Fail::new(401, "Sign in first."))?;
     let id = verifier.verify(&token).map_err(|e| Fail::new(401, e))?;
@@ -307,6 +330,9 @@ fn who(app: &App, req: &Request, path: &str) -> Result<Who, Fail> {
 /// How long a request may take to send its body (the sockets also drop a client that is silent for 20 s, see vendor/tiny_http).
 const BODY_SECS: u64 = 30;
 const SYNC_BODY_SECS: u64 = 120;
+/// The sign-in calls are small, and the two that need no login give a client even less time.
+const SMALL_BODY_LIMIT: usize = 4096;
+const PUBLIC_BODY_SECS: u64 = 10;
 
 fn body(req: &mut Request, limit: usize, secs: u64) -> Result<Value, Fail> {
     if req.body_length().is_some_and(|n| n > limit) {
@@ -415,12 +441,28 @@ fn route(app: Arc<App>, mut req: Request) {
     match (&method, path.as_str()) {
         (Method::Options, _) => return text(&app, req, 204, ""),
         (Method::Get, "/healthz") => return text(&app, req, 200, "ok"),
-        (Method::Get, "/") | (Method::Get, "/index.html") => return html(&app, req, include_str!("../web/index.html").to_string(), pages::APP_CSP),
+        // /device is the approval page: a page of the same app (it works out from the address which screen to show)
+        (Method::Get, "/") | (Method::Get, "/index.html") | (Method::Get, "/device") => return html(&app, req, include_str!("../web/index.html").to_string(), pages::APP_CSP),
         (Method::Get, "/privacy") => return html(&app, req, pages::page("ZO-AI privacy notice", &pages::fill(pages::PRIVACY_MD, &app.legal)), pages::PLAIN_CSP),
         (Method::Get, "/terms") => return html(&app, req, pages::page("ZO-AI terms of use", &pages::fill(pages::TERMS_MD, &app.legal)), pages::PLAIN_CSP),
         _ => {}
     }
     let Some(r) = route_of(&method, &path) else { return text(&app, req, 404, "not found") };
+    // a device that is not signed in yet: nothing to check but where it comes from, and a small body read against a short deadline
+    if matches!(r, Route::DeviceStart | Route::DevicePoll) {
+        let ip = source(&req);
+        if app.no_auth {
+            return fail(&app, req, Fail::new(400, "Signing in a device needs the cloud database, which the test mode does not have."));
+        }
+        let v = match body(&mut req, SMALL_BODY_LIMIT, PUBLIC_BODY_SECS) {
+            Ok(v) => v,
+            Err(f) => return fail(&app, req, f),
+        };
+        return match loginapi::public(&app, path.strip_prefix("/api/auth/").unwrap_or(""), &v, &ip) {
+            Ok(r) => reply(&app, req, 200, r),
+            Err(f) => fail(&app, req, f),
+        };
+    }
     let who = match who(&app, &req, &path) {
         Ok(w) => w,
         Err(f) => return fail(&app, req, f),
@@ -435,7 +477,7 @@ fn route(app: Arc<App>, mut req: Request) {
     let tenant = lease.tenant(!who.admin);
     // somebody who signs in (not a device they made, which only exists after they accepted) must have accepted the current terms
     if matches!(who.cred, Cred::Account { .. }) {
-        let free = r == Route::Account && matches!(path.as_str(), "/api/account/whoami" | "/api/account/accept_terms" | "/api/account/export" | "/api/account/delete");
+        let free = (r == Route::Account && matches!(path.as_str(), "/api/account/whoami" | "/api/account/accept_terms" | "/api/account/export" | "/api/account/delete")) || r == Route::Signout;
         if !free {
             match app.has_accepted(&who.tenant) {
                 Ok(true) => {}
@@ -459,7 +501,12 @@ fn route(app: Arc<App>, mut req: Request) {
     } else {
         None
     };
-    let v = match body(&mut req, if r == Route::Sync { SYNC_BODY_LIMIT } else { BODY_LIMIT }, if r == Route::Sync { SYNC_BODY_SECS } else { BODY_SECS }) {
+    let limit = match r {
+        Route::Sync => SYNC_BODY_LIMIT,
+        Route::Auth | Route::Signout => SMALL_BODY_LIMIT,
+        _ => BODY_LIMIT,
+    };
+    let v = match body(&mut req, limit, if r == Route::Sync { SYNC_BODY_SECS } else { BODY_SECS }) {
         Ok(v) => v,
         Err(f) => return fail(&app, req, f),
     };
@@ -482,6 +529,11 @@ fn route(app: Arc<App>, mut req: Request) {
             };
             reply(&app, req, if sent { 200 } else { 404 }, json!({"ok": sent}))
         }
+        Route::Auth | Route::Signout => match loginapi::handle(&app, path.strip_prefix("/api/auth/").unwrap_or(""), &v, &who) {
+            Ok(r) => reply(&app, req, 200, r),
+            Err(f) => fail(&app, req, f),
+        },
+        Route::DeviceStart | Route::DevicePoll => fail(&app, req, Fail::new(500, "not here")),
         Route::Account => {
             let name = path.strip_prefix("/api/account/").unwrap_or("");
             let (status, out) = account::handle(&app, name, &v, &who, &lease);
@@ -558,6 +610,24 @@ fn main() {
         std::process::exit(2);
     }
     let legal = if no_auth && legal.contact.is_empty() { pages::Legal { contact: "(test mode)".into(), region: "(test mode)".into(), country: "(test mode)".into() } } else { legal };
+    // devices show people this address to sign in at: required whenever there is a login (a bad value is an error, not ignored)
+    let public_url = if no_auth {
+        None
+    } else {
+        match env("ZO_PUBLIC_URL").or_else(|| env("RENDER_EXTERNAL_URL")) {
+            Some(u) => match devicelogin::parse_public_base(&u) {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    eprintln!("zo-server: ZO_PUBLIC_URL / RENDER_EXTERNAL_URL: {e}");
+                    std::process::exit(2);
+                }
+            },
+            None => {
+                eprintln!("zo-server: set ZO_PUBLIC_URL (for example https://zo-ai-server.onrender.com): devices send people to <it>/device to sign in.");
+                std::process::exit(2);
+            }
+        }
+    };
     let max_runs = env("ZO_MAX_RUNS").and_then(|m| m.parse::<usize>().ok()).filter(|n| *n > 0).unwrap_or(8);
 
     // from here on zo-core serves many people: every request must name its tenant, and the default folders are never used
@@ -654,6 +724,8 @@ fn main() {
         policy,
         tenants,
         devices,
+        login: DeviceLogin::new(Default::default()),
+        public_url,
         streams: Mutex::new(HashMap::new()),
         next: AtomicU64::new(1),
         conns: AtomicUsize::new(0),
@@ -661,6 +733,14 @@ fn main() {
         require_terms: std::sync::atomic::AtomicBool::new(!no_auth),
         accepted: Mutex::new(Default::default()),
     });
+    {
+        // requests that ran out are dropped, and a credential nobody collected is revoked
+        let a = app.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(30));
+            loginapi::sweep(&a);
+        });
+    }
     serve(app, server);
 }
 

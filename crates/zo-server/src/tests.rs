@@ -25,6 +25,8 @@ fn rig(people: &[(&str, &str, &str)], admins: &str, max_users: usize, per_min: u
         policy: Policy::new(Some(admins.into()), Some("blocked@x.test".into()), Some(max_users.to_string())),
         tenants,
         devices: Some(Devices::new(dbd)),
+        login: DeviceLogin::new(Default::default()),
+        public_url: Some("https://zo.test".into()),
         streams: Mutex::new(HashMap::new()),
         next: AtomicU64::new(1),
         conns: AtomicUsize::new(0),
@@ -61,6 +63,33 @@ fn call(r: &Rig, token: &str, path: &str, body: Value) -> Answer {
     Answer { status, body: serde_json::from_str(&text).unwrap_or(Value::Null), retry }
 }
 
+/// Like `call`, from another source address (the proxy's X-Forwarded-For; the last entry is the one that counts).
+fn call_from(r: &Rig, ip: &str, token: &str, path: &str, body: Value) -> Answer {
+    let mut req = ureq::post(&format!("{}{path}", r.base)).set("Content-Type", "application/json").set("X-Forwarded-For", &format!("6.6.6.6, {ip}"));
+    if !token.is_empty() {
+        req = req.set("Authorization", &format!("Bearer {token}"));
+    }
+    let res = match req.send_string(&body.to_string()) {
+        Ok(r) => r,
+        Err(ureq::Error::Status(_, r)) => r,
+        Err(e) => panic!("{e}"),
+    };
+    let status = res.status();
+    let retry = res.header("Retry-After").map(str::to_string);
+    let text = res.into_string().unwrap_or_default();
+    Answer { status, body: serde_json::from_str(&text).unwrap_or(Value::Null), retry }
+}
+
+/// A device credential for the person with this Firebase token, through the e-mail sign-in exchange: (credential, device id).
+fn make_device(r: &Rig, token: &str, name: &str, kind: &str) -> (String, String) {
+    let a = call(r, token, "/api/auth/exchange", json!({"name": name, "kind": kind}));
+    assert_eq!(a.status, 200, "{:?}", a.body);
+    let cred = a.body["credential"].as_str().unwrap().to_string();
+    let list = call(r, token, "/api/account/devices_list", json!({}));
+    let id = list.body["devices"].as_array().unwrap().iter().find(|d| d["name"] == name).unwrap()["id"].as_str().unwrap().to_string();
+    (cred, id)
+}
+
 fn uniq(tag: &str) -> String {
     format!("{tag}-{}", std::process::id())
 }
@@ -88,10 +117,10 @@ fn only_this_computer_counts_as_local() {
 #[test]
 fn the_scope_matrix_every_route_for_every_kind_of_credential() {
     let acct = Cred::Account { uid: "u".into(), email: "e".into() };
-    let full = Cred::Device { scope: Scope::Full };
-    let sync = Cred::Device { scope: Scope::Sync };
-    let routes = [Route::Op, Route::Send, Route::Reply, Route::Sync, Route::Account];
-    let table: [(&Cred, [bool; 5]); 3] = [(&acct, [true, true, true, true, true]), (&full, [true, true, true, true, false]), (&sync, [false, false, false, true, false])];
+    let full = Cred::Device { scope: Scope::Full, id: "d".into() };
+    let sync = Cred::Device { scope: Scope::Sync, id: "d".into() };
+    let routes = [Route::Op, Route::Send, Route::Reply, Route::Sync, Route::Account, Route::Auth, Route::Signout];
+    let table: [(&Cred, [bool; 7]); 3] = [(&acct, [true; 7]), (&full, [true, true, true, true, false, false, true]), (&sync, [false, false, false, true, false, false, true])];
     for (cred, want) in table {
         for (r, w) in routes.iter().zip(want) {
             assert_eq!(permits(cred, *r), w, "{cred:?} on {r:?}");
@@ -105,7 +134,10 @@ fn the_scope_matrix_every_route_for_every_kind_of_credential() {
     for n in account::CALLS {
         assert_eq!(route_of(&post, &format!("/api/account/{n}")), Some(Route::Account));
     }
-    for p in ["/api/account/", "/api/account/other", "/api/sync/other", "/api/sync", "/api/opx", "/", "/healthz"] {
+    for (p, r) in [("/api/auth/device_start", Route::DeviceStart), ("/api/auth/device_poll", Route::DevicePoll), ("/api/auth/device_lookup", Route::Auth), ("/api/auth/device_approve", Route::Auth), ("/api/auth/exchange", Route::Auth), ("/api/auth/signout", Route::Signout)] {
+        assert_eq!(route_of(&post, p), Some(r), "{p}");
+    }
+    for p in ["/api/account/device_create", "/api/auth/", "/api/auth/device_create", "/api/auth/other", "/api/account/", "/api/account/other", "/api/sync/other", "/api/sync", "/api/opx", "/", "/healthz"] {
         assert_eq!(route_of(&post, p), None, "{p}");
     }
     assert_eq!(route_of(&Method::Get, "/api/op"), None);
@@ -217,51 +249,88 @@ fn a_message_reaches_the_service_for_a_restricted_person_and_streams_back() {
 }
 
 #[test]
-fn device_tokens_a_sync_token_cannot_call_the_api_a_full_one_can_a_revoked_one_stops() {
+fn device_credentials_a_desktop_one_cannot_call_the_api_a_cli_one_can_a_revoked_one_stops() {
     let u = uniq("dev");
     let r = rig(&[("tok", &u, "d@x.test")], "", 200, 600);
-    let sync = call(&r, "tok", "/api/account/device_create", json!({"name": "laptop", "scope": "sync"}));
-    let full = call(&r, "tok", "/api/account/device_create", json!({"name": "terminal", "scope": "full"}));
-    assert_eq!((sync.status, full.status), (200, 200), "{:?}", sync.body);
-    let (st, ft) = (sync.body["token"].as_str().unwrap().to_string(), full.body["token"].as_str().unwrap().to_string());
-    assert!(st.starts_with("zd_") && ft.starts_with("zd_") && st != ft);
-    assert_eq!(call(&r, "tok", "/api/account/device_create", json!({"name": "x", "scope": "root"})).status, 400);
-    // the list never shows a token or a hash
+    let (st, sid) = make_device(&r, "tok", "laptop", "desktop");
+    let (ft, fid) = make_device(&r, "tok", "terminal", "cli");
+    assert!(st.starts_with("zd_") && ft.starts_with("zd_") && st != ft && sid != fid);
+    // there is no way to make a credential by hand any more, and the kind must be one of the two
+    assert_eq!(call(&r, "tok", "/api/account/device_create", json!({"name": "x", "scope": "sync"})).status, 404);
+    assert_eq!(call(&r, "tok", "/api/auth/exchange", json!({"name": "x", "kind": "root"})).status, 400);
+    assert_eq!(call(&r, "tok", "/api/auth/exchange", json!({"name": "", "kind": "cli"})).status, 400);
+    assert_eq!(call(&r, "tok", "/api/auth/exchange", json!({"name": "x".repeat(61), "kind": "cli"})).status, 400);
+    assert_eq!(call(&r, "tok", "/api/auth/exchange", json!({"kind": "cli"})).status, 400);
+    // the list says what and when, never a credential or a hash
     let list = call(&r, "tok", "/api/account/devices_list", json!({}));
     let shown = list.body.to_string();
     assert!(!shown.contains(&st) && !shown.contains(&devices::hash_token(&st)) && list.body["devices"].as_array().unwrap().len() == 2, "{shown}");
-    // sync token: only /api/sync/*
+    let d = list.body["devices"].as_array().unwrap().iter().find(|d| d["name"] == "terminal").unwrap();
+    assert_eq!((d["kind"].clone(), d["scope"].clone()), (json!("cli"), json!("full")));
+    assert!(d["created"].as_u64().unwrap() > 0 && d.get("last_used").is_some());
+    // desktop credential: only /api/sync/* (and signing out)
     assert_eq!(call(&r, &st, "/api/sync/manifest", json!({})).status, 200);
     assert_eq!(call(&r, &st, "/api/op", json!({"op": "chats"})).status, 403);
     assert_eq!(call(&r, &st, "/api/send", json!({"text": "hi"})).status, 403);
     assert_eq!(call(&r, &st, "/api/reply", json!({"stream": 1})).status, 403);
     assert_eq!(call(&r, &st, "/api/account/whoami", json!({})).status, 403);
-    // full token: the API and the sync, not the account
+    assert_eq!(call(&r, &st, "/api/auth/exchange", json!({"name": "x", "kind": "cli"})).status, 403, "a device cannot make another");
+    assert_eq!(call(&r, &st, "/api/auth/device_approve", json!({"user_code": "AAAA-AAAA", "approve": true})).status, 403);
+    // cli credential: the API and the sync, not the account and not the approval
     assert_eq!(call(&r, &ft, "/api/op", json!({"op": "chats"})).status, 200);
     assert_eq!(call(&r, &ft, "/api/sync/manifest", json!({})).status, 200);
     assert_eq!(call(&r, &ft, "/api/account/devices_list", json!({})).status, 403);
+    assert_eq!(call(&r, &ft, "/api/auth/device_lookup", json!({"user_code": "AAAA-AAAA"})).status, 403);
     assert_eq!(call(&r, &ft, "/api/account/delete", json!({"confirm": "DELETE"})).status, 403, "a device cannot delete the account");
     // a device sees the same data as its owner
     assert_eq!(call(&r, &ft, "/api/sync/put", json!({"kind": "chats", "id": "dc", "doc": chat("dc", "from the terminal")})).status, 200);
     assert!(call(&r, "tok", "/api/op", json!({"op": "chats"})).body.to_string().contains("from the terminal"));
-    // made-up and malformed tokens
+    // made-up and malformed credentials
     assert_eq!(call(&r, &format!("zd_{}", "A".repeat(43)), "/api/sync/manifest", json!({})).status, 401);
     assert_eq!(call(&r, "zd_short", "/api/sync/manifest", json!({})).status, 401);
     assert_eq!(call(&r, "", "/api/sync/manifest", json!({})).status, 401);
-    // revoking
-    let id = list.body["devices"].as_array().unwrap().iter().find(|d| d["name"] == "terminal").unwrap()["id"].as_str().unwrap().to_string();
-    assert_eq!(call(&r, "tok", "/api/account/device_revoke", json!({"id": id})).status, 200);
+    // the person revokes one of them, even the one that is in use right now
+    assert_eq!(call(&r, "tok", "/api/account/device_revoke", json!({"id": fid})).status, 200);
     assert_eq!(call(&r, &ft, "/api/op", json!({"op": "chats"})).status, 401, "revoked");
     assert_eq!(call(&r, &st, "/api/sync/manifest", json!({})).status, 200, "the other one still works");
-    assert_eq!(call(&r, "tok", "/api/account/device_revoke", json!({"id": id})).status, 404);
+    assert_eq!(call(&r, "tok", "/api/account/device_revoke", json!({"id": fid})).status, 404);
+}
+
+#[test]
+fn signing_out_revokes_the_calling_credential_and_only_that_one() {
+    let (ua, ub) = (uniq("so-a"), uniq("so-b"));
+    let r = rig(&[("tok-a", &ua, "a@x.test"), ("tok-b", &ub, "b@x.test")], "", 200, 600);
+    let (d1, _) = make_device(&r, "tok-a", "one", "desktop");
+    let (d2, _) = make_device(&r, "tok-a", "two", "cli");
+    let (other, _) = make_device(&r, "tok-b", "b's", "cli");
+    for c in [&d1, &d2, &other] {
+        assert_eq!(call(&r, c, "/api/sync/manifest", json!({})).status, 200);
+    }
+    let out = call(&r, &d2, "/api/auth/signout", json!({}));
+    assert_eq!((out.status, out.body["revoked"].clone()), (200, json!(true)), "{:?}", out.body);
+    assert_eq!(call(&r, &d2, "/api/sync/manifest", json!({})).status, 401, "signed out");
+    assert_eq!(call(&r, &d2, "/api/auth/signout", json!({})).status, 401, "and signing out again is just refused");
+    assert_eq!(call(&r, &d1, "/api/sync/manifest", json!({})).status, 200, "the person's other device is untouched");
+    assert_eq!(call(&r, &other, "/api/sync/manifest", json!({})).status, 200, "so is another person's");
+    let names: Vec<Value> = call(&r, "tok-a", "/api/account/devices_list", json!({})).body["devices"].as_array().unwrap().iter().map(|d| d["name"].clone()).collect();
+    assert_eq!(names, vec![json!("one")]);
+    // a desktop credential may sign itself out too
+    assert_eq!(call(&r, &d1, "/api/auth/signout", json!({})).status, 200);
+    assert_eq!(call(&r, &d1, "/api/sync/manifest", json!({})).status, 401);
+    // with a Firebase sign-in, signout revokes the named device of that person (not somebody else's) or nothing
+    let (d3, id3) = make_device(&r, "tok-a", "three", "cli");
+    assert_eq!(call(&r, "tok-a", "/api/auth/signout", json!({})).body["revoked"], json!(false));
+    assert_eq!(call(&r, "tok-b", "/api/auth/signout", json!({"id": id3})).body["revoked"], json!(false));
+    assert_eq!(call(&r, &d3, "/api/sync/manifest", json!({})).status, 200);
+    assert_eq!(call(&r, "tok-a", "/api/auth/signout", json!({"id": id3})).body["revoked"], json!(true));
+    assert_eq!(call(&r, &d3, "/api/sync/manifest", json!({})).status, 401);
 }
 
 #[test]
 fn another_persons_device_cannot_be_revoked_and_a_token_belongs_to_its_own_tenant() {
     let (ua, ub) = (uniq("dv-a"), uniq("dv-b"));
     let r = rig(&[("tok-a", &ua, "a@x.test"), ("tok-b", &ub, "b@x.test")], "", 200, 600);
-    let t = call(&r, "tok-a", "/api/account/device_create", json!({"name": "a", "scope": "full"}));
-    let (token, id) = (t.body["token"].as_str().unwrap().to_string(), t.body["id"].as_str().unwrap().to_string());
+    let (token, id) = make_device(&r, "tok-a", "a", "cli");
     assert_eq!(call(&r, "tok-b", "/api/account/device_revoke", json!({"id": id})).status, 404);
     assert_eq!(call(&r, &token, "/api/sync/put", json!({"kind": "chats", "id": "x1", "doc": chat("x1", "only A")})).status, 200);
     assert!(call(&r, "tok-b", "/api/sync/manifest", json!({})).body["chats"].get("x1").is_none());
@@ -275,8 +344,8 @@ fn blocked_people_are_refused_and_a_blocked_owner_loses_their_device_tokens_too(
     assert_eq!(a.status, 403, "{:?}", a.body);
     assert_eq!(call(&r, "nonsense", "/api/op", json!({"op": "chats"})).status, 401);
     // the owner's token reports an admin
-    let t = call(&r, "tok-o", "/api/account/device_create", json!({"name": "o", "scope": "full"}));
-    let token = t.body["token"].as_str().unwrap();
+    let (token, _) = make_device(&r, "tok-o", "o", "cli");
+    let token = token.as_str();
     assert_eq!(call(&r, token, "/api/op", json!({"op": "machines"})).body["ok"], true, "a token of an admin acts as an admin");
     let blocked_policy = Policy::new(Some("owner@x.test".into()), Some("owner@x.test".into()), None);
     assert!(blocked_policy.is_blocked_hash(&auth::email_hash("owner@x.test")));
@@ -342,9 +411,8 @@ fn delete_wipes_one_person_completely_and_leaves_the_other_untouched() {
         assert_eq!(call(&r, tok, "/api/sync/put", json!({"kind": "chats", "id": format!("c-{name}"), "doc": chat(&format!("c-{name}"), name)})).status, 200);
         assert_eq!(call(&r, tok, "/api/op", json!({"op": "memory_add", "text": format!("note of {name}")})).status, 200);
     }
-    let dev = call(&r, "tok-a", "/api/account/device_create", json!({"name": "d", "scope": "full"}));
-    let dev_b = call(&r, "tok-b", "/api/account/device_create", json!({"name": "d", "scope": "sync"}));
-    let (token_a, token_b) = (dev.body["token"].as_str().unwrap().to_string(), dev_b.body["token"].as_str().unwrap().to_string());
+    let (token_a, _) = make_device(&r, "tok-a", "d", "cli");
+    let (token_b, _) = make_device(&r, "tok-b", "d", "desktop");
     r.app.tenants.push_all();
     assert!(r.db.count_under(&format!("users/{ta}")) >= 3 && r.db.count_under(&format!("users/{tb}")) >= 3, "both are in the database");
     // the confirmation is required
@@ -415,7 +483,7 @@ fn the_web_page_the_policy_pages_and_the_headers() {
 fn the_no_login_test_mode_uses_one_fixed_restricted_person_and_only_answers_its_own_page() {
     let root = testenv::service();
     let tenants = Arc::new(TenantMap::new(root, None, testenv::SECRET.into(), 200, 8));
-    let app = Arc::new(App { no_auth: true, noauth_admin: false, verifier: None, policy: Policy::default(), tenants, devices: None, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1), conns: AtomicUsize::new(0), legal: Default::default(), require_terms: std::sync::atomic::AtomicBool::new(false), accepted: Mutex::new(Default::default()) });
+    let app = Arc::new(App { no_auth: true, noauth_admin: false, verifier: None, policy: Policy::default(), tenants, devices: None, login: DeviceLogin::new(Default::default()), public_url: None, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1), conns: AtomicUsize::new(0), legal: Default::default(), require_terms: std::sync::atomic::AtomicBool::new(false), accepted: Mutex::new(Default::default()) });
     let server = Server::http("127.0.0.1:0").unwrap();
     let base = format!("http://{}", server.server_addr().to_ip().unwrap());
     let a = app.clone();
@@ -450,9 +518,11 @@ fn the_no_login_test_mode_uses_one_fixed_restricted_person_and_only_answers_its_
     // another web page, or a call without the local header, is refused
     assert_eq!(post("/api/op", json!({"op": "status"}), false, None).status(), 401);
     assert_eq!(post("/api/op", json!({"op": "status"}), true, Some("https://evil.example")).status(), 401);
-    // no devices without a database
-    let d = post("/api/account/device_create", json!({"name": "x", "scope": "sync"}), true, None);
-    assert_eq!(d.status(), 400);
+    // no devices without a database: the sign-in calls say so (and the credential-making call is gone)
+    assert_eq!(post("/api/auth/device_start", json!({"name": "x", "kind": "cli"}), true, None).status(), 400);
+    assert_eq!(post("/api/auth/device_poll", json!({"device_code": "A".repeat(43)}), true, None).status(), 400);
+    assert_eq!(post("/api/auth/exchange", json!({"name": "x", "kind": "cli"}), true, None).status(), 400);
+    assert_eq!(post("/api/account/device_create", json!({"name": "x", "scope": "sync"}), true, None).status(), 404);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -466,7 +536,11 @@ fn the_server_remembers_who_accepted_which_version_and_refuses_everything_else_u
     let no = call(&r, "tok-t", "/api/op", json!({"op": "chats"}));
     assert_eq!((no.status, no.body["terms_required"].clone()), (403, json!(true)), "{:?}", no.body);
     assert_eq!(call(&r, "tok-t", "/api/sync/manifest", json!({})).status, 403);
-    assert_eq!(call(&r, "tok-t", "/api/account/device_create", json!({"name": "x", "scope": "sync"})).status, 403, "no device token before accepting");
+    // nothing that makes a credential before the terms are accepted
+    let ex = call(&r, "tok-t", "/api/auth/exchange", json!({"name": "x", "kind": "desktop"}));
+    assert_eq!((ex.status, ex.body["terms_required"].clone()), (403, json!(true)), "{:?}", ex.body);
+    assert_eq!(call(&r, "tok-t", "/api/auth/device_lookup", json!({"user_code": "AAAA-AAAA"})).status, 403);
+    assert_eq!(call(&r, "tok-t", "/api/auth/device_approve", json!({"user_code": "AAAA-AAAA", "approve": true})).status, 403);
     let who = call(&r, "tok-t", "/api/account/whoami", json!({}));
     assert_eq!((who.status, who.body["terms"]["accepted"].clone()), (200, json!(false)));
     assert_eq!(call(&r, "tok-t", "/api/account/accept_terms", json!({"version": "1999-01-01"})).status, 400);
@@ -540,4 +614,283 @@ fn a_client_that_sends_a_body_too_slowly_is_let_go_and_model_ops_take_a_place_li
     assert!(buf.is_empty() || buf.contains("408") || buf.contains("400"), "{buf}");
     // the thread and the lease came back: the person can still be served
     assert_eq!(call(&r, "tok-s", "/api/op", json!({"op": "chats"})).status, 200);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// the browser device login (/api/auth/*)
+
+fn start(r: &Rig, name: &str, kind: &str) -> Value {
+    let a = call(r, "", "/api/auth/device_start", json!({"name": name, "kind": kind}));
+    assert_eq!(a.status, 200, "{:?}", a.body);
+    a.body
+}
+
+fn poll(r: &Rig, started: &Value) -> Value {
+    let a = call(r, "", "/api/auth/device_poll", json!({"device_code": started["device_code"]}));
+    assert_eq!(a.status, 200, "{:?}", a.body);
+    a.body
+}
+
+#[test]
+fn the_whole_device_login_start_lookup_approve_poll_once_then_the_credential_works_by_kind() {
+    let (u, o) = (uniq("flow"), uniq("flow-o"));
+    let r = rig(&[("tok", &u, "me@x.test"), ("tok-o", &o, "owner@x.test")], "owner@x.test", 200, 600);
+    let mut every_answer = String::new();
+    for (kind, name, may_use_api) in [("desktop", "My laptop", false), ("cli", "Terminal", true)] {
+        let s = start(&r, name, kind);
+        every_answer.push_str(&s.to_string());
+        assert_eq!(s["device_code"].as_str().unwrap().len(), 43);
+        let code = s["user_code"].as_str().unwrap().to_string();
+        assert!(code.len() == 9 && code.as_bytes()[4] == b'-', "{code}");
+        assert_eq!((s["verify_url"].clone(), s["expires_in"].clone(), s["interval"].clone()), (json!("https://zo.test/device"), json!(600), json!(3)));
+        assert!(!s["verify_url"].as_str().unwrap().contains(&code), "the link never carries the code");
+        // nothing is approved yet
+        let p = poll(&r, &s);
+        every_answer.push_str(&p.to_string());
+        assert_eq!(p, json!({"ok": true, "status": "pending"}));
+        // the person looks the code up: they see what is being approved, with the address it came from
+        let l = call(&r, "tok", "/api/auth/device_lookup", json!({"user_code": code.to_lowercase()}));
+        every_answer.push_str(&l.body.to_string());
+        assert_eq!(l.status, 200, "{:?}", l.body);
+        assert_eq!((l.body["name"].clone(), l.body["kind"].clone(), l.body["ip"].clone()), (json!(name), json!(kind), json!("127.0.0.1")));
+        assert!(l.body["requested_at"].as_u64().unwrap() > 1_700_000_000);
+        // a device that has no credential cannot be used, and the page for another person does not find it by accident
+        let ap = call(&r, "tok", "/api/auth/device_approve", json!({"user_code": code, "approve": true}));
+        every_answer.push_str(&ap.body.to_string());
+        assert_eq!((ap.status, ap.body["ok"].clone()), (200, json!(true)), "{:?}", ap.body);
+        // the code is single use
+        assert_eq!(call(&r, "tok-o", "/api/auth/device_approve", json!({"user_code": code, "approve": true})).status, 404);
+        assert_eq!(call(&r, "tok", "/api/auth/device_lookup", json!({"user_code": code})).status, 404);
+        // the device collects its credential, once
+        r.app.login.advance(3);
+        let got = poll(&r, &s);
+        assert_eq!((got["status"].clone(), got["email"].clone()), (json!("approved"), json!("me@x.test")), "{got}");
+        let cred = got["credential"].as_str().unwrap().to_string();
+        assert!(devices::well_formed(&cred));
+        r.app.login.advance(3);
+        assert_eq!(poll(&r, &s)["status"], "expired", "handed out exactly once");
+        // the credential is the person's: it reaches their data, by its kind
+        assert_eq!(call(&r, &cred, "/api/sync/manifest", json!({})).status, 200);
+        assert_eq!(call(&r, &cred, "/api/op", json!({"op": "chats"})).status, if may_use_api { 200 } else { 403 }, "{kind}");
+        assert_eq!(call(&r, &cred, "/api/account/whoami", json!({})).status, 403);
+        // and it is a device in the person's list: name, kind, nothing secret
+        let list = call(&r, "tok", "/api/account/devices_list", json!({}));
+        let d = list.body["devices"].as_array().unwrap().iter().find(|d| d["name"] == name).unwrap().clone();
+        assert_eq!(d["kind"], kind);
+        assert!(!list.body.to_string().contains(&cred));
+        // the credential is stored hashed only
+        let stored: String = r.db.docs.lock().unwrap().iter().map(|((c, i), t)| format!("{c}/{i}={t}")).collect();
+        assert!(!stored.contains(&cred) && stored.contains(&devices::hash_token(&cred)));
+        every_answer.push_str(&list.body.to_string());
+        // the person may sign this device out from the list
+        assert_eq!(call(&r, "tok", "/api/account/device_revoke", json!({"id": d["id"]})).status, 200);
+        assert_eq!(call(&r, &cred, "/api/sync/manifest", json!({})).status, 401);
+    }
+    // the secret code of a device is in the answer to device_start and in no other answer
+    let s = start(&r, "x", "cli");
+    let secret = s["device_code"].as_str().unwrap().to_string();
+    let mut others = String::new();
+    others.push_str(&poll(&r, &s).to_string());
+    let code = s["user_code"].as_str().unwrap();
+    others.push_str(&call(&r, "tok", "/api/auth/device_lookup", json!({"user_code": code})).body.to_string());
+    others.push_str(&call(&r, "tok", "/api/auth/device_approve", json!({"user_code": code, "approve": true})).body.to_string());
+    r.app.login.advance(3);
+    others.push_str(&poll(&r, &s).to_string());
+    others.push_str(&call(&r, "tok", "/api/account/devices_list", json!({})).body.to_string());
+    others.push_str(&call(&r, "tok", "/api/account/export", json!({})).body.to_string());
+    others.push_str(&call(&r, "", "/api/auth/device_poll", json!({"device_code": "nope"})).body.to_string());
+    assert!(!others.contains(&secret) && !every_answer.contains(&secret));
+    // nor in the database
+    let stored: String = r.db.docs.lock().unwrap().iter().map(|((c, i), t)| format!("{c}/{i}={t}")).collect();
+    assert!(!stored.contains(&secret));
+}
+
+#[test]
+fn a_denied_request_is_told_to_the_device_once_and_nothing_is_made() {
+    let u = uniq("deny");
+    let r = rig(&[("tok", &u, "me@x.test")], "", 200, 600);
+    let s = start(&r, "Not mine", "cli");
+    let code = s["user_code"].as_str().unwrap();
+    assert_eq!(call(&r, "tok", "/api/auth/device_approve", json!({"user_code": code, "approve": false})).status, 200);
+    assert_eq!(call(&r, "tok", "/api/auth/device_approve", json!({"user_code": code, "approve": true})).status, 404, "a denied code cannot be approved afterwards");
+    assert_eq!(poll(&r, &s)["status"], "denied");
+    r.app.login.advance(3);
+    assert_eq!(poll(&r, &s)["status"], "expired");
+    assert!(call(&r, "tok", "/api/account/devices_list", json!({})).body["devices"].as_array().unwrap().is_empty());
+    assert!(r.db.list_docs("deviceidx").unwrap().is_empty());
+    // approve has to say yes or no
+    let s = start(&r, "x", "cli");
+    assert_eq!(call(&r, "tok", "/api/auth/device_approve", json!({"user_code": s["user_code"]})).status, 400);
+}
+
+#[test]
+fn requests_run_out_after_ten_minutes_and_an_approved_but_uncollected_credential_is_revoked() {
+    let u = uniq("exp");
+    let r = rig(&[("tok", &u, "me@x.test")], "", 200, 600);
+    let a = start(&r, "Too slow", "cli");
+    let b = start(&r, "Never collected", "cli");
+    assert_eq!(call(&r, "tok", "/api/auth/device_approve", json!({"user_code": b["user_code"], "approve": true})).status, 200);
+    assert_eq!(call(&r, "tok", "/api/account/devices_list", json!({})).body["devices"].as_array().unwrap().len(), 1);
+    r.app.login.advance(599);
+    assert_eq!(poll(&r, &a)["status"], "pending");
+    r.app.login.advance(2);
+    assert_eq!(poll(&r, &a)["status"], "expired");
+    assert_eq!(call(&r, "tok", "/api/auth/device_lookup", json!({"user_code": a["user_code"]})).status, 404);
+    assert_eq!(poll(&r, &b)["status"], "expired", "the credential that was approved is not handed out late");
+    // and it was revoked: it is not in the list and not in the index
+    assert!(call(&r, "tok", "/api/account/devices_list", json!({})).body["devices"].as_array().unwrap().is_empty());
+    assert!(r.db.list_docs("deviceidx").unwrap().is_empty());
+}
+
+#[test]
+fn polling_too_fast_gets_slow_down_over_http() {
+    let r = rig(&[], "", 200, 600);
+    let s = start(&r, "x", "desktop");
+    assert_eq!(poll(&r, &s)["status"], "pending");
+    assert_eq!(poll(&r, &s)["status"], "slow_down");
+    r.app.login.advance(3);
+    assert_eq!(poll(&r, &s)["status"], "pending");
+}
+
+#[test]
+fn the_request_caps_are_per_source_address_the_last_forwarded_entry_counts() {
+    let r = rig(&[], "", 200, 600);
+    let body = json!({"name": "x", "kind": "cli"});
+    for n in 0..5 {
+        assert_eq!(call_from(&r, "1.1.1.1", "", "/api/auth/device_start", body.clone()).status, 200, "{n}");
+    }
+    let no = call_from(&r, "1.1.1.1", "", "/api/auth/device_start", body.clone());
+    assert_eq!(no.status, 429, "{:?}", no.body);
+    assert!(no.retry.is_some() && no.body["ok"] == false);
+    assert_eq!(call_from(&r, "2.2.2.2", "", "/api/auth/device_start", body.clone()).status, 200, "another address has its own");
+    // an address cannot be made up by the client: a forged first entry changes nothing
+    let forged = ureq::post(&format!("{}/api/auth/device_start", r.base)).set("X-Forwarded-For", "9.9.9.9, 1.1.1.1");
+    assert!(matches!(forged.send_string(&body.to_string()), Err(ureq::Error::Status(429, _))));
+}
+
+#[test]
+fn ten_starts_a_minute_from_one_address_and_a_thousand_waiting_overall() {
+    let r = rig(&[], "", 200, 600);
+    let body = json!({"name": "x", "kind": "cli"});
+    // finishing each request keeps the pending cap out of the way, so this reaches the per-minute limit
+    // (the stand-in knows nobody here, so each request is denied through the store directly)
+    for n in 0..10 {
+        let s = call(&r, "", "/api/auth/device_start", body.clone());
+        assert_eq!(s.status, 200, "{n}: {:?}", s.body);
+        let code = s.body["user_code"].as_str().unwrap().to_string();
+        r.app.login.deny("t", &code, r.app.login.now()).unwrap();
+        assert_eq!(poll(&r, &s.body)["status"], "denied");
+    }
+    let over = call(&r, "", "/api/auth/device_start", body.clone());
+    assert_eq!(over.status, 429, "{:?}", over.body);
+    assert!(over.retry.as_deref().and_then(|s| s.parse::<u64>().ok()).is_some_and(|s| s >= 1));
+    // the global cap is tested on the store (devicelogin::tests): a thousand waiting requests, the next is refused with 503
+    let full = DeviceLogin::new(devicelogin::Limits { global_pending: 2, ..Default::default() });
+    let now = full.now();
+    full.start("a", devices::Kind::Cli, "1.1.1.1", now).unwrap();
+    full.start("a", devices::Kind::Cli, "2.2.2.2", now).unwrap();
+    assert_eq!(full.start("a", devices::Kind::Cli, "3.3.3.3", now), Err(devicelogin::StartError::Full));
+}
+
+#[test]
+fn start_checks_its_input_and_the_public_calls_are_small() {
+    let r = rig(&[], "", 200, 600);
+    for bad in [json!({}), json!({"name": "x"}), json!({"kind": "cli"}), json!({"name": "", "kind": "cli"}), json!({"name": "   ", "kind": "cli"}), json!({"name": "\u{202e}\n", "kind": "cli"}), json!({"name": "x".repeat(61), "kind": "cli"}), json!({"name": "x", "kind": "root"}), json!({"name": "x", "kind": "full"}), json!({"name": 5, "kind": "cli"})] {
+        let a = call_from(&r, "4.4.4.4", "", "/api/auth/device_start", bad.clone());
+        assert_eq!(a.status, 400, "{bad}: {:?}", a.body);
+    }
+    // a name cannot hide itself: control and direction characters are dropped
+    let s = call_from(&r, "4.4.4.4", "", "/api/auth/device_start", json!({"name": "  Pho\u{202e}ne\n ", "kind": "desktop"}));
+    assert_eq!(s.status, 200, "{:?}", s.body);
+    let u = uniq("input");
+    let r2 = rig(&[("tok", &u, "a@x.test")], "", 200, 600);
+    let s = start(&r2, "  Pho\u{202e}ne\n ", "desktop");
+    assert_eq!(call(&r2, "tok", "/api/auth/device_lookup", json!({"user_code": s["user_code"]})).body["name"], "Phone");
+    // big bodies are refused, and a GET is not a call
+    let big = call(&r, "", "/api/auth/device_poll", json!({"device_code": "x".repeat(5000)}));
+    assert_eq!(big.status, 413);
+    assert!(matches!(ureq::get(&format!("{}/api/auth/device_start", r.base)).call(), Err(ureq::Error::Status(404, _))));
+    // an unknown code is "expired", not an error that tells a guesser anything
+    assert_eq!(call(&r, "", "/api/auth/device_poll", json!({"device_code": "A".repeat(43)})).body, json!({"ok": true, "status": "expired"}));
+    assert_eq!(call(&r, "", "/api/auth/device_poll", json!({})).body["status"], "expired");
+}
+
+#[test]
+fn a_person_who_types_wrong_codes_is_locked_out_for_a_while_and_nobody_else_is() {
+    let (ua, ub) = (uniq("guess-a"), uniq("guess-b"));
+    let r = rig(&[("tok-a", &ua, "a@x.test"), ("tok-b", &ub, "b@x.test")], "", 200, 600);
+    let s = start(&r, "x", "cli");
+    for n in 0..5 {
+        assert_eq!(call(&r, "tok-a", "/api/auth/device_lookup", json!({"user_code": "ABCD-EFGH"})).status, 404, "{n}");
+    }
+    // approving counts as well, and the right code is refused to this person now
+    let locked = call(&r, "tok-a", "/api/auth/device_approve", json!({"user_code": s["user_code"], "approve": true}));
+    assert_eq!(locked.status, 429, "{:?}", locked.body);
+    assert!(locked.retry.as_deref().and_then(|s| s.parse::<u64>().ok()).is_some_and(|s| s >= 1));
+    assert_eq!(call(&r, "tok-a", "/api/auth/device_lookup", json!({"user_code": s["user_code"]})).status, 429);
+    // another person is not affected, and the request is still waiting
+    assert_eq!(call(&r, "tok-b", "/api/auth/device_lookup", json!({"user_code": s["user_code"]})).status, 200);
+    // wrong approvals count the same way
+    for n in 0..5 {
+        assert_eq!(call(&r, "tok-b", "/api/auth/device_approve", json!({"user_code": "ZZZZ-ZZZZ", "approve": true})).status, 404, "{n}");
+    }
+    assert_eq!(call(&r, "tok-b", "/api/auth/device_approve", json!({"user_code": s["user_code"], "approve": true})).status, 429);
+    // after ten minutes the lock is gone (the request itself ran out too: a fresh one)
+    r.app.login.advance(601);
+    let s2 = start(&r, "y", "cli");
+    assert_eq!(call(&r, "tok-a", "/api/auth/device_approve", json!({"user_code": s2["user_code"], "approve": true})).status, 200);
+}
+
+#[test]
+fn an_unverified_or_unknown_sign_in_a_blocked_person_and_a_signed_out_caller_get_nothing() {
+    let u = uniq("refuse");
+    let r = rig(&[("tok", &u, "me@x.test"), ("tok-x", &uniq("refuse-b"), "blocked@x.test")], "", 200, 600);
+    let s = start(&r, "x", "cli");
+    let code = s["user_code"].as_str().unwrap();
+    // no sign-in, or one the server does not know (the token check itself, including the verified e-mail, is in auth::tests)
+    for tok in ["", "garbage"] {
+        for (path, body) in [("/api/auth/device_lookup", json!({"user_code": code})), ("/api/auth/device_approve", json!({"user_code": code, "approve": true})), ("/api/auth/exchange", json!({"name": "x", "kind": "cli"}))] {
+            assert_eq!(call(&r, tok, path, body).status, 401, "{tok:?} {path}");
+        }
+    }
+    // a blocked person gets nothing, not even an approval
+    for (path, body) in [("/api/auth/device_lookup", json!({"user_code": code})), ("/api/auth/device_approve", json!({"user_code": code, "approve": true})), ("/api/auth/exchange", json!({"name": "x", "kind": "cli"}))] {
+        assert_eq!(call(&r, "tok-x", path, body).status, 403, "{path}");
+    }
+    assert_eq!(poll(&r, &s)["status"], "pending", "nothing was approved");
+    assert!(r.db.list_docs("deviceidx").unwrap().is_empty());
+}
+
+#[test]
+fn at_most_ten_signed_in_devices_and_a_full_list_does_not_lose_the_request() {
+    let u = uniq("ten");
+    let r = rig(&[("tok", &u, "me@x.test")], "", 200, 600);
+    for n in 0..devices::MAX_DEVICES {
+        make_device(&r, "tok", &format!("d{n}"), "desktop");
+    }
+    assert_eq!(call(&r, "tok", "/api/auth/exchange", json!({"name": "one more", "kind": "cli"})).status, 409);
+    let s = start(&r, "one more", "cli");
+    let full = call(&r, "tok", "/api/auth/device_approve", json!({"user_code": s["user_code"], "approve": true}));
+    assert_eq!(full.status, 409, "{:?}", full.body);
+    assert!(full.body["error"].as_str().unwrap().contains("signed-in devices"));
+    // the request is still waiting: sign one out and approve again
+    let first = call(&r, "tok", "/api/account/devices_list", json!({})).body["devices"][0]["id"].clone();
+    assert_eq!(call(&r, "tok", "/api/account/device_revoke", json!({"id": first})).status, 200);
+    assert_eq!(call(&r, "tok", "/api/auth/device_approve", json!({"user_code": s["user_code"], "approve": true})).status, 200);
+    r.app.login.advance(3);
+    assert_eq!(poll(&r, &s)["status"], "approved");
+}
+
+#[test]
+fn the_approval_page_is_the_web_app_and_keeps_its_csp() {
+    let r = rig(&[], "", 200, 600);
+    let page = ureq::get(&format!("{}/device", r.base)).call().unwrap();
+    assert!(page.header("Content-Security-Policy").is_some_and(|c| c == pages::APP_CSP && c.contains("frame-ancestors 'none'")));
+    assert_eq!(page.header("X-Frame-Options"), Some("DENY"));
+    assert_eq!(page.header("Referrer-Policy"), Some("no-referrer"));
+    let body = page.into_string().unwrap();
+    assert_eq!(body, ureq::get(&format!("{}/", r.base)).call().unwrap().into_string().unwrap());
+    // a code in the address changes nothing the server does with it: it is the same page and nothing is read from the query
+    let with = ureq::get(&format!("{}/device?code=ABCD-EFGH", r.base)).call().unwrap().into_string().unwrap();
+    assert_eq!(with, body);
 }
