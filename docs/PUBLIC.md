@@ -59,7 +59,7 @@ Quotas: message text up to 20,000 characters, tenant data folder up to 25 MB (wr
 The web composer takes pictures and files from the clipboard (Ctrl+V), the "+" menu (upload, camera on phones, a link) and drag and drop. Nothing leaves the
 browser until Send. The browser does the work: pictures are shrunk to at most 1600 px and re-drawn (this drops EXIF and location data), JPEG, or PNG/WebP when
 they have transparency; text and code files are read as UTF-8 (200 KB each); PDF text is read with pdf.js and ZIP files with JSZip, both loaded on demand from
-cdnjs at a pinned version with a checksum (the CSP allows `cdnjs.cloudflare.com` for scripts and `connect`, and `worker-src blob:` for the PDF worker, which is
+cdnjs at a pinned version with a checksum (the CSP allows `cdnjs.cloudflare.com` for scripts and `connect`, and `worker-src 'self' blob:` for the PDF worker, which is
 fetched with its checksum and started from a local blob). ZIP guards: at most 200 entries, 2 MB unpacked in all (declared sizes and the bytes that really come
 out are both counted), 100 KB per entry, archives inside are not opened, files that are not text are listed by name only. Other types (Office files, programs,
 video, audio) are refused with a message, never dropped silently.
@@ -91,6 +91,10 @@ allowed for restricted accounts, never needed to send).
 | using the 14 MB route to hold memory | per-person limits are unchanged, 16 big bodies at once overall, 90 s deadline | many accounts together |
 | a link preview used to probe the network | the fetch tool's public-address check, 12 a minute | a public page can still be fetched on a person's behalf |
 
+## Notifications
+
+The web app can be installed, can notify when an answer is ready, and (with the person's consent) can have the server finish an answer after the tab closed and push a generic "answer ready" message. Web Push goes only to the allow-listed push services the browser named, at most 5 devices and 30 pushes an hour per account. Details, privacy and limits: [NOTIFICATIONS.md](NOTIFICATIONS.md).
+
 ## Activity
 
 The service operations `activity` and `activity_stop` list and stop what is running, scoped to the calling tenant: a user sees and stops only their own answers, memory jobs and open client connections (restricted users cannot have anything else). Details: [ACTIVITY.md](ACTIVITY.md).
@@ -108,7 +112,7 @@ accounts that are never used again (watch the count; `ZO_MAX_USERS` and `ZO_BLOC
 
 ## Account API
 
-POST, Firebase-authenticated, under `/api/account/`: `whoami`, `devices_list` (shown as "signed-in devices"), `device_revoke {id}`, `accept_terms {version}`, `export`, `delete {confirm:"DELETE"}`. Until a person has accepted the current version of the
+POST, Firebase-authenticated, under `/api/account/`: `whoami`, `devices_list` (shown as "signed-in devices"), `device_revoke {id}`, `accept_terms {version}`, `export`, `delete {confirm:"DELETE"}`, and the notification devices `push_config`, `push_subscribe`, `push_unsubscribe`, `push_list` ([NOTIFICATIONS.md](NOTIFICATIONS.md)). Until a person has accepted the current version of the
 notice and terms (recorded in `users/<tenant>/meta/terms`), everything but `whoami`, `accept_terms`, `export` and `delete` answers 403 with
 `terms_required`. A blocked address can still `export` and `delete`. Delete writes a marker (`deleted/<tenant>`, time and whether the
 login was removed) first, so a sign-in token that is still valid cannot bring the account back for two hours (for good when the login could

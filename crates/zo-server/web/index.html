@@ -4,6 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>ZO-AI</title>
+<!-- ---- installable app ---- -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#191919" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#FAF9F5" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" id="favicon">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ZO-AI">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400&display=swap" rel="stylesheet">
@@ -255,6 +265,12 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .att-drop .box svg{width:30px;height:30px;color:var(--accent)}.att-drop .s{font-size:13px;color:var(--dim)}
 .pop-row [data-i]{color:var(--dim);display:flex}
 @media(max-width:860px){.att-chip{max-width:100%}.att-thumb{width:72px;height:72px}}
+/* ---- notifications and install ---- */
+.toast.update{display:flex;align-items:center;gap:12px;max-width:calc(100vw - 32px)}
+.toast.update .tbtn{color:var(--check);font-weight:600}.toast.update .tbtn:hover{text-decoration:underline}
+.toast.update .tx{color:var(--dim);font-size:16px;line-height:1}
+.note-list .settings-row{padding:10px 16px}.note-hint{font-size:13px;color:var(--dim);padding:12px 16px;line-height:1.5}
+/* ---- end notifications and install ---- */
 </style>
 </head>
 <body>
@@ -641,7 +657,7 @@ async function send() {
   const bubble = addUser(text, taken.meta); setBusy(true);
   let ai = null, acc = "", group = null, began = false;
   try {
-    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId, ...(taken.attachments.length ? { attachments: taken.attachments } : {}) }) });
+    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId, ...(taken.attachments.length ? { attachments: taken.attachments } : {}), ...noteSendExtra() }) });
     if (r.status === 429) { const m = limitMsg(r); toast(m); throw new Error(m); }
     if (!r.ok || !r.body) { let j = {}; try { j = await r.json(); } catch {} throw new Error(j.error || "Error " + r.status); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
@@ -669,10 +685,11 @@ async function send() {
     if (!began) { bubble.remove(); /* before the chat began: */ aRestore(taken); if ($("text") && !$("text").value) $("text").value = text0; }
     addError(e.message);
   }
-  endGroup(group); stream = 0; setBusy(false); $("text")?.focus(); refreshChats();
+  endGroup(group); stream = 0; setBusy(false); $("text")?.focus(); refreshChats(); noteAnswer(chatId, $("title") ? $("title").textContent : "", !!ai);
   if (ai && acc && ai.isConnected && voiceGet("read") === "1") voiceSpeak(acc, ai);
 }
 function ask(ev) {
+  noteApproval(ev);
   const d = document.createElement("div"); d.className = "ask";
   d.innerHTML = `<div>ZO-AI wants to: ${esc(ev.summary || ev.tool)}</div><div class="row"><button class="btn primary">Allow</button><button class="btn">Deny</button></div>`;
   thread().appendChild(d); scrollEnd();
@@ -1252,7 +1269,7 @@ async function showScheduled() {
 }
 
 /* ---------- settings: a list of pages, each with a Back button ---------- */
-const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How ZO-AI talks to you."], ["memory", "Memory", "What ZO-AI remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."], ["apps", "Connected apps", "Tools ZO-AI can use (MCP servers)."], ["machines", "Machines", "Computers ZO-AI can reach over SSH."], ["sync", "Desktop sync", "Share chats and memory with the desktop app."], ["account", "Account", "Your data, signed-in devices, export and delete."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
+const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How ZO-AI talks to you."], ["memory", "Memory", "What ZO-AI remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."], ["apps", "Connected apps", "Tools ZO-AI can use (MCP servers)."], ["machines", "Machines", "Computers ZO-AI can reach over SSH."], ["sync", "Desktop sync", "Share chats and memory with the desktop app."], ["notifications", "Install and notifications", "Install ZO-AI as an app, and get told when an answer is ready."], ["account", "Account", "Your data, signed-in devices, export and delete."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
 const pages = () => PAGES.filter(p => !(restricted() && ADMIN_PAGES.includes(p[0])));
 function row(title, sub, control) { const r = document.createElement("div"); r.className = "settings-row"; r.innerHTML = `<div class="col"><div class="pc-name2"></div>${sub ? '<div class="pc-meta2"></div>' : ""}</div>`; r.querySelector(".pc-name2").textContent = title; if (sub) r.querySelector(".pc-meta2").textContent = sub; if (control) r.appendChild(control); return r; }
 function cardOf(...rows) { const c = document.createElement("div"); c.className = "settings-card"; rows.forEach(r => c.appendChild(r)); return c; }
@@ -1270,7 +1287,7 @@ async function settingsPage(id) {
   view().style.overflow = ""; view().innerHTML = `<div class="pagebox narrow"><div class="page-head" id="ph" style="gap:10px"></div><div id="pbody"></div></div>`;
   $("ph").appendChild(bk); $("ph").insertAdjacentHTML("beforeend", '<div class="page-title"></div>'); $("ph").querySelector(".page-title").textContent = name;
   const b = $("pbody"); b.innerHTML = '<div class="pc-meta">Loading…</div>';
-  try { await ({ model: pageModel, personality: pagePersonality, memory: pageMemory, general: pageGeneral, apps: pageApps, machines: pageMachines, sync: pageSync, account: pageAccount, data: pageData, about: pageAbout })[id](b); } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
+  try { await ({ model: pageModel, personality: pagePersonality, memory: pageMemory, general: pageGeneral, apps: pageApps, machines: pageMachines, sync: pageSync, notifications: pageNotifications, account: pageAccount, data: pageData, about: pageAbout })[id](b); } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
 }
 async function pageModel(b) {
   const [s, prof] = await Promise.all([op("status"), op("profiles")]); b.innerHTML = "";
@@ -1428,6 +1445,220 @@ async function pageData(b) {
   b.appendChild(cardOf(row("Saved chats, projects and tasks", r.chats.length + " saved chats, kept on the server.", open), row("Delete all chats", "Removes the saved conversations here, and on every computer that syncs with this server.", del)));
 }
 async function pageAbout(b) { const s = await op("status"); b.innerHTML = ""; b.appendChild(head("About")); b.appendChild(cardOf(row("ZO-AI", "Version " + (s.version || "") + " · the AI built into Zohara OS, on the web"))); }
+
+/* ---- notifications, installable app, background push ---- */
+/* What this does: the app can be installed (manifest + service worker /sw.js); it can tell the person that an answer is ready or that
+   ZO-AI waits for an approval while the tab is in the background (a notification, a "(1)" in the tab title, a dot on the icon); and with
+   "keep running" the server finishes an answer after the tab was closed and sends a push (Web Push) that opens the chat. All of it is
+   off until the person says so, remembered in this browser only (localStorage "zo-notify"), and a no-op where the browser lacks it. */
+const NOTE_KEY = "zo-notify";
+const NOTE_DEFAULTS = { bg: true, approval: true, title: false, sound: true, push: false, pushId: "" };
+function noteCfg() { try { return { ...NOTE_DEFAULTS, ...JSON.parse(localStorage.getItem(NOTE_KEY) || "{}") }; } catch { return { ...NOTE_DEFAULTS }; } }
+function noteSave(c) { try { localStorage.setItem(NOTE_KEY, JSON.stringify(c)); } catch {} }
+const isNative = () => !!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform());
+const noteSupported = () => "Notification" in window;
+const notePerm = () => noteSupported() ? Notification.permission : "unsupported";
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && noteSupported() && !isNative();
+let swReg = null, noteReloading = false, pendingChat = "", noteSeq = 0, noteUnseen = 0, deferredInstall = null;
+const noted = new Set();
+try { const q = new URLSearchParams(location.search).get("chat"); if (q && /^[\w-]{1,64}$/.test(q)) pendingChat = q; } catch {}
+
+/* --- the service worker, and the "Update available" toast --- */
+function updateToast(w) {
+  if (document.querySelector(".toast.update")) return;
+  const d = document.createElement("div"); d.className = "toast update"; d.setAttribute("role", "status");
+  d.innerHTML = '<span>Update available</span><button type="button" class="tbtn">Reload</button><button type="button" class="tx" aria-label="Dismiss">×</button>';
+  d.querySelector(".tbtn").onclick = () => {
+    if (busy && !confirm("An answer is still being written. Reload anyway?")) return;
+    noteReloading = true; try { w.postMessage({ type: "skip-waiting" }); } catch {}
+    setTimeout(() => location.reload(), 1500); /* if the new worker does not take over, reload anyway */
+  };
+  d.querySelector(".tx").onclick = () => d.remove();
+  document.body.appendChild(d);
+}
+async function swInit() {
+  if (!("serviceWorker" in navigator) || isNative()) return;
+  try {
+    swReg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    const watch = w => w && w.addEventListener("statechange", () => { if (w.state === "installed" && navigator.serviceWorker.controller) updateToast(w); });
+    if (swReg.waiting && navigator.serviceWorker.controller) updateToast(swReg.waiting);
+    swReg.addEventListener("updatefound", () => watch(swReg.installing));
+    navigator.serviceWorker.addEventListener("message", e => { const d = e.data || {}; if (d.type === "zo-open-chat") openFromNote(d.chat); });
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (noteReloading) location.reload(); });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) swReg.update().catch(() => {}); });
+    setInterval(() => swReg.update().catch(() => {}), 3600e3);
+  } catch {}
+}
+addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstall = e; });
+addEventListener("appinstalled", () => { deferredInstall = null; });
+const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+/* --- the tab: "(1) ZO-AI" and a dot on the icon while an answer waits unseen --- */
+function faviconSvg(dot) {
+  return "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><mask id="g"><rect width="120" height="120" fill="#fff"/><circle cx="94" cy="26" r="16" fill="#000"/></mask></defs><rect width="120" height="120" rx="26" fill="#0B0E14"/><g transform="translate(12,12) scale(.8)"><circle cx="60" cy="60" r="48" fill="none" stroke="#5FD4D4" stroke-width="8" mask="url(#g)"/><path d="M60 30Q60 60 90 60Q60 60 60 90Q60 60 30 60Q60 60 60 30Z" fill="#7EE0E0"/><path d="M94 14Q94 26 106 26Q94 26 94 38Q94 26 82 26Q94 26 94 14Z" fill="#F2B84B"/></g>' + (dot ? '<circle cx="96" cy="96" r="22" fill="#E5736A" stroke="#0B0E14" stroke-width="6"/>' : "") + "</svg>");
+}
+function setUnseen(n) {
+  noteUnseen = n; document.title = n ? "(" + n + ") ZO-AI" : "ZO-AI";
+  const l = $("favicon"); if (l) { l.type = n ? "image/svg+xml" : "image/png"; l.removeAttribute("sizes"); l.href = n ? faviconSvg(true) : "/icons/icon-192.png"; }
+}
+function noteSeen() {
+  if (noteUnseen) setUnseen(0);
+  try { swReg && swReg.getNotifications().then(l => l.forEach(n => n.close())).catch(() => {}); } catch {}
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") noteSeen(); });
+addEventListener("focus", () => { if (document.visibilityState === "visible") noteSeen(); });
+
+/* --- showing a notification: through the service worker, else the page's own --- */
+async function showNote(title, body, tag, chat) {
+  const o = { body, tag, icon: "/icons/icon-192.png", data: { chat: chat || "" }, silent: !noteCfg().sound };
+  try { if (swReg) { await swReg.showNotification(title, o); return true; } } catch {}
+  try { const n = new Notification(title, o); n.onclick = () => { try { window.focus(); } catch {} if (chat) openFromNote(chat); n.close(); }; return true; } catch {}
+  return false;
+}
+/* an answer ended: tell the person unless they are looking at this tab */
+function noteAnswer(chat, title, answered) {
+  if (!answered || document.visibilityState === "visible") return;
+  setUnseen(noteUnseen + 1);
+  const c = noteCfg(); if (!c.bg || notePerm() !== "granted") return;
+  const key = chat + ":" + (++noteSeq); if (noted.has(key)) return;
+  noted.add(key); if (noted.size > 50) noted.delete(noted.values().next().value);
+  const named = c.title && title && title !== "New chat";
+  showNote(named ? title : "ZO-AI", named ? "ZO-AI: your answer is ready" : "Your answer is ready", "zo-chat-" + chat, chat);
+}
+/* ZO-AI waits for a yes or a no (admins only: restricted accounts have nothing to approve) */
+function noteApproval(ev) {
+  if (restricted() || document.visibilityState === "visible") return;
+  const c = noteCfg(); if (!c.approval || notePerm() !== "granted") return;
+  setUnseen(noteUnseen + 1);
+  showNote("ZO-AI needs your approval", "A step is waiting for a yes or a no.", "zo-approve-" + (ev && ev.id), chatId);
+}
+/* the person tapped a notification (or opened /?chat=...): show that chat */
+function openFromNote(chat) {
+  if (!/^[\w-]{1,64}$/.test(chat || "")) return;
+  if (!$("app") || $("app").classList.contains("hide")) { pendingChat = chat; return; }
+  if (busy && chat !== chatId) { toast("An answer is being written. Open that chat when it is done."); return; }
+  setNav("new"); openChat(chat);
+}
+function noteReady() {
+  if (pendingChat) {
+    const c = pendingChat; pendingChat = "";
+    try { const u = new URLSearchParams(location.search); u.delete("chat"); const q = u.toString(); history.replaceState(null, "", location.pathname + (q ? "?" + q : "")); } catch {}
+    openFromNote(c);
+  }
+  if (noteCfg().push && notePerm() === "granted") pushSync().catch(() => {});
+}
+/* what /api/send gets: ask the server to finish the answer even if this tab closes (only when this browser can be pushed to) */
+const noteSendExtra = () => { const c = noteCfg(); return c.push && c.pushId && c.pushUid === uid && notePerm() === "granted" ? { keep_running: true } : {}; };
+
+/* --- background push (this browser's push service, via the server) --- */
+const urlB64 = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), c => c.charCodeAt(0));
+function deviceLabel() {
+  const u = navigator.userAgent;
+  const b = /Edg\//.test(u) ? "Edge" : /OPR\//.test(u) ? "Opera" : /Firefox\//.test(u) ? "Firefox" : /Chrome\//.test(u) ? "Chrome" : /Safari\//.test(u) ? "Safari" : "Browser";
+  const o = /Android/.test(u) ? "Android" : /iPhone|iPad/.test(u) ? "iOS" : /Windows/.test(u) ? "Windows" : /Mac/.test(u) ? "macOS" : /Linux/.test(u) ? "Linux" : "";
+  return b + (o ? " on " + o : "");
+}
+async function pushOn() {
+  if (!pushSupported()) throw new Error("This browser cannot get notifications while it is closed.");
+  const cfg = await acctOp("push_config");
+  if (!cfg.vapid_public_key) throw new Error("This server cannot send notifications to a closed browser.");
+  const reg = swReg || await navigator.serviceWorker.ready;
+  const key = urlB64(cfg.vapid_public_key);
+  let sub = await reg.pushManager.getSubscription();
+  const old = sub && sub.options && sub.options.applicationServerKey;
+  if (sub && old && old.byteLength && new Uint8Array(old).join() !== key.join()) { await sub.unsubscribe(); sub = null; } /* made for another key: the push service would refuse it */
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+  const r = await acctOp("push_subscribe", { kind: "webpush", subscription: sub.toJSON(), label: deviceLabel(), show_title: !!noteCfg().title });
+  const c = noteCfg(); c.push = true; c.pushId = r.id; c.pushUid = uid; noteSave(c);
+}
+/* at every start: is this browser still registered for this person? (A browser can drop its subscription; the server drops dead ones.)
+   A browser that was registered for somebody else is cut loose, so one person's notices never reach the next person's session. */
+async function pushSync() {
+  const c = noteCfg(), reg = swReg || await navigator.serviceWorker.ready, s = await reg.pushManager.getSubscription();
+  if (c.pushUid && c.pushUid !== uid) { try { s && await s.unsubscribe(); } catch {} c.push = false; c.pushId = ""; c.pushUid = ""; noteSave(c); return; }
+  const list = (await acctOp("push_list")).subscriptions || [];
+  if (s && c.pushId && list.some(x => x.id === c.pushId)) return;
+  await pushOn();
+}
+/* signed out: this browser stops receiving (the choice stays, for when the same person signs in again) */
+async function pushDetach() { try { if (!pushSupported() || !noteCfg().push) return; const reg = swReg || await navigator.serviceWorker.ready; const s = await reg.pushManager.getSubscription(); if (s) await s.unsubscribe(); } catch {} }
+async function pushOff() {
+  const c = noteCfg();
+  try { if (c.pushId) await acctOp("push_unsubscribe", { id: c.pushId }); } catch {}
+  try { const reg = swReg || await navigator.serviceWorker.ready; const s = await reg.pushManager.getSubscription(); if (s) await s.unsubscribe(); } catch {}
+  c.push = false; c.pushId = ""; c.pushUid = ""; noteSave(c);
+}
+
+/* --- Settings > Install and notifications --- */
+function switchRow(title, sub, on, fn) {
+  const sw = document.createElement("input"); sw.type = "checkbox"; sw.className = "switch"; sw.checked = !!on; sw.setAttribute("aria-label", title);
+  sw.onchange = () => fn(sw.checked, sw); return row(title, sub, sw);
+}
+async function pageNotifications(b) {
+  const paintPage = () => { b.innerHTML = ""; return build(); };
+  const build = async () => {
+    const c = noteCfg(), perm = notePerm();
+    /* install */
+    b.appendChild(head("Install"));
+    let ctl = null, sub = "Use ZO-AI in its own window, from your home screen or app menu, and open it faster.";
+    if (isNative()) sub = "You are already using the ZO-AI app.";
+    else if (isStandalone()) sub = "ZO-AI is installed: you are using the app.";
+    else if (deferredInstall) ctl = btn("Install app", "primary", async () => { const p = deferredInstall; deferredInstall = null; try { await p.prompt(); await p.userChoice; } catch {} paintPage(); });
+    else if (isIOS()) sub = "On iPhone and iPad: tap the Share button, then Add to Home Screen. Notifications work for the installed app (iOS 16.4 or newer).";
+    else sub = "Your browser did not offer to install ZO-AI right now. Look for Install app in its menu or in the address bar (Chrome, Edge), or Add to Home screen on a phone.";
+    b.appendChild(cardOf(row("Install ZO-AI as an app", sub, ctl)));
+    /* notifications */
+    b.appendChild(head("Notifications"));
+    if (!noteSupported()) { b.appendChild(cardOf(row("Not available", "This browser does not support notifications. The tab title still shows (1) when an answer is waiting."))); return; }
+    if (perm !== "granted") {
+      const ask = btn(perm === "denied" ? "Blocked" : "Turn on notifications", "primary", async () => {
+        let r = "default"; try { r = await Notification.requestPermission(); } catch {}
+        if (r === "granted") { const k = noteCfg(); k.bg = true; k.approval = true; noteSave(k); toast("Notifications are on"); }
+        paintPage();
+      });
+      ask.disabled = perm === "denied";
+      b.appendChild(cardOf(row("Tell me when an answer is ready", perm === "denied" ? "Notifications are blocked for this site. Allow them in your browser's site settings (the lock icon next to the address), then come back here." : "ZO-AI shows a short notice when an answer finishes while this tab is in the background. Your browser will ask for permission first. Nothing is sent anywhere for this: the notice is made here, in your browser.", ask)));
+      return;
+    }
+    const upd = (k, v) => { const x = noteCfg(); x[k] = v; noteSave(x); };
+    const rows = [switchRow("Answer finished while this tab is in the background", "A notice and a (1) in the tab title. Nothing is shown while you are looking at the tab.", c.bg, v => upd("bg", v))];
+    if (!restricted()) rows.push(switchRow("ZO-AI needs my approval", "A notice when a step waits for your yes or no and the tab is in the background.", c.approval, v => upd("approval", v)));
+    rows.push(switchRow("Show the chat title in notifications", "Off: the notice only says that an answer is ready. On: it also shows the chat's title (on your lock screen too).", c.title, async v => { upd("title", v); if (noteCfg().push) { try { await pushOn(); } catch {} } }));
+    rows.push(switchRow("Sound", "Use your system's notification sound (some systems have none).", c.sound, v => upd("sound", v)));
+    b.appendChild(cardOf(...rows));
+    const test = btn("Send a test notification", "", async () => {
+      test.disabled = true;
+      const ok = await showNote("ZO-AI", "This is a test notification. It works.", "zo-test", "");
+      toast(ok ? "Test notification sent" : "The browser did not show it"); setTimeout(() => { test.disabled = false; }, 1500);
+    });
+    { const tc = cardOf(row("Test", "Shows a notification now, even though you are looking at this tab.", test)); tc.style.marginTop = "12px"; b.appendChild(tc); }
+    /* closed browser */
+    if (pushSupported()) {
+      b.appendChild(head("When the browser is closed"));
+      const sw = switchRow("Also notify me when this browser is closed", "ZO-AI keeps writing the answer on the server after you close the tab (a few minutes at most), saves the chat and sends a push through your browser's push service (Google, Mozilla or Apple). The push only says that an answer is ready.", c.push, async (v, el) => {
+        el.disabled = true;
+        try { if (v) { await pushOn(); toast("Background notifications are on"); } else { await pushOff(); toast("Background notifications are off"); } }
+        catch (e) { el.checked = !v; toast(e.message); }
+        paintPage();
+      });
+      b.appendChild(cardOf(sw));
+      let list = [];
+      try { list = (await acctOp("push_list")).subscriptions || []; } catch {}
+      if (list.length) {
+        const card = cardOf(...list.map(s => {
+          const rm = btn("Remove", "danger", async () => { try { await acctOp("push_unsubscribe", { id: s.id }); } catch (e) { toast(e.message); } if (s.id === noteCfg().pushId) { try { const reg = swReg || await navigator.serviceWorker.ready; const x = await reg.pushManager.getSubscription(); if (x) await x.unsubscribe(); } catch {} const k = noteCfg(); k.push = false; k.pushId = ""; noteSave(k); } paintPage(); });
+          return row((s.label || (s.kind === "fcm" ? "Android app" : "Browser")) + (s.id === c.pushId ? " (this device)" : ""), "Added " + new Date((s.created || 0) * 1000).toLocaleDateString(), rm);
+        })); card.classList.add("note-list"); card.style.marginTop = "12px";
+        b.appendChild(card);
+        b.insertAdjacentHTML("beforeend", '<div class="note-hint">You can register up to 5 devices. A device that your push service no longer knows is removed automatically.</div>');
+      }
+    }
+  };
+  await paintPage();
+}
+swInit();
+/* ---- end notifications, installable app, background push ---- */
 
 /* ---------- start ---------- */
 function go(n) {
@@ -1656,7 +1887,7 @@ async function start(u, agreed) {
   try { acct = await acctOp("whoami"); } catch (e) { acct = null; }
   document.querySelectorAll('[data-nav="projects"],[data-nav="artifacts"],[data-nav="scheduled"]').forEach(n => n.classList.toggle("hide", restricted()));
   try { await op("status"); } catch (e) { if (!NOAUTH && e.status === 401) { $("app").classList.add("hide"); $("login").classList.remove("hide"); $("err").textContent = e.message; signOut(auth); return; } }
-  showHome(); refreshChats(); actFetch();
+  showHome(); refreshChats(); actFetch(); noteReady();
   /* chats made on the computer appear here: refresh when the tab comes back, and once a minute */
   if (started) return; started = true;
   const tick = () => { if (!document.hidden) refreshChats(); };
@@ -1666,7 +1897,7 @@ paint();
 if (NOAUTH) start(null);
 else {
   if (isDevicePath()) $("lintro").textContent = "Sign in to approve the device you started. You will come back to the approval screen.";
-  onAuthStateChanged(auth, u => { if (u) start(u); else { acct = null; uid = ""; ["app", "consent", "verify", "device"].forEach(i => $(i).classList.add("hide")); $("login").classList.remove("hide"); } });
+  onAuthStateChanged(auth, u => { if (u) start(u); else { pushDetach(); acct = null; uid = ""; ["app", "consent", "verify", "device"].forEach(i => $(i).classList.add("hide")); $("login").classList.remove("hide"); } });
 }
 </script>
 </body>

@@ -6,6 +6,7 @@ use crate::auth::Fake;
 use crate::db::{Db, MemDb};
 use crate::testenv;
 use std::collections::HashSet;
+use std::io::BufRead;
 
 struct Rig {
     app: Arc<App>,
@@ -14,6 +15,11 @@ struct Rig {
 }
 
 fn rig(people: &[(&str, &str, &str)], admins: &str, max_users: usize, per_min: u32) -> Rig {
+    rig_push(people, admins, max_users, per_min, Default::default())
+}
+
+/// Like `rig`, with a notification hub of the test's own (a fake push transport).
+fn rig_push(people: &[(&str, &str, &str)], admins: &str, max_users: usize, per_min: u32, push: Arc<push::Hub>) -> Rig {
     let root = testenv::service();
     let db = Arc::new(MemDb::default());
     let dbd: Arc<dyn Db> = db.clone();
@@ -33,6 +39,7 @@ fn rig(people: &[(&str, &str, &str)], admins: &str, max_users: usize, per_min: u
         legal: Default::default(),
         require_terms: std::sync::atomic::AtomicBool::new(false),
         accepted: Mutex::new(Default::default()),
+        push,
     });
     let server = Server::http("127.0.0.1:0").unwrap();
     let base = format!("http://{}", server.server_addr().to_ip().unwrap());
@@ -566,7 +573,7 @@ fn the_web_page_the_policy_pages_and_the_headers() {
 fn the_no_login_test_mode_uses_one_fixed_restricted_person_and_only_answers_its_own_page() {
     let root = testenv::service();
     let tenants = Arc::new(TenantMap::new(root, None, testenv::SECRET.into(), 200, 8));
-    let app = Arc::new(App { no_auth: true, noauth_admin: false, verifier: None, policy: Policy::default(), tenants, devices: None, login: DeviceLogin::new(Default::default()), public_url: None, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1), conns: AtomicUsize::new(0), legal: Default::default(), require_terms: std::sync::atomic::AtomicBool::new(false), accepted: Mutex::new(Default::default()) });
+    let app = Arc::new(App { no_auth: true, noauth_admin: false, verifier: None, policy: Policy::default(), tenants, devices: None, login: DeviceLogin::new(Default::default()), public_url: None, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1), conns: AtomicUsize::new(0), legal: Default::default(), require_terms: std::sync::atomic::AtomicBool::new(false), accepted: Mutex::new(Default::default()), push: Default::default() });
     let server = Server::http("127.0.0.1:0").unwrap();
     let base = format!("http://{}", server.server_addr().to_ip().unwrap());
     let a = app.clone();
@@ -1194,4 +1201,245 @@ fn the_two_public_calls_refuse_web_pages_and_give_no_cross_site_permission() {
     // the web app's own calls keep theirs
     let w = ureq::request("OPTIONS", &format!("{}/api/op", r.base)).call().unwrap();
     assert_eq!(w.header("Access-Control-Allow-Origin"), Some("*"));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// notifications: keep_running, push registration, the installable app
+
+/// A model that takes `delay_ms` to answer, for as many requests as come.
+fn slow_model(delay_ms: u64, text: &'static str) -> String {
+    use std::io::Read;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut s) = conn else { return };
+            std::thread::spawn(move || {
+                let (mut buf, mut tmp) = (Vec::new(), [0u8; 4096]);
+                loop {
+                    let n = s.read(&mut tmp).unwrap_or(0);
+                    if n == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&tmp[..n]);
+                    if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                        let len = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                        while buf.len() < i + 4 + len {
+                            let n = s.read(&mut tmp).unwrap_or(0);
+                            if n == 0 {
+                                return;
+                            }
+                            buf.extend_from_slice(&tmp[..n]);
+                        }
+                        break;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(delay_ms));
+                let body = json!({"choices": [{"message": {"content": text}}]}).to_string();
+                let _ = write!(s, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+            });
+        }
+    });
+    url
+}
+
+/// The owner (an admin: its own model address may be a local one) answers through the slow model.
+fn use_slow_model(uid: &str, url: &str) {
+    let t = zo_core::tenant::Tenant::open_in(&testenv::env(), &tenant_of(uid), false).unwrap();
+    zo_core::tenant::scope(&t, || {
+        let mut sel = zo_core::ai::Selection { provider: "custom".into(), model: "m".into(), ..Default::default() };
+        sel.base_urls.insert("custom".into(), url.to_string());
+        sel.save();
+        zo_core::ai::keys::set("custom", "sk-test-bring-your-own-0001").unwrap();
+    });
+}
+
+fn push_rig(uid: &str) -> (Rig, Arc<push::testkit::Fake>, (p256::SecretKey, [u8; 16])) {
+    let fake = Arc::new(push::testkit::Fake::default());
+    let pdb: Arc<dyn Db> = Arc::new(MemDb::default());
+    let hub = Arc::new(push::Hub::new(Some(pdb), testenv::SECRET, "mailto:o@zo.test".into()).with_transport(fake.clone()).with_allow(push::Allow::for_test("https://push.test")));
+    let r = rig_push(&[("tok-o", uid, "o@x.test")], "o@x.test", 200, 600, hub);
+    let keys = push::testkit::browser();
+    let a = call(&r, "tok-o", "/api/account/push_subscribe", push::testkit::web_sub("https://push.test/ep/1", &keys));
+    assert_eq!(a.status, 200, "{:?}", a.body);
+    (r, fake, keys)
+}
+
+/// Starts an answer and hands back its events as they come.
+fn start_send(r: &Rig, body: Value) -> (u16, std::io::BufReader<Box<dyn std::io::Read + Send + Sync + 'static>>) {
+    let res = match ureq::post(&format!("{}/api/send", r.base)).set("Authorization", "Bearer tok-o").send_string(&body.to_string()) {
+        Ok(r) => r,
+        Err(ureq::Error::Status(_, r)) => r,
+        Err(e) => panic!("{e}"),
+    };
+    (res.status(), std::io::BufReader::new(res.into_reader()))
+}
+
+/// Reads events until one of this kind; returns the one found.
+fn read_until(rd: &mut impl BufRead, event: &str) -> Value {
+    let mut line = String::new();
+    loop {
+        line.clear();
+        assert!(rd.read_line(&mut line).unwrap() > 0, "the stream ended before {event}");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        if v["event"] == event {
+            return v;
+        }
+    }
+}
+
+fn wait_until(secs: u64, what: &str, mut f: impl FnMut() -> bool) {
+    let t0 = Instant::now();
+    while !f() {
+        assert!(t0.elapsed() < Duration::from_secs(secs), "timed out waiting for: {what}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn saved_answer(r: &Rig, chat_id: &str) -> Option<String> {
+    let c = call(r, "tok-o", "/api/op", json!({"op": "chat", "id": chat_id}));
+    c.body["entries"].as_array()?.iter().find(|e| e["kind"] == "msg-ai").and_then(|e| e["text"].as_str()).map(str::to_string)
+}
+
+#[test]
+fn keep_running_finishes_the_answer_after_the_browser_left_holds_the_places_and_then_pushes() {
+    let u = uniq("keep");
+    let (r, fake, keys) = push_rig(&u);
+    use_slow_model(&u, &slow_model(1200, "Here is the late answer."));
+    let (status, mut rd) = start_send(&r, json!({"text": "tell me when it is ready", "keep_running": true}));
+    assert_eq!(status, 200);
+    let chat_id = read_until(&mut rd, "chat")["id"].as_str().unwrap().to_string();
+    drop(rd); // the person closes the tab
+    // the answer is still being written: the place stays taken, nothing is cancelled
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(r.app.tenants.running_answers(), 1, "the permit is held while the answer runs");
+    assert!(fake.calls.lock().unwrap().is_empty(), "no push before the answer is there");
+    wait_until(15, "the answer to be saved", || saved_answer(&r, &chat_id).is_some());
+    assert_eq!(saved_answer(&r, &chat_id).unwrap(), "Here is the late answer.");
+    wait_until(10, "the push", || !fake.calls.lock().unwrap().is_empty());
+    wait_until(10, "the permit to be freed", || r.app.tenants.running_answers() == 0);
+    let calls = fake.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "https://push.test/ep/1");
+    // the person's browser can read it: generic, the chat's id, and no title (not switched on)
+    assert_eq!(push::testkit::decrypt_for(&keys, &calls[0].2), json!({"v": 1, "type": "answer", "chat": chat_id}));
+    assert!(!String::from_utf8_lossy(&calls[0].2).contains("tell me when"));
+    assert_eq!(r.app.push.delivered.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_person_who_stayed_connected_gets_no_push() {
+    let u = uniq("stay");
+    let (r, fake, _) = push_rig(&u);
+    use_slow_model(&u, &slow_model(300, "Quick answer."));
+    let (_, mut rd) = start_send(&r, json!({"text": "hello", "keep_running": true}));
+    read_until(&mut rd, "done");
+    drop(rd);
+    wait_until(10, "the permit to be freed", || r.app.tenants.running_answers() == 0);
+    std::thread::sleep(Duration::from_millis(700));
+    assert!(fake.calls.lock().unwrap().is_empty(), "the answer was seen: nothing is pushed");
+}
+
+#[test]
+fn without_a_registered_device_or_without_the_flag_nothing_is_kept_and_nothing_is_pushed() {
+    // (the service-level test in zo-core shows that a closed connection cancels an answer that has not finished; here, with a model
+    // that does not stream, the server only notices the closed connection when the first line is written, which is the same as before)
+    let u = uniq("nokeep");
+    let (r, fake, _) = push_rig(&u);
+    use_slow_model(&u, &slow_model(600, "Written, but nobody is told."));
+    // a device is registered but the message does not ask to keep running
+    let (_, mut rd) = start_send(&r, json!({"text": "first"}));
+    read_until(&mut rd, "chat");
+    drop(rd);
+    // a person with no device: the flag is dropped by the server and the connection ends the answer as before
+    let u2 = uniq("nodevice");
+    let (hub2, fake2) = (Arc::new(push::Hub::new(None, "", "mailto:o@zo.test".into())), 0);
+    let _ = fake2;
+    let r2 = rig_push(&[("tok-o", &u2, "o@x.test")], "o@x.test", 200, 600, hub2);
+    use_slow_model(&u2, &slow_model(600, "Written too."));
+    let (_, mut rd) = start_send(&r2, json!({"text": "second", "keep_running": true}));
+    read_until(&mut rd, "chat");
+    drop(rd);
+    wait_until(10, "the places to be free", || r.app.tenants.running_answers() == 0 && r2.app.tenants.running_answers() == 0);
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(fake.calls.lock().unwrap().is_empty(), "nobody is pushed unless keep_running was asked for and a device is registered");
+    assert_eq!(r2.app.push.delivered.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[test]
+fn kept_answers_count_against_the_two_at_once_limit_and_free_their_places() {
+    let u = uniq("caps");
+    let (r, fake, _) = push_rig(&u);
+    use_slow_model(&u, &slow_model(1500, "Slow answer."));
+    let mut ids = Vec::new();
+    for n in 0..2 {
+        let (s, mut rd) = start_send(&r, json!({"text": format!("question {n}"), "keep_running": true}));
+        assert_eq!(s, 200);
+        ids.push(read_until(&mut rd, "chat")["id"].as_str().unwrap().to_string());
+        drop(rd);
+    }
+    // both browsers left, both answers still running: a third message is refused like before
+    let (s, _) = start_send(&r, json!({"text": "a third"}));
+    assert_eq!(s, 429, "per-user cap unchanged");
+    assert_eq!(r.app.tenants.running_answers(), 2);
+    wait_until(20, "both answers", || ids.iter().all(|i| saved_answer(&r, i).is_some()));
+    wait_until(10, "both pushes", || fake.calls.lock().unwrap().len() == 2);
+    wait_until(10, "the places", || r.app.tenants.running_answers() == 0);
+    let (s, mut rd) = start_send(&r, json!({"text": "now it works"}));
+    assert_eq!(s, 200);
+    read_until(&mut rd, "done");
+}
+
+#[test]
+fn push_registration_is_for_signed_in_people_only_and_always_their_own() {
+    let (u1, u2) = (uniq("pa"), uniq("pb"));
+    let fake = Arc::new(push::testkit::Fake::default());
+    let pdb: Arc<dyn Db> = Arc::new(MemDb::default());
+    let hub = Arc::new(push::Hub::new(Some(pdb), testenv::SECRET, "mailto:o@zo.test".into()).with_transport(fake).with_allow(push::Allow::for_test("https://push.test")));
+    let r = rig_push(&[("tok-a", &u1, "a@x.test"), ("tok-b", &u2, "b@x.test")], "", 200, 600, hub);
+    assert_eq!(call(&r, "", "/api/account/push_config", json!({})).status, 401);
+    let cfg = call(&r, "tok-a", "/api/account/push_config", json!({}));
+    assert_eq!(cfg.status, 200);
+    assert_eq!(base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, cfg.body["vapid_public_key"].as_str().unwrap()).unwrap().len(), 65);
+    assert_eq!(cfg.body["fcm"], false);
+    let k = push::testkit::browser();
+    let id = call(&r, "tok-a", "/api/account/push_subscribe", push::testkit::web_sub("https://push.test/ep/a", &k)).body["id"].as_str().unwrap().to_string();
+    assert_eq!(call(&r, "tok-a", "/api/account/push_subscribe", push::testkit::web_sub("https://evil.example/x", &k)).status, 400);
+    assert_eq!(call(&r, "tok-a", "/api/account/push_list", json!({})).body["subscriptions"].as_array().unwrap().len(), 1);
+    assert!(call(&r, "tok-b", "/api/account/push_list", json!({})).body["subscriptions"].as_array().unwrap().is_empty());
+    assert_eq!(call(&r, "tok-b", "/api/account/push_unsubscribe", json!({"id": id})).status, 404, "somebody else's device");
+    // a device credential (the terminal client) cannot register notification devices
+    let (cred, _) = make_device(&r, "tok-a", "terminal", "cli");
+    assert_eq!(call(&r, &cred, "/api/account/push_subscribe", push::testkit::web_sub("https://push.test/ep/z", &k)).status, 403);
+    assert_eq!(call(&r, "tok-a", "/api/account/push_unsubscribe", json!({"id": id})).status, 200);
+}
+
+#[test]
+fn the_installable_app_files_are_served_with_the_right_headers_and_without_a_login() {
+    let r = rig(&[("tok", &uniq("pwa"), "p@x.test")], "", 200, 600);
+    let get = |p: &str| match ureq::get(&format!("{}{p}", r.base)).call() {
+        Ok(r) => r,
+        Err(ureq::Error::Status(_, r)) => r,
+        Err(e) => panic!("{e}"),
+    };
+    let m = get("/manifest.webmanifest");
+    assert_eq!((m.status(), m.header("Content-Type"), m.header("Cache-Control")), (200, Some("application/manifest+json"), Some("no-cache")));
+    let v: Value = m.into_json().unwrap();
+    assert_eq!(v["display"], "standalone");
+    let sw = get("/sw.js");
+    assert_eq!((sw.status(), sw.header("Service-Worker-Allowed"), sw.header("Cache-Control")), (200, Some("/"), Some("no-cache")));
+    assert!(sw.header("Content-Type").unwrap().starts_with("text/javascript"));
+    let text = sw.into_string().unwrap();
+    assert!(!text.contains("__VERSION__") && text.contains("zo-shell-"));
+    for p in ["/icons/icon-192.png", "/icons/icon-512.png", "/icons/maskable-192.png", "/icons/maskable-512.png", "/apple-touch-icon.png"] {
+        let i = get(p);
+        assert_eq!((i.status(), i.header("Content-Type")), (200, Some("image/png")), "{p}");
+        assert_eq!(i.header("X-Content-Type-Options"), Some("nosniff"));
+    }
+    assert_eq!(get("/icons/nothing.png").status(), 404);
+    assert_eq!(get("/icons/../main.rs").status(), 404);
+    let page = get("/");
+    let csp = page.header("Content-Security-Policy").unwrap().to_string();
+    assert!(csp.contains("worker-src 'self'") && csp.contains("manifest-src 'self'"), "{csp}");
 }
