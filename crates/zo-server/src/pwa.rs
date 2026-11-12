@@ -10,17 +10,27 @@ use tiny_http::{Request, Response};
 const INDEX: &str = include_str!("../web/index.html");
 const SW: &str = include_str!("../web/sw.js");
 const MANIFEST: &str = include_str!("../web/manifest.webmanifest");
+const ROBOTS: &str = "User-agent: *\nAllow: /\nSitemap: https://zo-ai-server.onrender.com/sitemap.xml\n";
+const SITEMAP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://zo-ai-server.onrender.com/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://zo-ai-server.onrender.com/privacy</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://zo-ai-server.onrender.com/terms</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
+</urlset>
+"#;
 
-const ICONS: [(&str, &[u8]); 5] = [
-    ("/icons/icon-192.png", include_bytes!("../web/icons/icon-192.png")),
-    ("/icons/icon-512.png", include_bytes!("../web/icons/icon-512.png")),
+const ICONS: [(&str, &[u8]); 6] = [
+    ("/icons/icon-192.png",    include_bytes!("../web/icons/icon-192.png")),
+    ("/icons/icon-512.png",    include_bytes!("../web/icons/icon-512.png")),
     ("/icons/maskable-192.png", include_bytes!("../web/icons/maskable-192.png")),
     ("/icons/maskable-512.png", include_bytes!("../web/icons/maskable-512.png")),
-    ("/apple-touch-icon.png", include_bytes!("../web/apple-touch-icon.png")),
+    ("/apple-touch-icon.png",  include_bytes!("../web/apple-touch-icon.png")),
+    ("/logo.png",              include_bytes!("../web/logo.png")),
 ];
 
 pub fn serves(path: &str) -> bool {
-    matches!(path, "/sw.js" | "/manifest.webmanifest") || ICONS.iter().any(|(p, _)| *p == path)
+    matches!(path, "/sw.js" | "/manifest.webmanifest" | "/robots.txt" | "/sitemap.xml")
+        || ICONS.iter().any(|(p, _)| *p == path)
 }
 
 /// The worker's text with its version in it: a hash of everything it caches that is not an image, and of itself.
@@ -39,8 +49,10 @@ pub fn sw_text() -> &'static str {
 
 pub fn serve(app: &App, req: Request, path: &str) {
     let (body, ctype, cache): (Vec<u8>, &str, &str) = match path {
-        "/sw.js" => (sw_text().as_bytes().to_vec(), "text/javascript; charset=utf-8", "no-cache"),
+        "/sw.js"              => (sw_text().as_bytes().to_vec(), "text/javascript; charset=utf-8", "no-cache"),
         "/manifest.webmanifest" => (MANIFEST.as_bytes().to_vec(), "application/manifest+json", "no-cache"),
+        "/robots.txt"         => (ROBOTS.as_bytes().to_vec(), "text/plain; charset=utf-8", "no-cache"),
+        "/sitemap.xml"        => (SITEMAP.as_bytes().to_vec(), "application/xml; charset=utf-8", "public, max-age=3600"),
         p => match ICONS.iter().find(|(n, _)| *n == p) {
             Some((_, b)) => (b.to_vec(), "image/png", "public, max-age=86400"),
             None => return crate::text(app, req, 404, "not found"),
@@ -73,5 +85,12 @@ mod tests {
             assert!(ICONS.iter().any(|(p, b)| *p == i["src"].as_str().unwrap() && b.starts_with(b"\x89PNG")), "{i}");
         }
         assert!(INDEX.contains("rel=\"manifest\"") && INDEX.contains("apple-touch-icon") && INDEX.contains("theme-color"));
+    }
+
+    #[test]
+    fn robots_points_to_sitemap_and_sitemap_has_key_urls() {
+        assert!(ROBOTS.contains("Sitemap:") && ROBOTS.contains("sitemap.xml"));
+        assert!(SITEMAP.contains("<loc>https://zo-ai-server.onrender.com/</loc>"));
+        assert!(SITEMAP.contains("/privacy") && SITEMAP.contains("/terms"));
     }
 }

@@ -1471,6 +1471,8 @@ fn the_installable_app_files_are_served_with_the_right_headers_and_without_a_log
     let page = get("/");
     let csp = page.header("Content-Security-Policy").unwrap().to_string();
     assert!(csp.contains("worker-src 'self'") && csp.contains("manifest-src 'self'"), "{csp}");
+}
+
 // ===========================================================================================================================
 // the desktop link (link.rs) and the Claude token (account.rs): see docs/LINK.md
 
