@@ -224,7 +224,9 @@ fn html(app: &App, req: Request, body: String, csp: &str) {
         .with_header(header("Content-Type", "text/html; charset=utf-8"))
         .with_header(header("Cache-Control", "no-cache"))
         .with_header(header("Content-Security-Policy", csp))
-        .with_header(header("X-Frame-Options", "DENY"));
+        .with_header(header("X-Frame-Options", "DENY"))
+        // The page itself may use the microphone (voice input); frames and cameras stay off.
+        .with_header(header("Permissions-Policy", "microphone=(self), camera=()"));
     send_response(app, req, r);
 }
 

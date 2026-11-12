@@ -158,6 +158,12 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .tool-btn:hover{background:var(--hov);color:var(--text)}
 .tool-btn.send{background:var(--accent);color:var(--onaccent);border-radius:10px;width:32px}.tool-btn.send:hover{background:var(--accent2)}
 .tool-btn.stop{background:#E5484D;color:#fff;border-radius:10px;width:32px}
+.tool-btn.mic{position:relative}.tool-btn.mic:disabled{opacity:.4;cursor:not-allowed}
+.tool-btn.mic.on,.tool-btn.mic.on:hover{background:#E5484D;color:#fff}
+.tool-btn.mic.on::after{content:"";position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;background:#fff;animation:micp 1.1s ease-in-out infinite}@keyframes micp{50%{opacity:.25;transform:scale(.7)}}
+@media(prefers-reduced-motion:reduce){.tool-btn.mic.on::after{animation:none}}
+.msg-ai-wrap.speaking .msg-actions{opacity:1}.msg-actions button.on{color:#E5484D}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .pills{display:flex;justify-content:flex-end;gap:2px;padding:6px 8px 0}
 .pill{border-radius:9px;color:var(--text3);padding:6px 10px;font-size:13px}.pill:hover{background:var(--hov);color:var(--text)}.pill-muted{color:var(--dim)}
 .pill svg{width:11px;height:11px}
@@ -324,6 +330,7 @@ const P = {
   sidebar: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M10 5v14"/>', gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/>',
   up: '<path d="M6 15l6-6 6 6"/>', chev: '<path d="M9 6l6 6-6 6"/>', down: '<path d="M6 9l6 6 6-6"/>', copy: '<rect x="8" y="8" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/>',
   folder: '<path d="M4 7a1 1 0 011-1h4l2 2h8a1 1 0 011 1v8a1 1 0 01-1 1H5a1 1 0 01-1-1V7z"/>', edit: '<path d="M4 20l4-1 11-11-3-3L5 16l-1 4z"/>', trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>', star: '<path d="M12 4l2.5 5 5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9 5.5-.8z"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/>', speaker: '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11"/>',
   out: '<path d="M14 5h4a1 1 0 011 1v12a1 1 0 01-1 1h-4M10 8l-4 4 4 4M6 12h10"/>', stop: '<rect x="7" y="7" width="10" height="10" rx="2"/>', check: '<path d="M5 12l5 5 9-10"/>', pin: '<path d="M9 4h6l-1 6 3 3H7l3-3-1-6zM12 13v7"/>',
 };
 const icon = n => `<svg viewBox="0 0 24 24">${P[n] || ""}</svg>`;
@@ -370,7 +377,7 @@ function netBanner(kind) {
   b.classList.remove("hide");
 }
 const op = (o, extra = {}) => api("/api/op", { op: o, ...extra });
-function toast(t) { if ([...document.querySelectorAll(".toast")].some(x => x.textContent === t)) return; const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2600); }
+function toast(t, ms) { if ([...document.querySelectorAll(".toast")].some(x => x.textContent === t)) return; const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), ms || 2600); }
 
 /* ---------- markdown (headings, lists, quotes, code blocks, bold, italic, links) ---------- */
 function inline(s) {
@@ -407,7 +414,7 @@ const ADMIN_PAGES = ["apps", "machines"];
 const human = n => { n = +n || 0; const u = ["B", "KB", "MB", "GB"]; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + " " + u[i]; };
 const view = () => $("view");
 function setTitle(t) { $("title").textContent = t; }
-function setNav(n) { nav = n; document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.nav === n)); markList(); }
+function setNav(n) { voiceSpeakStop(); nav = n; document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.nav === n)); markList(); }
 
 function greet() {
   const h = new Date().getHours(), part = h < 5 ? "evening" : h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
@@ -419,6 +426,7 @@ function greet() {
 function composerHTML() {
   return `<div class="composer"><textarea id="text" rows="1" placeholder="How can I help you today?"></textarea>
     <div class="row"><button class="tool-btn" id="plus" title="Attach (not on the web yet)" data-i="plus" disabled></button><span class="grow"></span>
+    <button class="tool-btn mic" id="mic" data-i="mic" aria-pressed="false"></button>
     <button class="tool-btn send" id="send" title="Send" data-i="up"></button><button class="tool-btn stop hide" id="stop" title="Stop" data-i="stop"></button></div></div>
     <div class="pills"><button class="pill" id="pModel"><span id="pModelT">…</span><i data-i="down"></i></button><button class="pill pill-muted" id="pMode">${esc(mode)}</button></div>
     <div class="foot-note">ZO-AI can make mistakes. Check what it did.</div>`;
@@ -429,16 +437,117 @@ function wireComposer() {
   t.addEventListener("input", size);
   t.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
   $("send").onclick = send;
+  voiceWire();
   $("stop").onclick = () => { if (stream) api("/api/reply", { stream, op: "stop" }).catch(() => {}); };
   $("pModel").onclick = e => modelPopover(e.currentTarget);
   $("pMode").onclick = e => modePopover(e.currentTarget);
   refreshModel(); t.focus();
 }
-function setBusy(b) { busy = b; if ($("send")) { $("send").classList.toggle("hide", b); $("stop").classList.toggle("hide", !b); $("text").disabled = b; } }
+function setBusy(b) { busy = b; if ($("send")) { $("send").classList.toggle("hide", b); $("stop").classList.toggle("hide", !b); $("text").disabled = b; voiceMicPaint(); } }
 async function refreshModel() {
   try { status = await op("status"); mode = status.mode || mode; } catch {}
   if ($("pModelT")) $("pModelT").textContent = status.ready ? (status.model || status.provider) : "Choose a model";
   if ($("pMode")) $("pMode").textContent = mode;
+}
+
+/* ---------- voice: speech in (Web Speech API) and answers read aloud (speechSynthesis) ---------- */
+/* Chrome and Edge send the audio to the browser maker's speech service; it never goes to ZO-AI's server. */
+const VOICE_LANGS = [["", "Browser default"], ["en-US", "English (US)"], ["en-GB", "English (UK)"], ["ur-PK", "Urdu"], ["hi-IN", "Hindi"], ["ar-SA", "Arabic"], ["bn-BD", "Bengali"], ["es-ES", "Spanish"], ["fr-FR", "French"], ["de-DE", "German"], ["it-IT", "Italian"], ["pt-BR", "Portuguese (Brazil)"], ["tr-TR", "Turkish"], ["ru-RU", "Russian"], ["id-ID", "Indonesian"], ["zh-CN", "Chinese (Mandarin)"], ["ja-JP", "Japanese"], ["ko-KR", "Korean"]];
+const voiceGet = k => { try { return localStorage.getItem("zo-voice-" + k) || ""; } catch { return ""; } };
+const voiceSet = (k, v) => { try { v ? localStorage.setItem("zo-voice-" + k, v) : localStorage.removeItem("zo-voice-" + k); } catch {} };
+const voiceCtor = () => window.SpeechRecognition || window.webkitSpeechRecognition || null;
+const voiceCanSpeak = () => !!(window.speechSynthesis && window.SpeechSynthesisUtterance);
+const voiceLang = () => voiceGet("lang") || navigator.language || "en-US";
+const VOICE_ERR = {
+  "not-allowed": "The microphone is blocked. Click the lock icon in the address bar, allow the microphone for this site, then try again.",
+  "service-not-allowed": "This browser does not allow speech recognition here. Turn it on in the browser settings and use an https page.",
+  "audio-capture": "No microphone found. Plug one in or choose an input device in the system settings.",
+  "network": "The speech service could not be reached. Check your connection and try again.",
+  "no-speech": "I did not hear anything. Try again closer to the microphone.",
+  "language-not-supported": "This browser cannot recognise that language. Pick another one in Settings > Appearance and permissions.",
+};
+let vRec = null, vBase = "", vOrig = "", vHeard = false, vManual = false, vErr = "";
+function voiceAnnounce(t) { let l = $("voiceLive"); if (!l) { l = document.createElement("div"); l.id = "voiceLive"; l.className = "sr-only"; l.setAttribute("role", "status"); l.setAttribute("aria-live", "polite"); document.body.appendChild(l); } l.textContent = ""; setTimeout(() => { l.textContent = t; }, 30); }
+function voiceMicPaint() {
+  const b = $("mic"); if (!b) return; const ok = !!voiceCtor(), on = !!vRec;
+  b.disabled = !ok || (busy && !on);
+  const label = !ok ? "Voice input needs Chrome, Edge or Safari" : on ? "Stop listening (Ctrl+Shift+M)" : "Speak instead of typing (Ctrl+Shift+M)";
+  b.title = label; b.setAttribute("aria-label", on ? "Stop listening" : "Start voice input"); b.setAttribute("aria-pressed", on ? "true" : "false"); b.classList.toggle("on", on);
+}
+function voiceWire() { const b = $("mic"); if (!b) return; voiceStop(true); b.onclick = () => voiceToggle(); voiceMicPaint(); }
+function voiceToggle() { vRec ? voiceStop(false) : voiceStart(); }
+function voiceFill(s) {
+  const t = $("text"); if (!t) return;
+  s = s.replace(/\s+/g, " "); if (!vBase || /\s$/.test(vBase)) s = s.trimStart();
+  t.value = vBase + s; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 200) + "px"; t.scrollTop = t.scrollHeight;
+}
+function voiceStart() {
+  const R = voiceCtor(), t = $("text");
+  if (!R) { toast("Voice input needs Chrome, Edge or Safari"); return; }
+  if (!window.isSecureContext) { toast("Voice input only works on https pages (or localhost). Open ZO-AI with its https address.", 5000); return; }
+  if (vRec || !t || t.disabled || busy) return;
+  voiceSpeakStop();
+  let r; try { r = new R(); } catch { toast("Voice input could not start in this browser."); return; }
+  const auto = voiceGet("auto") === "1";
+  vOrig = t.value; vBase = vOrig && !/\s$/.test(vOrig) ? vOrig + " " : vOrig; vHeard = false; vManual = false; vErr = "";
+  r.lang = voiceLang(); r.interimResults = true; r.continuous = !auto; r.maxAlternatives = 1;
+  r.onresult = e => { if (r !== vRec) return; let s = ""; for (let i = 0; i < e.results.length; i++) s += e.results[i][0].transcript; if (s.trim()) vHeard = true; voiceFill(s); };
+  r.onerror = e => { if (r !== vRec) return; vErr = e.error || "error"; if (vErr !== "aborted") toast(VOICE_ERR[vErr] || "Voice input stopped (" + vErr + ").", vErr === "not-allowed" ? 6000 : 4000); };
+  r.onend = () => { if (r !== vRec) return; const send_ = voiceGet("auto") === "1" && vHeard && !vErr && !vManual; voiceDetach(); voiceAnnounce("Stopped"); if (send_ && $("text")?.value.trim()) send(); else $("text")?.focus(); };
+  vRec = r;
+  try { r.start(); } catch { voiceDetach(); toast("Voice input could not start. Try again."); return; }
+  voiceMicPaint(); voiceAnnounce("Listening"); t.focus();
+}
+function voiceDetach() { const r = vRec; vRec = null; if (r) { r.onresult = r.onerror = r.onend = null; } voiceMicPaint(); }
+/* stop listening. cancel = true: abort, and nothing more is said or sent; the text typed before stays. */
+function voiceStop(cancel) {
+  const r = vRec; if (!r) return;
+  if (cancel) { voiceDetach(); try { r.abort(); } catch {} voiceAnnounce("Stopped"); return; }
+  vManual = true; try { r.stop(); } catch { voiceDetach(); } $("text")?.focus();
+}
+/* Esc cancels and puts the text back as it was before listening */
+function voiceCancel() { if (!vRec) return; const t = $("text"); voiceStop(true); if (t) { t.value = vOrig; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 200) + "px"; t.focus(); } }
+addEventListener("keydown", e => {
+  if (e.key === "Escape") { if (vRec) voiceCancel(); else if (vSpeak) voiceSpeakStop(); return; }
+  if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.code === "KeyM" && $("mic")) { e.preventDefault(); if (!$("mic").disabled) voiceToggle(); else if (!voiceCtor()) toast("Voice input needs Chrome, Edge or Safari"); }
+});
+document.addEventListener("input", e => { if (vRec && e.isTrusted && e.target.id === "text") voiceStop(true); });
+document.addEventListener("visibilitychange", () => { if (document.hidden) voiceStop(true); });
+addEventListener("pagehide", () => { voiceStop(true); voiceSpeakStop(); });
+
+/* read answers aloud: plain words only, never code */
+function voicePlain(src) {
+  return String(src || "").split(/```/).filter((_, i) => i % 2 === 0).join("\n") /* same split as md(): odd parts are code */
+    .replace(/<\/?[a-zA-Z][^>\n]*>/g, " ")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/https?:\/\/\S+/g, "").replace(/`+/g, "")
+    .replace(/^\s{0,3}#{1,6}\s+(.*?)[ \t]*$/gm, (_, h) => h + (/[.!?:]$/.test(h) ? "" : ".")).replace(/^\s*>\s?/gm, "").replace(/^\s*([-*+]|\d+[.)])\s+(.*?)[ \t]*$/gm, (_, m, h) => h + (/[.!?:;,]$/.test(h) ? "" : ".")).replace(/^\s*([-*_]\s*){3,}$/gm, "")
+    .replace(/^\s*\|?[\s:|-]+\|[\s:|-]*$/gm, "").replace(/\|/g, ", ")
+    .replace(/(\*\*|\*|~~)(?=\S)([^\n]*?\S)\1/g, "$2").replace(/(^|[^\w])(__|_)(?=\S)([^\n]*?\S)\2(?![\w])/g, "$1$3").replace(/\*{1,3}|~~/g, "")
+    .replace(/[ \t]+/g, " ").replace(/\n{2,}/g, ". ").replace(/\n/g, " ").replace(/\.\s*\./g, ".").replace(/\s+/g, " ").trim();
+}
+function voicePick(lang) {
+  let v = []; try { v = speechSynthesis.getVoices() || []; } catch {}
+  const l = lang.toLowerCase(), base = l.split("-")[0];
+  return v.find(x => x.lang.toLowerCase().replace("_", "-") === l) || v.find(x => x.lang.toLowerCase().startsWith(base)) || null;
+}
+let vSpeak = null;
+const voiceSpeaking = w => !!vSpeak && vSpeak.wrap === w;
+function voiceSpeakPaint() { document.querySelectorAll(".msg-ai-wrap").forEach(w => { const on = voiceSpeaking(w), b = w.querySelector("[data-speak]"); w.classList.toggle("speaking", on); if (b) { b.classList.toggle("on", on); b.innerHTML = icon(on ? "stop" : "speaker"); b.title = on ? "Stop reading" : "Read aloud"; b.setAttribute("aria-label", b.title); } }); }
+function voiceSpeakStop() { if (!vSpeak) return; vSpeak = null; try { speechSynthesis.cancel(); } catch {} voiceSpeakPaint(); }
+function voiceSpeak(text, wrap) {
+  if (!voiceCanSpeak()) return; const plain = voicePlain(text); if (!plain) { toast("Nothing to read aloud in this answer."); return; }
+  voiceStop(true); voiceSpeakStop();
+  const parts = plain.match(/[^.!?؟۔।]+[.!?؟۔।]*\s*/g) || [plain], chunks = []; let cur = "";
+  parts.flatMap(p => p.match(/[\s\S]{1,200}(?:\s+|$)|[\s\S]{1,200}/g) || [p]).forEach(p => { if ((cur + p).length > 200 && cur) { chunks.push(cur); cur = ""; } cur += p; }); if (cur) chunks.push(cur);
+  const me = vSpeak = { wrap }, lang = voiceLang(), voice = voicePick(lang);
+  const next = i => {
+    if (vSpeak !== me) return; if (i >= chunks.length) { vSpeak = null; voiceSpeakPaint(); return; }
+    const u = me.u = new SpeechSynthesisUtterance(chunks[i].trim()); u.lang = voice ? voice.lang : lang; if (voice) u.voice = voice;
+    u.onend = () => next(i + 1); u.onerror = () => { if (vSpeak === me) { vSpeak = null; voiceSpeakPaint(); } };
+    try { speechSynthesis.speak(u); } catch { vSpeak = null; voiceSpeakPaint(); }
+  };
+  voiceSpeakPaint(); next(0);
 }
 
 /* ---------- home and chat ---------- */
@@ -462,8 +571,8 @@ function addUser(text) {
   d.querySelector("[data-copytext]").onclick = () => { navigator.clipboard?.writeText(text); toast("Copied"); };
   thread().appendChild(d); scrollEnd();
 }
-function aiBox() { const d = document.createElement("div"); d.className = "msg-ai-wrap"; d.innerHTML = '<div class="msg-ai"></div><div class="msg-actions"><button title="Copy" data-copytext>' + icon("copy") + "</button></div>"; thread().appendChild(d); return d; }
-function setAi(d, text) { d.querySelector(".msg-ai").innerHTML = md(text); d.querySelector("[data-copytext]").onclick = () => { navigator.clipboard?.writeText(text); toast("Copied"); }; scrollEnd(); }
+function aiBox() { const d = document.createElement("div"); d.className = "msg-ai-wrap"; d.innerHTML = '<div class="msg-ai"></div><div class="msg-actions"><button title="Copy" data-copytext>' + icon("copy") + "</button>" + (voiceCanSpeak() ? '<button title="Read aloud" aria-label="Read aloud" data-speak>' + icon("speaker") + "</button>" : "") + "</div>"; const sp = d.querySelector("[data-speak]"); if (sp) sp.onclick = () => voiceSpeaking(d) ? voiceSpeakStop() : voiceSpeak(d._text || "", d); thread().appendChild(d); return d; }
+function setAi(d, text) { d._text = text; d.querySelector(".msg-ai").innerHTML = md(text); d.querySelector("[data-copytext]").onclick = () => { navigator.clipboard?.writeText(text); toast("Copied"); }; scrollEnd(); }
 function addError(t) { const d = document.createElement("div"); d.className = "msg-error"; d.textContent = t; thread().appendChild(d); scrollEnd(); }
 
 /* a group of tool runs: one collapsed line, teal while working */
@@ -496,7 +605,7 @@ async function openChat(id) {
 }
 
 async function send() {
-  const t = $("text"); const text = t.value.trim(); if (!text || busy) return;
+  voiceStop(true); voiceSpeakStop(); const t = $("text"); const text = t.value.trim(); if (!text || busy) return;
   if (!$("thread")) showThread("New chat");
   const first = !chatId;
   t.value = ""; t.style.height = "auto";
@@ -528,6 +637,7 @@ async function send() {
     }
   } catch (e) { addError(e.message); }
   endGroup(group); stream = 0; setBusy(false); $("text")?.focus(); refreshChats();
+  if (ai && acc && ai.isConnected && voiceGet("read") === "1") voiceSpeak(acc, ai);
 }
 function ask(ev) {
   const d = document.createElement("div"); d.className = "ask";
@@ -747,6 +857,11 @@ async function pageGeneral(b) {
   b.appendChild(head("Permissions"));
   const pm = document.createElement("select"); pm.style.width = "140px"; modes().forEach(v => pm.insertAdjacentHTML("beforeend", `<option ${m.mode === v ? "selected" : ""}>${v}</option>`)); pm.onchange = async () => { await op("mode", { set: pm.value }); mode = pm.value; };
   b.appendChild(cardOf(row("Permission mode", (restricted() ? "Manual asks before every step. Auto lets looking around run and asks before changes." : "Manual asks before every change and command. Auto lets looking around run and asks before changes. Bypass never asks. The same rule applies to every app connected to ZO-AI."), pm)));
+  b.appendChild(head("Voice"));
+  const vl = document.createElement("select"); vl.style.width = "200px"; VOICE_LANGS.forEach(([v, t]) => vl.insertAdjacentHTML("beforeend", `<option value="${v}" ${voiceGet("lang") === v ? "selected" : ""}>${t}</option>`)); vl.onchange = () => voiceSet("lang", vl.value);
+  const sw = (k, off) => { const x = document.createElement("input"); x.type = "checkbox"; x.className = "switch"; x.checked = !off && voiceGet(k) === "1"; x.disabled = !!off; x.onchange = () => { voiceSet(k, x.checked ? "1" : ""); if (k === "read" && !x.checked) voiceSpeakStop(); }; return x; };
+  b.appendChild(cardOf(row("Voice language", "The language you speak to the microphone, and the voice that reads answers. Hindi and Urdu can be mixed with English words.", vl), row("Send automatically when I stop talking", voiceCtor() ? "Off: you check the text and press Send." : "Needs Chrome, Edge or Safari.", sw("auto", !voiceCtor())), row("Read answers aloud", voiceCanSpeak() ? "Reads each new answer. Code is never read." : "This browser cannot read aloud.", sw("read", !voiceCanSpeak()))));
+  const vh = document.createElement("div"); vh.className = "field-hint"; vh.textContent = "In Chrome and Edge your voice goes to the browser maker's speech service for recognition, not to ZO-AI's server. ZO-AI only receives the text you send."; b.appendChild(vh);
 }
 async function pageApps(b) {
   const r = await op("mcp_list"); b.innerHTML = "";

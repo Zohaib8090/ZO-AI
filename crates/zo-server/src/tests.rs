@@ -466,6 +466,7 @@ fn the_web_page_the_policy_pages_and_the_headers() {
     assert!(page.header("Content-Security-Policy").is_some_and(|c| c.contains("https://www.gstatic.com") && c.contains("frame-ancestors 'none'")));
     assert_eq!(page.header("X-Content-Type-Options"), Some("nosniff"));
     assert_eq!(page.header("Referrer-Policy"), Some("no-referrer"));
+    assert_eq!(page.header("Permissions-Policy"), Some("microphone=(self), camera=()"));
     assert!(page.into_string().unwrap().contains("<title>"));
     for (p, word) in [("/privacy", "Privacy"), ("/terms", "Terms")] {
         let res = get(p);
