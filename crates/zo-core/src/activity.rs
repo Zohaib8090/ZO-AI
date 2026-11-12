@@ -458,6 +458,7 @@ mod tests {
         assert!(scope(&b, clients_seen).is_empty());
         drop((ga, gb, gr, gr2));
         crate::tenant::test_multi(false);
-        assert!(scope(&a, list).is_empty());
+        // other tests may register items at the same time: only ours must be gone
+        assert!(scope(&a, list).iter().all(|i| !matches!(i.title.as_str(), "a-answer" | "b-command" | "r-answer" | "r-command")));
     }
 }

@@ -1563,7 +1563,7 @@ fn a_message_goes_to_the_computer_its_events_come_back_in_order_and_the_stream_e
     let r = rig(&[("tok", &u, "l@x.test")], "", 200, 600);
     let (cred, _) = make_device(&r, "tok", "Desk", "desktop");
     assert!(dpoll(&r, &cred, "Desk", caps(false)).is_empty(), "nothing to do yet");
-    let t = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "open the calendar", "chat": "c-1", "attachments": [{"name": "a.txt"}], "mode": "bypass", "evil": "x", "tenant": {"id": "x"}}));
+    let t = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "open the calendar", "chat": "c-1", "attachments": [{"kind": "text", "name": "a.txt", "text": "hi"}], "mode": "bypass", "evil": "x", "tenant": {"id": "x"}}));
     let job = dpoll_for(&r, &cred, "Desk", caps(false), "send");
     // the job carries the whitelisted fields only, with its age (the desktop refuses anything older than two minutes)
     assert_eq!(job["text"], "open the calendar");
