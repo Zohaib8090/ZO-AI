@@ -854,3 +854,17 @@ textview.code-view { padding: 10px; }
 .term, .term text { background-color: #191919; color: #ECECEC; font-family: monospace; font-size: 13px; }
 .browser-bar { padding: 6px 8px; background-color: #242424; }
 .dock-paned > separator { min-width: 1px; background-color: alpha(white, 0.07); }
+
+/* ---------- model chooser ---------- */
+.model-scroll {
+  border: 1px solid #2B2B2B;
+  border-radius: 10px;
+  background-color: #171717;
+}
+.model-list { background-color: transparent; }
+.model-list row.model-row { padding: 2px 8px; border-radius: 8px; background-color: transparent; }
+.model-list row.model-row:hover { background-color: #2E2E2E; }
+.model-list row > header, .model-list row.model-row > box { min-height: 34px; }
+.star-btn { opacity: 0.55; }
+.star-btn:hover { opacity: 1; }
+.link-btn { color: #7C9EE0; font-size: 12px; padding: 2px 0; }

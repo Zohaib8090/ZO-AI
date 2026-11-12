@@ -210,31 +210,8 @@ pub fn show(ui: &Rc<Ui>) {
                 });
             }
             controls.append(&del);
-            card.append(&row(&p.name, &chat::describe(&p), Some(&controls)));
-            // the models pinned to the model menu, each removable
-            if !p.pinned.is_empty() {
-                let chips = gtk::FlowBox::new();
-                chips.set_selection_mode(gtk::SelectionMode::None);
-                chips.set_margin_start(18);
-                chips.set_margin_end(18);
-                chips.set_margin_bottom(10);
-                chips.set_max_children_per_line(4);
-                for model in &p.pinned {
-                    let chip = hbox(4);
-                    chip.add_css_class("pill");
-                    chip.append(&lbl(&chat::nice_name(model), ""));
-                    let x = crate::icon_button("window-close-symbolic", "Remove from the model menu", "icon-btn");
-                    let (ui2, id, m) = (ui.clone(), p.id.clone(), model.clone());
-                    x.connect_clicked(move |_| {
-                        profiles::unpin(&id, &m);
-                        show(&ui2);
-                    });
-                    chip.append(&x);
-                    chips.insert(&chip, -1);
-                }
-                card.append(&lbl("Pinned to the model menu", "field-hint"));
-                card.append(&chips);
-            }
+            let pins = if p.pinned.is_empty() { String::new() } else { format!(" · {} pinned", p.pinned.len()) };
+            card.append(&row(&p.name, &format!("{}{pins}", chat::describe(&p)), Some(&controls)));
         }
         let new = secondary("New profile");
         {
@@ -252,6 +229,88 @@ pub fn show(ui: &Rc<Ui>) {
             });
         }
         card.append(&row("Save the current settings as a profile", "Keeps the provider, model, address, effort and the API key that is in use now.", Some(&new)));
+        let endpoint = secondary("Add endpoint");
+        {
+            let ui2 = ui.clone();
+            endpoint.connect_clicked(move |_| {
+                let ui3 = ui2.clone();
+                crate::modelpick::add_endpoint_sheet(&ui2, move || show(&ui3));
+            });
+        }
+        card.append(&row("Add a custom endpoint", "Your own server or a gateway that speaks the OpenAI API: a name, its address, a key and a model. It is saved as a profile.", Some(&endpoint)));
+    }
+    content.append(&sec);
+
+    // ---- every pinned model, with a way to take it back out ----
+    let (sec, card) = section("Pinned models");
+    {
+        let mut any = false;
+        for p in profiles::load() {
+            let provider_name = providers::find(&p.provider).map(|x| x.name).unwrap_or("?");
+            for model in &p.pinned {
+                any = true;
+                let un = secondary("Unpin");
+                let (ui2, id, m) = (ui.clone(), p.id.clone(), model.clone());
+                un.connect_clicked(move |_| {
+                    profiles::unpin(&id, &m);
+                    show(&ui2);
+                });
+                card.append(&row(&chat::nice_name(model), &format!("{} · {provider_name}", p.name), Some(&un)));
+            }
+        }
+        if !any {
+            card.append(&row("Nothing pinned yet", "Open the model list (Change above, or More models in the model menu) and press the star beside a model. Pinned models show first in the model menu, one click away.", no_control()));
+        }
+    }
+    content.append(&sec);
+
+    // ---- which providers show in the pickers ----
+    let (sec, card) = section("Providers in the model picker");
+    card.append(&row("", "Switch off the providers you never use so the pickers stay short. The one in use always shows. This choice follows you to your other devices when sync is on.", no_control()));
+    {
+        let hidden = zo_core::store::uiprefs::hidden_providers();
+        let mut status_labels: Vec<(String, gtk::Label)> = Vec::new();
+        for p in providers::all() {
+            let sw = gtk::Switch::new();
+            sw.set_active(!hidden.iter().any(|h| h == p.id));
+            sw.set_tooltip_text(Some("Show in the model picker"));
+            let id = p.id.to_string();
+            sw.connect_active_notify(move |s| zo_core::store::uiprefs::set_provider_hidden(&id, !s.is_active()));
+            let r = row(p.name, "Checking the key…", Some(&sw));
+            if let Some(l) = r.first_child().and_then(|c| c.last_child()).and_then(|l| l.downcast::<gtk::Label>().ok()) {
+                status_labels.push((p.id.to_string(), l));
+            }
+            card.append(&r);
+        }
+        // key status is asked of the keyring in a worker thread, so the page opens at once
+        gtk::glib::spawn_future_local(async move {
+            let found = gtk::gio::spawn_blocking(|| {
+                let profs = profiles::load();
+                providers::all()
+                    .iter()
+                    .map(|p| {
+                        let pins: usize = profs.iter().filter(|x| x.provider == p.id).map(|x| x.pinned.len()).sum();
+                        let state = if p.protocol == providers::Protocol::ClaudeCode {
+                            "Uses your Claude Code sign-in".to_string()
+                        } else if p.local {
+                            "Runs on this computer, no key".to_string()
+                        } else if zo_core::ai::keys::get(p.id).is_some() || profs.iter().any(|x| x.provider == p.id && zo_core::ai::keys::get(&format!("{}@{}", p.id, x.id)).is_some()) {
+                            "Key saved".to_string()
+                        } else {
+                            "No key yet".to_string()
+                        };
+                        (p.id.to_string(), if pins > 0 { format!("{state} · {pins} pinned") } else { state })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .unwrap_or_default();
+            for (id, text) in found {
+                if let Some((_, l)) = status_labels.iter().find(|(i, _)| *i == id) {
+                    l.set_text(&text);
+                }
+            }
+        });
     }
     content.append(&sec);
     }

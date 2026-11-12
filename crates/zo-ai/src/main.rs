@@ -11,6 +11,7 @@ use zo_core::store::schedules;
 mod composer;
 mod dock;
 mod markdown;
+mod modelpick;
 use zo_core::store::projects as model;
 mod quick;
 mod scheduler;
@@ -2604,6 +2605,7 @@ fn build_ui(app: &adw::Application) {
         }
         Ok("settings") => settings::show(&ui),
         Ok("settings-sync") => settings::open_page(&ui, "sync"),
+        Ok("settings-model") => settings::open_page(&ui, "model"),
         Ok("add-server") => {
             settings::show(&ui);
             settings::open_add_server(&ui);

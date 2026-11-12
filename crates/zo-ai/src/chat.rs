@@ -17,7 +17,7 @@ use zo_core::ai::agent::{self, Config, Event};
 use zo_core::ai::claude_code;
 use zo_core::ai::wire::Turn;
 use zo_core::ai::providers::Protocol;
-use zo_core::ai::{keys, profiles, providers, Selection};
+use zo_core::ai::{profiles, providers, Selection};
 
 pub struct Ctl {
     chat: gtk::Box,
@@ -884,199 +884,9 @@ pub fn pill_text(sel: &Selection) -> String {
     }
 }
 
+/// The model chooser (see `modelpick`).
 pub fn models_sheet(ui: &Rc<Ui>) {
-    let (win, body, foot) = sheet(ui, "Model and API key", 520);
-    let sel = Selection::load();
-    let all = providers::all();
-
-    let names: Vec<&str> = all.iter().map(|p| p.name).collect();
-    let provider_dd = gtk::DropDown::from_strings(&names);
-    provider_dd.set_selected(all.iter().position(|p| p.id == sel.provider).unwrap_or(0) as u32);
-    body.append(&crate::field("Provider", &provider_dd));
-
-    let key = gtk::PasswordEntry::new();
-    key.set_show_peek_icon(true);
-    key.add_css_class("field-input");
-    let key_field = crate::field("API key", &key);
-    body.append(&key_field);
-
-    let url = gtk::Entry::new();
-    url.add_css_class("field-input");
-    let url_field = crate::field("Address", &url);
-    body.append(&url_field);
-
-    let model = gtk::Entry::new();
-    model.add_css_class("field-input");
-    model.set_placeholder_text(Some("Model name"));
-    let load = secondary("Load the list");
-    let pick = gtk::DropDown::from_strings(&[]);
-    pick.set_visible(false);
-    let model_row = hbox(8);
-    model.set_hexpand(true);
-    model_row.append(&model);
-    model_row.append(&load);
-    let model_col = vbox(7);
-    model_col.append(&model_row);
-    model_col.append(&pick);
-    body.append(&crate::field("Model", &model_col));
-    // Can the model look at pictures (screenshots, images in a message)? Normally decided from the model's name.
-    let vision_dd = gtk::DropDown::from_strings(&["Decide from the model's name (recommended)", "This model can see pictures", "This model cannot see pictures"]);
-    vision_dd.set_selected(match sel.vision {
-        None => 0,
-        Some(true) => 1,
-        Some(false) => 2,
-    });
-    body.append(&crate::field("Pictures", &vision_dd));
-    // Pin: the model then shows in the model menu, under its profile.
-    let pin_check = gtk::CheckButton::with_label("Show this model in the model menu");
-    pin_check.set_active(sel.profile.as_deref().and_then(|id| profiles::load().into_iter().find(|p| p.id == id)).is_some_and(|p| p.pinned.contains(&sel.model)));
-    body.append(&pin_check);
-
-    let status = lbl("", "field-label");
-    status.set_wrap(true);
-    status.set_xalign(0.0);
-    body.append(&status);
-
-    let current = move |dd: &gtk::DropDown| &providers::all()[dd.selected() as usize];
-
-    // fill the fields for the provider that is selected
-    let refresh = {
-        let (key, key_field, url_field, url, model, status, sel) = (key.clone(), key_field.clone(), url_field.clone(), url.clone(), model.clone(), status.clone(), Rc::new(RefCell::new(sel.clone())));
-        move |dd: &gtk::DropDown| {
-            let p = current(dd);
-            let s = sel.borrow();
-            url.set_text(&s.base_url_for(p));
-            key_field.set_visible(!p.local);
-            url_field.set_visible(p.protocol != Protocol::ClaudeCode);
-            key.set_text("");
-            key.set_placeholder_text(Some(if profiles::get_key(&Selection::load(), p.id).is_some() { "Saved in the keyring — type to replace" } else { "Paste the key" }));
-            model.set_text(if s.provider == p.id { &s.model } else { p.models.first().copied().unwrap_or("") });
-            status.set_text(if p.protocol == Protocol::ClaudeCode {
-                if claude_code::binary().is_some() { "Uses the Claude Code program you installed and signed in to yourself (claude auth login). ZO-AI never sees your login. Experimental. The full model list is read with an Anthropic API key (add one under the Anthropic provider or in a profile, then press Load the list); without one you get Claude Code's own names for the newest models." } else { "Claude Code is not installed. Install it with: npm install -g @anthropic-ai/claude-code, then sign in with: claude auth login" }
-            } else if p.local { "Runs on this computer. No key, and nothing leaves it." } else if keys::available() { "The key is stored in the system keyring." } else { "The keyring tool (secret-tool) is missing, so keys cannot be saved." });
-        }
-    };
-    refresh(&provider_dd);
-    provider_dd.connect_selected_notify(move |dd| refresh(dd));
-
-    // show which local servers are already running
-    {
-        let status = status.clone();
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(agent::detect_local().iter().map(|p| p.name.to_string()).collect::<Vec<_>>());
-        });
-        glib::timeout_add_local(Duration::from_millis(100), move || match rx.try_recv() {
-            Ok(found) => {
-                if !found.is_empty() {
-                    let t = status.text();
-                    status.set_text(&format!("{t}\nFound running here: {}", found.join(", ")));
-                }
-                glib::ControlFlow::Break
-            }
-            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-            Err(_) => glib::ControlFlow::Break,
-        });
-    }
-
-    // load the provider's own model list
-    {
-        let (provider_dd, url, key, status, pick, model2) = (provider_dd.clone(), url.clone(), key.clone(), status.clone(), pick.clone(), model.clone());
-        load.connect_clicked(move |b| {
-            let p = current(&provider_dd);
-            let typed = key.text().to_string();
-            let k = if typed.is_empty() { profiles::get_key(&Selection::load(), p.id) } else { Some(typed) };
-            let base = url.text().to_string();
-            status.set_text("Loading…");
-            b.set_sensitive(false);
-            let (tx, rx) = mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = tx.send(agent::list_models(p, &base, k.as_deref()));
-            });
-            let (status, pick, model, b) = (status.clone(), pick.clone(), model2.clone(), b.clone());
-            glib::timeout_add_local(Duration::from_millis(100), move || match rx.try_recv() {
-                Ok(r) => {
-                    b.set_sensitive(true);
-                    match r {
-                        Ok(list) if !list.is_empty() => {
-                            let strs: Vec<&str> = list.iter().map(String::as_str).collect();
-                            pick.set_model(Some(&gtk::StringList::new(&strs)));
-                            pick.set_visible(true);
-                            if !list.iter().any(|m| *m == model.text()) {
-                                model.set_text(&list[0]);
-                            }
-                            status.set_text(&format!("{} models. Pick one below.", list.len()));
-                            let (model, list) = (model.clone(), list.clone());
-                            pick.connect_selected_notify(move |d| {
-                                if let Some(m) = list.get(d.selected() as usize) {
-                                    model.set_text(m);
-                                }
-                            });
-                        }
-                        Ok(_) => status.set_text("The provider returned no models."),
-                        Err(e) => status.set_text(&e),
-                    }
-                    glib::ControlFlow::Break
-                }
-                Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                Err(_) => glib::ControlFlow::Break,
-            });
-        });
-    }
-
-    let cancel = secondary("Cancel");
-    let save = primary("Save");
-    foot.append(&cancel);
-    foot.append(&save);
-    {
-        let w = win.clone();
-        cancel.connect_clicked(move |_| w.close());
-    }
-    {
-        let (w, ui2, provider_dd, key, url, model, status) = (win.clone(), ui.clone(), provider_dd.clone(), key.clone(), url.clone(), model.clone(), status.clone());
-        let vision_dd = vision_dd.clone();
-        let pin_check = pin_check.clone();
-        save.connect_clicked(move |_| {
-            let mut sel = Selection::load();
-            sel.vision = match vision_dd.selected() {
-                1 => Some(true),
-                2 => Some(false),
-                _ => None,
-            };
-            let p = current(&provider_dd);
-            let typed = key.text().to_string();
-            if !typed.trim().is_empty() {
-                // with a profile chosen the key belongs to that profile
-                if let Err(e) = keys::set(&profiles::key_id(&sel, p.id), &typed) {
-                    status.set_text(&e);
-                    return;
-                }
-            }
-            sel.provider = p.id.to_string();
-            sel.model = model.text().trim().to_string();
-            let u = url.text().trim().to_string();
-            if u == p.base_url || u.is_empty() {
-                sel.base_urls.remove(p.id);
-            } else {
-                sel.base_urls.insert(p.id.to_string(), u);
-            }
-            sel.save();
-            profiles::update_active(&sel);
-            // pin or unpin the model (a pin belongs to a profile; one is made from the provider's name when none is in use)
-            if pin_check.is_active() && !sel.model.is_empty() {
-                if let Ok(id) = profiles::ensure_active(&mut sel, p.name) {
-                    sel.save();
-                    profiles::pin(&id, &sel.model);
-                }
-            } else if let Some(id) = sel.profile.clone() {
-                profiles::unpin(&id, &sel.model);
-            }
-            ui2.model_label.set_text(&pill_text(&sel));
-            ui2.pv_model_label.set_text(&pill_text(&sel));
-            w.close();
-        });
-    }
-    win.present();
+    crate::modelpick::models_sheet(ui);
 }
 
 
@@ -1205,7 +1015,9 @@ pub fn show_model_popover(ui: &Rc<Ui>, btn: &gtk::Button) {
     let body = vbox(0);
     // Models that were pinned (in the model settings) show here, grouped by their profile: one click switches profile and model.
     let all_profiles = profiles::load();
-    let pinned_profiles: Vec<&profiles::Profile> = all_profiles.iter().filter(|p| !p.pinned.is_empty()).collect();
+    // (providers switched off in Settings stay out of the menu)
+    let hidden = zo_core::store::uiprefs::hidden_providers();
+    let pinned_profiles: Vec<&profiles::Profile> = all_profiles.iter().filter(|p| !p.pinned.is_empty() && !hidden.contains(&p.provider)).collect();
     let have_pins = !pinned_profiles.is_empty();
     for prof in &pinned_profiles {
         let provider_name = providers::find(&prof.provider).map(|x| x.name).unwrap_or("?");
@@ -1313,18 +1125,23 @@ pub fn show_model_popover(ui: &Rc<Ui>, btn: &gtk::Button) {
         }
         None => body.append(&lbl("Choose a provider to begin", "pop-head")),
     }
-    // The way to the provider settings only shows while there is nothing to choose from (no provider yet, or no models listed);
-    // after that, Settings has it.
-    let nothing_to_pick = providers::find(&sel.provider).is_none_or(|p| !have_pins && model_choices(p, &sel).is_empty());
-    if nothing_to_pick {
-        let more = choice_row("Provider, key and address…", None, false);
+    // Nothing pinned yet: say how to pin. The full chooser (every model of a provider, with its key and address) is one row away.
+    if !have_pins {
+        let hint = choice_row("Pin models in Settings", Some("Star the models you use and they show here, one click away"), false);
         let (ui2, pop2) = (ui.clone(), pop.clone());
-        more.connect_clicked(move |_| {
+        hint.connect_clicked(move |_| {
             pop2.popdown();
-            models_sheet(&ui2);
+            crate::settings::open_page(&ui2, "model");
         });
-        body.append(&more);
+        body.append(&hint);
     }
+    let more = choice_row("More models…", Some("All models, key and address"), false);
+    let (ui2, pop2) = (ui.clone(), pop.clone());
+    more.connect_clicked(move |_| {
+        pop2.popdown();
+        models_sheet(&ui2);
+    });
+    body.append(&more);
     // the list scrolls instead of growing out of the window
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_child(Some(&body));

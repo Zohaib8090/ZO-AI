@@ -8,6 +8,7 @@ pub mod memory;
 pub mod personality;
 pub mod projects;
 pub mod schedules;
+pub mod uiprefs;
 
 /// Tests that point XDG_DATA_HOME at a throw-away folder must not run at the same time.
 #[cfg(test)]
