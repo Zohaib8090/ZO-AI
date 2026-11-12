@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ZO-AI</title>
+<style>
+  html,body{margin:0;height:100%;background:#191919;color:#e8e8e8;font-family:system-ui,-apple-system,Roboto,sans-serif}
+  main{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;box-sizing:border-box}
+  svg{width:72px;height:72px}
+  h1{font-size:20px;font-weight:600;margin:4px 0 0}
+  p{margin:0;color:#a8a8a8;max-width:320px;line-height:1.45}
+  button{margin-top:10px;background:#5fd4d4;color:#0b0e14;border:0;border-radius:999px;padding:12px 28px;font-size:16px;font-weight:600}
+</style></head><body><main>
+<svg viewBox="0 0 120 120" aria-hidden="true"><defs><mask id="g"><rect width="120" height="120" fill="#fff"/><circle cx="94" cy="26" r="16" fill="#000"/></mask></defs>
+<circle cx="60" cy="60" r="48" fill="none" stroke="#5FD4D4" stroke-width="8" mask="url(#g)"/>
+<path d="M60 30Q60 60 90 60Q60 60 60 90Q60 60 30 60Q60 60 60 30Z" fill="#7EE0E0"/>
+<path d="M94 14Q94 26 106 26Q94 26 94 38Q94 26 82 26Q94 26 94 14Z" fill="#F2B84B"/></svg>
+<h1>You are offline</h1>
+<p>ZO-AI needs an internet connection to reach your assistant. Check your connection and try again.</p>
+<button id="r">Try again</button>
+</main>
+<script>
+  document.getElementById('r').onclick = function () { location.href = (window.Capacitor && Capacitor.getServerUrl) ? Capacitor.getServerUrl() : '/'; };
+  window.addEventListener('online', function () { document.getElementById('r').click(); });
+</script></body></html>

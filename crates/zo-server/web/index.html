@@ -308,7 +308,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithCredential, onAuthStateChanged, signOut as fbSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 const fb = initializeApp({ apiKey: "AIzaSyBU_nnDL5JKXwWHNTRMKYK2RCvNGXv4PaQ", authDomain: "zo-ai-144.firebaseapp.com", projectId: "zo-ai-144", appId: "1:400907264776:web:d619df222014561add02bd" });
 const auth = getAuth(fb);
@@ -964,7 +964,7 @@ $("lform").onsubmit = async ev => {
 };
 $("signin").onclick = async () => {
   $("err").textContent = ""; lnote("");
-  try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { if (!SILENT.includes(e.code)) $("err").textContent = fbMsg(e); }
+  try { if (await nativeGoogle()) return; await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { if (!SILENT.includes(e.code)) $("err").textContent = fbMsg(e); }
 };
 /* an e-mail account must have a verified address (the server checks it too) */
 const needsVerify = u => !!u && !u.emailVerified && (u.providerData || []).some(p => p.providerId === "password");
@@ -1064,11 +1064,162 @@ async function start(u, agreed) {
   document.querySelectorAll('[data-nav="projects"],[data-nav="artifacts"],[data-nav="scheduled"]').forEach(n => n.classList.toggle("hide", restricted()));
   try { await op("status"); } catch (e) { if (!NOAUTH && e.status === 401) { $("app").classList.add("hide"); $("login").classList.remove("hide"); $("err").textContent = e.message; signOut(auth); return; } }
   showHome(); refreshChats(); actFetch();
+  nativeAfterStart(u);
   /* chats made on the computer appear here: refresh when the tab comes back, and once a minute */
   if (started) return; started = true;
   const tick = () => { if (!document.hidden) refreshChats(); };
   document.addEventListener("visibilitychange", tick); addEventListener("focus", tick); setInterval(tick, 60000);
 }
+/* ---- native bridge (Capacitor) ---- */
+/* Everything here is inert in a normal browser: NATIVE is false and every function returns at once.
+   Inside the Android store app (apps/android-web, a Capacitor shell that loads this page) it swaps in native Google
+   sign-in, native speech recognition, push (FCM), the back button, share-in and external links. See docs/ANDROID.md. */
+const NATIVE = !!(window.Capacitor && typeof Capacitor.isNativePlatform === "function" && Capacitor.isNativePlatform());
+const nplug = n => { try { return (window.Capacitor && Capacitor.Plugins && Capacitor.Plugins[n]) || null; } catch { return null; } };
+const lsGet = k => { try { return localStorage.getItem(k) || ""; } catch { return ""; } };
+const lsSet = (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} };
+let nativeReady = false, nativeUser = null;
+if (NATIVE) {
+  document.documentElement.classList.add("native-app");
+  const st = document.createElement("style");
+  /* the browser-only "Install app" hint makes no sense inside the app */
+  st.textContent = ".native-app [data-install],.native-app #install,.native-app #installHint,.native-app .install-hint,.native-app .install-app{display:none!important}.native-app #mic.listening{color:var(--accent,#5fd4d4)}";
+  document.head.appendChild(st);
+}
+const nativeInfo = async () => { const z = nplug("ZoShare"); try { return z && z.info ? await z.info() : null; } catch { return null; } };
+/* Google sign-in: the native account picker returns a Google ID token, which Firebase JS turns into the same session as the pop-up. */
+async function nativeGoogle() {
+  if (!NATIVE) return false;
+  const FA = nplug("FirebaseAuthentication"), err = t => { $("err").textContent = t; };
+  if (!FA) { err("Google sign-in is not available in this app build. Use your e-mail and password."); return true; }
+  const info = await nativeInfo();
+  if (info && info.firebase === false) { err("Google sign-in is not set up in this build of the app yet. Use your e-mail and password."); return true; }
+  try {
+    const r = await FA.signInWithGoogle({ skipNativeAuth: true });
+    const c = (r && r.credential) || {};
+    if (!c.idToken) throw new Error("no token");
+    await signInWithCredential(auth, GoogleAuthProvider.credential(c.idToken, c.accessToken || undefined));
+  } catch (e) {
+    const m = String((e && (e.message || e.code)) || "");
+    if (!/cancel|12501|dismiss/i.test(m)) err(e && e.code && FBERR[e.code] ? FBERR[e.code] : "Google sign-in did not work. Try again, or use your e-mail and password.");
+  }
+  return true;
+}
+/* Voice: the page's mic button (#mic) uses the phone's recognizer instead of the browser one. Also offered as window.zoaiNativeMic for the voice code. */
+const nativeMic = (() => {
+  let on = false, base = "", ta = null, btn = null, subs = [];
+  const done = () => { on = false; if (btn) { btn.classList.remove("listening"); btn.setAttribute("aria-pressed", "false"); } subs.forEach(s => { try { s.remove(); } catch {} }); subs = []; };
+  async function toggle(button, textarea) {
+    const SR = nplug("SpeechRecognition"); if (!NATIVE || !SR) return false;
+    btn = button || $("mic"); ta = textarea || $("text");
+    if (on) { try { await SR.stop(); } catch {} done(); return true; }
+    try {
+      const av = await SR.available(); if (av && av.available === false) { toast("Speech recognition is not available on this phone."); return true; }
+      let p = await SR.checkPermissions();
+      if (p.speechRecognition !== "granted") {
+        if (p.speechRecognition === "denied") { toast("The microphone is blocked. Allow it for ZO-AI in the Android app settings."); return true; }
+        if (!confirm("ZO-AI uses the microphone only while you dictate a message, to turn your voice into text. Allow it?")) return true;
+        p = await SR.requestPermissions();
+        if (p.speechRecognition !== "granted") { toast("Without the microphone permission voice input cannot work."); return true; }
+      }
+      base = ta ? ta.value : "";
+      subs.push(await SR.addListener("partialResults", d => {
+        const t = d && d.matches && d.matches[0]; if (t == null || !ta) return;
+        ta.value = base + (base && !/\s$/.test(base) ? " " : "") + t; ta.dispatchEvent(new Event("input", { bubbles: true }));
+      }));
+      subs.push(await SR.addListener("listeningState", d => { if (d && d.status === "stopped") done(); }));
+      on = true; if (btn) { btn.classList.add("listening"); btn.setAttribute("aria-pressed", "true"); }
+      await SR.start({ language: (document.documentElement.lang || navigator.language || "en-US"), partialResults: true, popup: false });
+    } catch (e) { done(); toast("Voice input did not start. Try again."); }
+    return true;
+  }
+  return { toggle, get listening() { return on; } };
+})();
+if (NATIVE) {
+  window.zoaiNativeMic = nativeMic;
+  /* capture phase on the document: runs before the page's own (browser speech) handler on #mic, which is then skipped */
+  document.addEventListener("click", e => {
+    const b = e.target && e.target.closest && e.target.closest("#mic"); if (!b || !nplug("SpeechRecognition")) return;
+    e.preventDefault(); e.stopImmediatePropagation(); nativeMic.toggle(b, $("text"));
+  }, true);
+  /* links to other sites open in the system browser tab, not inside the app */
+  document.addEventListener("click", e => {
+    const a = e.target && e.target.closest && e.target.closest("a[href]"), B = nplug("Browser"); if (!a || !B) return;
+    let u; try { u = new URL(a.href, location.href); } catch { return; }
+    if (!/^https?:$/.test(u.protocol) || u.origin === location.origin) return;
+    e.preventDefault(); B.open({ url: u.href });
+  }, true);
+  /* Android back: back in the page history, and when there is none, minimize the app (never a surprise exit) */
+  const App = nplug("App");
+  if (App) App.addListener("backButton", ev => { const open = document.querySelector(".sheet-scrim,.popover,.modal"); if (open) { open.remove(); return; } if (ev && ev.canGoBack) history.back(); else App.minimizeApp(); });
+  /* status and navigation bar follow the page theme */
+  const bars = () => { const S = nplug("StatusBar"); if (!S) return; const light = document.documentElement.dataset.theme === "light";
+    const m = /(\d+)\D+(\d+)\D+(\d+)/.exec(getComputedStyle(document.body).backgroundColor || ""), hex = m ? "#" + [1, 2, 3].map(i => (+m[i]).toString(16).padStart(2, "0")).join("") : (light ? "#ffffff" : "#191919");
+    try { S.setStyle({ style: light ? "LIGHT" : "DARK" }); S.setBackgroundColor({ color: hex }); } catch {} };
+  bars(); new MutationObserver(bars).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  /* things shared into the app from other apps */
+  const Z = nplug("ZoShare");
+  if (Z) Z.addListener("shareReceived", d => { shareQ = d; deliverShare(); });
+}
+let shareQ = null;
+function b64File(f) { const bin = atob(f.data_b64), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new File([a], f.name || "shared-file", { type: f.mime || "application/octet-stream" }); }
+function deliverShare() {
+  if (!shareQ || !nativeReady) return;
+  const d = shareQ; shareQ = null;
+  const files = (d.files || []).map(b64File), text = [d.subject, d.text].filter(Boolean).join("\n");
+  if (d.skipped && d.skipped.length) toast("Some shared files were too big or too many and were skipped.");
+  if (typeof showHome === "function") showHome();
+  setTimeout(() => {
+    if (typeof window.zoaiShare === "function") { window.zoaiShare({ text, files }); return; }   /* contract with the attachment code */
+    const t = $("text"); if (t && text) { t.value = text; t.dispatchEvent(new Event("input", { bubbles: true })); }
+    if (typeof addAttachmentFromFile === "function") files.forEach(f => addAttachmentFromFile(f));
+    else if (files.length) toast("Attachments are not available in this version of the page.");
+  }, 60);
+}
+/* push (FCM): ask once after sign-in, register the token with the server, forget it again on sign-out */
+const PUSH_ID = "zo_fcm_id";
+let pushWired = false;
+async function nativePush(u) {
+  const PN = nplug("PushNotifications"); if (!NATIVE || !PN) return;
+  try {
+    const info = await nativeInfo(); if (info && info.firebase === false) return;          /* no google-services.json in this build */
+    const cfg = await acctOp("push_config").catch(() => null); if (!cfg || !cfg.fcm) return; /* the server cannot send yet */
+    if (!pushWired) {
+      pushWired = true;
+      PN.addListener("registration", async t => { try { const r = await acctOp("push_subscribe", { kind: "fcm", token: t.value, label: "Android app" }); lsSet(PUSH_ID, r && r.id ? String(r.id) : ""); } catch {} });
+      PN.addListener("registrationError", () => {});
+      PN.addListener("pushNotificationActionPerformed", a => {
+        const d = (a && a.notification && a.notification.data) || {};
+        if (d.chat && typeof openChat === "function") openChat(d.chat);
+        else if (typeof d.url === "string" && d.url.startsWith("/") && !d.url.startsWith("//")) location.href = d.url;
+        else if (typeof showChats === "function") showChats();
+      });
+    }
+    let p = await PN.checkPermissions();
+    if (p.receive === "prompt" || p.receive === "prompt-with-rationale") { if (lsGet("zo_push_asked")) return; lsSet("zo_push_asked", "1"); p = await PN.requestPermissions(); }
+    if (p.receive !== "granted") return;
+    try { await PN.createChannel({ id: "answers", name: "Answers", description: "ZO-AI has finished an answer", importance: 4 }); } catch {}
+    await PN.register();
+  } catch {}
+}
+async function nativePushOff() {
+  const PN = nplug("PushNotifications"); if (!NATIVE || !PN) return;
+  const id = lsGet(PUSH_ID);
+  try { if (id) await acctOp("push_unsubscribe", { id }); } catch {}
+  lsSet(PUSH_ID, ""); try { await PN.unregister(); } catch {}
+}
+/* called at the end of start(): the page is up and the person is signed in */
+function nativeAfterStart(u) {
+  if (!NATIVE) return;
+  nativeUser = u; nativeReady = true;
+  const Z = nplug("ZoShare");
+  if (Z && Z.consume) Z.consume().then(d => { if (d && (d.text || (d.files && d.files.length))) { shareQ = d; deliverShare(); } }).catch(() => {});
+  deliverShare(); nativePush(u);
+  const S = nplug("SplashScreen"); if (S) S.hide().catch(() => {});
+}
+/* sign-out also forgets this phone's push token first (needs the session, so it must come before signing out) */
+const signOut = async a => { if (NATIVE) { nativeReady = false; await nativePushOff(); } return fbSignOut(a); };
+/* ---- end native bridge ---- */
 paint();
 if (NOAUTH) start(null);
 else {
