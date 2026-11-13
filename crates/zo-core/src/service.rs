@@ -637,26 +637,36 @@ impl Approver for RemoteApprover {
     }
 }
 
-/// Asks the connected client for answers to questions (zohara_ask_user).
+/// Asks the connected client for answers to questions (zohara_ask_user). The answer comes back as `{"op":"answer",...}` on the same
+/// connection (`question::Pending::reply` checks it); Stop, the client leaving and the time limit all end the wait as "did not answer".
 struct RemoteQuestioner {
     out: Arc<Mutex<UnixStream>>,
-    pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Option<Vec<crate::approval::QuestionAnswer>>>>>>,
-    next: Arc<AtomicU64>,  // shared counter with approvals to avoid id collisions
+    pending: Arc<crate::question::Pending>,
+    next: Arc<AtomicU64>, // shared with approvals so that an id means one thing on this connection
     gone: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+    limit: Duration,
+    /// The Activity item of this answer, which says "Waiting for your answer" meanwhile; `restore` is what it said before.
+    activity: u64,
+    restore: String,
 }
 
 impl crate::approval::Questioner for RemoteQuestioner {
-    fn ask_questions(&self, questions: &[crate::approval::Question]) -> Option<Vec<crate::approval::QuestionAnswer>> {
-        if self.gone.load(Ordering::SeqCst) { return None; }
-        let id = self.next.fetch_add(1, Ordering::SeqCst);
-        let (tx, rx) = mpsc::channel();
-        self.pending.lock().unwrap().insert(id, tx);
-        if !line(&self.out, &json!({"event": "question", "id": id, "questions": questions})) {
-            return None;
+    fn ask_questions(&self, questions: &[crate::approval::Question]) -> crate::approval::QuestionResult {
+        use crate::approval::QuestionResult::Unanswered;
+        if self.gone.load(Ordering::SeqCst) || self.cancel.load(Ordering::SeqCst) {
+            return Unanswered;
         }
-        // 10-minute timeout per INTERACTION.md; 3 minutes when no notification channel exists (handled client-side)
-        let result = rx.recv_timeout(Duration::from_secs(600)).unwrap_or(None);
-        self.pending.lock().unwrap().remove(&id);
+        let id = self.next.fetch_add(1, Ordering::SeqCst);
+        let rx = self.pending.open(id, questions.to_vec());
+        if !line(&self.out, &json!({"event": "question", "id": id, "questions": questions})) {
+            self.pending.close(id);
+            return Unanswered;
+        }
+        crate::activity::set_detail_of(self.activity, "Waiting for your answer");
+        let result = crate::question::wait(&rx, &self.cancel, self.limit);
+        self.pending.close(id);
+        crate::activity::set_detail_of(self.activity, &self.restore);
         result
     }
 }
@@ -749,7 +759,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
     let cancel = Arc::new(AtomicBool::new(false));
     let gone = Arc::new(AtomicBool::new(false));
     let pending: Arc<Mutex<HashMap<u64, mpsc::Sender<bool>>>> = Arc::new(Mutex::new(HashMap::new()));
-    let q_pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Option<Vec<crate::approval::QuestionAnswer>>>>>> = Arc::new(Mutex::new(HashMap::new()));
+    let q_pending = Arc::new(crate::question::Pending::default());
     let shared_next = Arc::new(AtomicU64::new(1));
     {
         let (cancel, pending, q_pending, gone) = (cancel.clone(), pending.clone(), q_pending.clone(), gone.clone());
@@ -765,7 +775,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
                         gone.store(true, Ordering::SeqCst);
                         // nobody is left to answer
                         pending.lock().unwrap().clear();
-                        q_pending.lock().unwrap().clear();
+                        q_pending.clear();
                         return;
                     }
                     Ok(_) => {
@@ -777,31 +787,16 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
                                     let _ = tx.send(v.get("yes").and_then(Value::as_bool).unwrap_or(false));
                                 }
                             }
+                            // an answer to a question: ignored unless it is for an open question and valid
                             Some("answer") => {
-                                let id = v.get("id").and_then(Value::as_u64).unwrap_or(u64::MAX);
-                                if let Some(tx) = q_pending.lock().unwrap().get(&id) {
-                                    if v.get("cancelled").and_then(Value::as_bool) == Some(true) {
-                                        let _ = tx.send(None);
-                                    } else if let Some(answers) = v.get("answers").and_then(Value::as_array) {
-                                        let parsed: Vec<crate::approval::QuestionAnswer> = answers.iter().map(|a| {
-                                            crate::approval::QuestionAnswer {
-                                                selected: a.get("selected").and_then(Value::as_array)
-                                                    .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
-                                                    .unwrap_or_default(),
-                                                other: a.get("other").and_then(Value::as_str)
-                                                    .map(|s| s.chars().take(2000).collect()),
-                                            }
-                                        }).collect();
-                                        let _ = tx.send(Some(parsed));
-                                    }
-                                }
+                                q_pending.reply(&v);
                             }
                             Some("stop") => cancel.store(true, Ordering::SeqCst),
                             // the server tells a kept-running answer that its person left: approvals can no longer be answered
                             Some("detached") if keep => {
                                 gone.store(true, Ordering::SeqCst);
                                 pending.lock().unwrap().clear();
-                                q_pending.lock().unwrap().clear();
+                                q_pending.clear();
                             }
                             _ => {}
                         }
@@ -811,7 +806,6 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
         });
     }
     let approver = RemoteApprover { out: out.clone(), pending, next: shared_next.clone(), gone: gone.clone() };
-    let questioner = RemoteQuestioner { out: out.clone(), pending: q_pending, next: shared_next, gone };
     let activity = crate::activity::start(
         if sel.provider == "claude-code" { crate::activity::Kind::ClaudeCode } else { crate::activity::Kind::Answer },
         &if client_source(req) == "web-link" { format!("Web session: {}", chat.title) } else { chat.title.clone() },
@@ -820,6 +814,12 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
         Some(&chat.id),
         Some(cancel.clone()),
     );
+
+    // a client says it can show a question card with "can_ask": true (the web, the desktop link); any other client is never asked,
+    // and then the model is not even offered the tool
+    let questioner = RemoteQuestioner { out: out.clone(), pending: q_pending, next: shared_next, gone, cancel: cancel.clone(), limit: crate::question::WAIT, activity: activity.id(), restore: sel.model.clone() };
+    let can_ask = req.get("can_ask").and_then(Value::as_bool) == Some(true);
+    let questioner: &dyn crate::approval::Questioner = if can_ask { &questioner } else { &crate::approval::NoQuestions };
 
     chat.entries.push(Entry { kind: "msg-user".into(), text: text.clone(), attach: att.metas() });
     let sees = crate::ai::providers::find(&sel.provider).is_some_and(|p| sel.vision.unwrap_or_else(|| crate::ai::providers::can_see(p, &sel.model)));
@@ -893,7 +893,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
             claude_code::run_in_mode(req.get("mode").and_then(Value::as_str).and_then(Mode::parse_known), &model, sel.effort.as_deref(), &mut session, &prompt_text, &system, &cancel, &mut on)
         } else {
             match Config::from_selection(&sel, &system) {
-                Ok(cfg) => agent::run_with(&cfg, &mut history, &ask_text, extra, mode, &approver, &questioner, &cancel, &mut on),
+                Ok(cfg) => agent::run_with(&cfg, &mut history, &ask_text, extra, mode, &approver, questioner, &cancel, &mut on),
                 Err(e) => Err(e),
             }
         }
@@ -1346,7 +1346,9 @@ mod tenant_tests {
         assert_eq!(done("zohara_memory_save")["ok"], true, "saved before the web was touched");
         let seen = seen.join().unwrap();
         let names: Vec<&str> = seen[0]["tools"].as_array().unwrap().iter().map(|x| x["function"]["name"].as_str().unwrap()).collect();
-        assert_eq!(names.len(), crate::tools::RESTRICTED_TOOLS.len(), "{names:?}");
+        // zohara_ask_user is only offered to a client that said it can show questions ("can_ask"); this one did not
+        assert_eq!(names.len(), crate::tools::RESTRICTED_TOOLS.len() - 1, "{names:?}");
+        assert!(!names.contains(&"zohara_ask_user"));
         // its chat and its memory are in its own folder, nobody else's
         crate::tenant::scope(&t, || {
             assert_eq!(chats::load().len(), 1);
@@ -1362,6 +1364,100 @@ mod tenant_tests {
         // the audit log of the restricted person has no words
         let log = std::fs::read_to_string(t.data.join("audit.jsonl")).unwrap_or_default();
         assert!(!log.contains("bees") && !log.contains("owned"), "{log}");
+    }
+
+    // ----- questions (zohara_ask_user) ------------------------------------------------------------------------------------
+
+    /// Like `talk`, but a person answers: `reply` sees every line the service sends and may return a line to send back.
+    fn talk_live(req: Value, mut reply: impl FnMut(&Value) -> Vec<Value>) -> Vec<Value> {
+        let (client, server) = UnixStream::pair().unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        std::thread::spawn(move || {
+            crate::tenant::test_multi(true);
+            serve(server)
+        });
+        let mut w = client.try_clone().unwrap();
+        writeln!(w, "{req}").unwrap();
+        let mut all = Vec::new();
+        for l in BufReader::new(client).lines().map_while(Result::ok) {
+            let Ok(v) = serde_json::from_str::<Value>(&l) else { continue };
+            for r in reply(&v) {
+                writeln!(w, "{r}").unwrap();
+            }
+            all.push(v);
+        }
+        all
+    }
+
+    fn ask_args() -> Value {
+        json!({"questions": [{"question": "Which database?", "header": "Database", "multi_select": false,
+            "options": [{"label": "PostgreSQL", "description": "Relational"}, {"label": "SQLite", "description": "A file"}]}]})
+    }
+
+    #[test]
+    fn a_question_reaches_the_client_and_only_a_valid_answer_reaches_the_model() {
+        let _g = lock();
+        let t = fresh(true);
+        let (url, seen) = fake_model(vec![tool_reply(&[("zohara_ask_user", ask_args())]), chat_reply("SQLite then.")]);
+        use_model(&t, &url);
+        let tid = t.clone();
+        let mut waiting_text = String::new();
+        let r = talk_live(with_tenant(json!({"op": "send", "text": "set up storage", "can_ask": true}), &t), |l| {
+            if l["event"] != "question" {
+                return vec![];
+            }
+            // the Activity item of the answer says that it waits for the person
+            waiting_text = crate::tenant::scope(&tid, || crate::activity::list().iter().map(|i| i.detail.clone()).collect::<Vec<_>>().join("|"));
+            let id = l["id"].clone();
+            assert_eq!(l["questions"][0]["options"][1]["label"], "SQLite");
+            vec![
+                json!({"op": "answer", "id": 999, "cancelled": true}),                                         // not an open question
+                json!({"op": "answer", "id": id, "answers": [{"selected": ["MySQL"]}]}),                      // never offered
+                json!({"op": "answer", "id": id, "answers": [{"selected": ["SQLite"]}, {"selected": ["x"]}]}), // wrong count
+                json!({"op": "answer", "id": id, "answers": [{"selected": ["SQLite"], "other": "no"}]}),                       // one choice only on a single-select
+                json!({"op": "answer", "id": id, "answers": [{"selected": ["SQLite"]}]}),
+                json!({"op": "answer", "id": id, "cancelled": true}), // too late: the first valid answer was taken
+            ]
+        });
+        assert!(waiting_text.contains("Waiting for your answer"), "{waiting_text}");
+        assert!(r.iter().any(|l| l["event"] == "text" && l["text"].as_str().unwrap().contains("SQLite then")), "{r:?}");
+        let done = r.iter().find(|l| l["event"] == "tool_done" && l["name"] == "zohara_ask_user").unwrap_or_else(|| panic!("{r:?}"));
+        assert_eq!(done["ok"], true);
+        assert_eq!(done["output"], "Q: Which database?\nA: SQLite", "the late cancel changed nothing");
+        let seen = seen.join().unwrap();
+        assert!(seen[0]["tools"].to_string().contains("zohara_ask_user"));
+        assert!(seen[1]["messages"].to_string().contains("A: SQLite"));
+        // the question was never put in the saved chat history as an answer of the server's own
+        crate::tenant::scope(&t, || assert!(!crate::activity::list().iter().any(|i| i.detail.contains("Waiting"))));
+    }
+
+    #[test]
+    fn a_client_that_did_not_say_it_can_ask_never_gets_the_tool_or_a_question() {
+        let _g = lock();
+        let t = fresh(true);
+        let (url, seen) = fake_model(vec![chat_reply("I decided myself.")]);
+        use_model(&t, &url);
+        let r = talk(with_tenant(json!({"op": "send", "text": "set up storage"}), &t), true);
+        assert!(!r.iter().any(|l| l["event"] == "question"), "{r:?}");
+        assert!(!seen.join().unwrap()[0]["tools"].to_string().contains("zohara_ask_user"));
+    }
+
+    #[test]
+    fn stop_ends_a_waiting_question_at_once_and_skip_tells_the_model() {
+        let _g = lock();
+        let t = fresh(true);
+        let (url, _seen) = fake_model(vec![tool_reply(&[("zohara_ask_user", ask_args())])]);
+        use_model(&t, &url);
+        let t0 = std::time::Instant::now();
+        let r = talk_live(with_tenant(json!({"op": "send", "text": "set up storage", "can_ask": true}), &t), |l| if l["event"] == "question" { vec![json!({"op": "stop"})] } else { vec![] });
+        assert!(t0.elapsed() < Duration::from_secs(10), "Stop must not wait for the 10 minutes");
+        assert!(r.iter().any(|l| l["event"] == "stopped" || l["event"] == "error"), "{r:?}");
+        // Skip: the model is told the person declined
+        let (url, seen) = fake_model(vec![tool_reply(&[("zohara_ask_user", ask_args())]), chat_reply("Fine, I will pick.")]);
+        use_model(&t, &url);
+        let r = talk_live(with_tenant(json!({"op": "send", "text": "set up storage", "can_ask": true}), &t), |l| if l["event"] == "question" { vec![json!({"op": "answer", "id": l["id"], "cancelled": true})] } else { vec![] });
+        assert!(r.iter().any(|l| l["event"] == "tool_done" && l["output"] == "The person declined to answer."), "{r:?}");
+        assert!(seen.join().unwrap()[1]["messages"].to_string().contains("declined"));
     }
 
     // ----- attachments from the web app ---------------------------------------------------------------------------------

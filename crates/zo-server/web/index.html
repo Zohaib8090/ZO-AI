@@ -176,6 +176,8 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .q-other-input{width:100%;background:var(--bg);border:1px solid var(--line2);border-radius:7px;padding:6px 10px;font-size:13px;color:var(--text);margin-top:4px;box-sizing:border-box}
 .q-other-input:focus{outline:none;border-color:var(--accent)}
 .q-foot{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
+.q-head{display:flex;align-items:center;gap:8px}.q-num{display:inline-block;min-width:16px;margin-right:6px;color:var(--dim);font-weight:600}
+.q-msg{font-size:12.5px;color:#E5484D}.q-msg:empty{display:none}.q-card .btn:disabled{opacity:.5;cursor:not-allowed}.q-card:focus-visible{border-color:var(--accent)}
 
 /* home and composer */
 .home{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;gap:0}
@@ -941,7 +943,7 @@ async function send(opts) {
   const bubble = re ? re.reuse : addUser(text, taken.meta); setBusy(true);
   let ai = null, acc = "", group = null, began = false, gotDone = false;
   try {
-    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId, ...(dsk ? { target: "desktop", device: runOn } : {}), ...(taken.attachments.length ? { attachments: taken.attachments } : {}), ...(re ? { edit: re.edit } : {}), ...noteSendExtra() }) });
+    const r = await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify({ text, chat: chatId, can_ask: true, ...(dsk ? { target: "desktop", device: runOn } : {}), ...(taken.attachments.length ? { attachments: taken.attachments } : {}), ...(re ? { edit: re.edit } : {}), ...noteSendExtra() }) });
     if (r.status === 429) { const m = limitMsg(r); toast(m); throw new Error(m); }
     if (!r.ok || !r.body) { let j = {}; try { j = await r.json(); } catch {} throw new Error(j.error || "Error " + r.status); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
@@ -958,7 +960,7 @@ async function send(opts) {
           case "delta": clearWait(); endGroup(group); group = null; if (!ai) { ai = aiBox(); acc = ""; } acc += ev.text; setAi(ai, acc); break;
           case "text": if (!acc) { if (!ai) ai = aiBox(); acc = ev.text; setAi(ai, acc); } break;
           case "tool_start": clearWait(); ai = null; acc = ""; if (!group) group = newGroup(true); groupAdd(group, ev.summary || ev.name); scrollEnd(); break;
-          case "tool_done": clearWait(); if (group && ev.output) groupOut(group, ev.output); break;
+          case "tool_done": clearWait(); if (ev.name === "zohara_ask_user") closeQuestionCards(); if (group && ev.output) groupOut(group, ev.output); break;
           case "approval": if (dsk && !dcaps(curDev()).approvals_from_web) waitApproval(ev.summary || ev.tool); else ask(ev); break;
           case "approval_wait": case "waiting_approval": if (dsk) waitApproval(ev.summary); break;
           case "question": askQuestion(ev); break;
@@ -973,7 +975,7 @@ async function send(opts) {
     if (!began && !re) { bubble.remove(); /* before the chat began: */ aRestore(taken); if ($("text") && !$("text").value) $("text").value = text0; }
     addError(e.message);
   }
-  clearWait(); endGroup(group); stream = 0; setBusy(false); $("text")?.focus(); refreshChats(); noteAnswer(chatId, $("title") ? $("title").textContent : "", !!ai);
+  closeQuestionCards(); clearWait(); endGroup(group); stream = 0; setBusy(false); $("text")?.focus(); refreshChats(); noteAnswer(chatId, $("title") ? $("title").textContent : "", !!ai);
   if (dsk) setTimeout(refreshChats, 6000); /* the computer syncs the chat to the server after the turn */
   if (ai && acc && ai.isConnected && voiceGet("read") === "1") voiceSpeak(acc, ai);
 }
@@ -983,162 +985,105 @@ function ask(ev) {
   d.innerHTML = `<div>${onDesktop() ? "Your computer: " : ""}ZO-AI wants to: ${esc(ev.summary || ev.tool)}</div><div class="row"><button class="btn primary">Allow</button><button class="btn">Deny</button></div>`;
   thread().appendChild(d); scrollEnd();
   const [yes, no] = d.querySelectorAll("button");
-  const answer = ok => { api("/api/reply", { stream, op: "approve", id: ev.id, yes: ok }).catch(() => {}); d.innerHTML = `<span class="pc-meta">${ok ? "Allowed" : "Denied"}: ${esc(ev.summary || ev.tool)}</span>`; };
+  const myStream = stream;
+  const answer = ok => { api("/api/reply", { stream: myStream, op: "approve", id: ev.id, yes: ok }).catch(() => {}); d.innerHTML = `<span class="pc-meta">${ok ? "Allowed" : "Denied"}: ${esc(ev.summary || ev.tool)}</span>`; };
   yes.onclick = () => answer(true); no.onclick = () => answer(false);
 }
+/* ZO-AI asks a question (zohara_ask_user, docs/INTERACTION.md). One card for up to 4 questions: header chip, the question, the options
+   (radio, or check boxes for a multi-select) with their descriptions, an "Other" row with a text box, Skip, and Back / Next with one
+   Send at the end. Keys: 1 to 6 pick an option, Enter goes on, Esc skips. The answer is sent to /api/reply with the id of the
+   stream the card came from; the composer stays as the running answer left it (it is locked while ZO-AI works). */
+const qCards = new Set();
+/* the answer ended (done, stopped, an error, a lost connection) while cards were still open: they close as "not answered" */
+function closeQuestionCards() { Array.from(qCards).forEach(c => c.close()); }
 function askQuestion(ev) {
+  const questions = (Array.isArray(ev.questions) ? ev.questions : []).slice(0, 4).filter(q => q && Array.isArray(q.options));
+  if (!questions.length || !Number.isSafeInteger(ev.id)) return;
   noteQuestion(ev);
+  const myStream = stream;
+  const d = document.createElement("div"); d.className = "q-card"; d.tabIndex = 0;
+  d.setAttribute("role", "group"); d.setAttribute("aria-label", "ZO-AI is asking you a question");
+  /* per question: the chosen option numbers, whether Other is on and its text */
+  const st = questions.map(() => ({ sel: new Set(), otherOn: false, other: "" }));
+  let cur = 0, over = false, sending = false;
+  const multi = i => !!questions[i].multi_select;
+  const valid = i => st[i].sel.size > 0 || (st[i].otherOn && st[i].other.trim().length > 0);
+  const answers = () => questions.map((q, i) => ({
+    selected: Array.from(st[i].sel).sort((a, b) => a - b).map(k => String(q.options[k].label)),
+    other: st[i].otherOn && st[i].other.trim() ? st[i].other.trim().slice(0, 2000) : null
+  }));
+  const said = () => answers().map(a => a.selected.concat(a.other ? [a.other] : []).join(", ")).join("; ");
+  const handle = { close() { if (!over) collapse('<span class="pc-meta">Not answered (the answer ended).</span>'); } };
+  const collapse = html => { over = true; qCards.delete(handle); d.removeAttribute("tabindex"); d.innerHTML = html; };
+  qCards.add(handle);
   if ($("text")) $("text").disabled = true;
-  const questions = ev.questions || [];
-  if (!questions.length) return;
-  const d = document.createElement("div"); d.className = "q-card";
-  let cur = 0;
-  const state = questions.map(() => ({ selected: new Set(), other: "" }));
 
-  const finish = (cancelled, summaryText) => {
-    if ($("text")) { $("text").disabled = false; $("text").focus(); }
-    if (cancelled) {
-      api("/api/reply", { stream, op: "answer", id: ev.id, cancelled: true }).catch(() => {});
-      d.innerHTML = `<span class="pc-meta">Declined to answer.</span>`;
-    } else {
-      const answers = state.map(s => ({
-        selected: Array.from(s.selected).filter(x => x !== "__other__"),
-        other: s.other.trim() || null
-      }));
-      api("/api/reply", { stream, op: "answer", id: ev.id, answers }).catch(() => {});
-      d.innerHTML = `<span class="pc-meta">You answered: ${esc(summaryText || "Done")}</span>`;
+  const send = async cancelled => {
+    if (over || sending) return;
+    sending = true; d.querySelectorAll("button").forEach(b => { b.disabled = true; });
+    try {
+      await api("/api/reply", cancelled ? { stream: myStream, op: "answer", id: ev.id, cancelled: true } : { stream: myStream, op: "answer", id: ev.id, answers: answers() });
+      collapse(cancelled ? '<span class="pc-meta">You skipped the question.</span>' : `<span class="pc-meta">You answered: ${esc(said())}</span>`);
+    } catch (e) {
+      sending = false;
+      if (e.status === 404 || e.status === 410) return collapse('<span class="pc-meta">Not answered (the answer had already ended).</span>');
+      d.querySelectorAll("button").forEach(b => { b.disabled = false; }); sync();
+      const m = d.querySelector(".q-msg"); if (m) m.textContent = "Could not send the answer: " + e.message;
     }
   };
-
+  /* the parts that change while the person chooses: no rebuilding, so the text box keeps its focus */
+  const sync = () => {
+    if (over) return;
+    d.querySelectorAll(".q-opt").forEach((row, k) => { const i = row.dataset.k; row.classList.toggle("selected", i === "other" ? st[cur].otherOn : st[cur].sel.has(+i)); });
+    const n = d.querySelector(".q-next"); if (n) n.disabled = sending || !valid(cur);
+  };
   const render = () => {
-    const q = questions[cur];
-    const s = state[cur];
-    const isMulti = !!q.multi_select;
-    const isLast = cur === questions.length - 1;
-    const isFirst = cur === 0;
-
-    let html = `<div style="display:flex;align-items:center;gap:8px">`;
-    if (q.header) html += `<span class="q-chip">${esc(q.header)}</span>`;
-    if (questions.length > 1) html += `<span class="q-step">Question ${cur + 1} of ${questions.length}</span>`;
-    html += `</div>`;
-    html += `<div class="q-title">${esc(q.question)}</div>`;
-    html += `<div class="q-opts">`;
-    (q.options || []).forEach(opt => {
-      const sel = s.selected.has(opt.label);
-      html += `<label class="q-opt${sel ? " selected" : ""}">
-        <input type="${isMulti ? "checkbox" : "radio"}" name="q_${ev.id}_${cur}" value="${esc(opt.label)}"${sel ? " checked" : ""}>
-        <div class="q-opt-body">
-          <div class="q-opt-label">${esc(opt.label)}</div>
-          ${opt.description ? `<div class="q-opt-desc">${esc(opt.description)}</div>` : ""}
-        </div>
-      </label>`;
+    const q = questions[cur], isLast = cur === questions.length - 1, m = multi(cur);
+    const kind = m ? "checkbox" : "radio", name = "q" + ev.id + "_" + cur;
+    let h = `<div class="q-head">${q.header ? `<span class="q-chip">${esc(q.header)}</span>` : ""}${questions.length > 1 ? `<span class="q-step">Question ${cur + 1} of ${questions.length}</span>` : ""}</div>`;
+    h += `<div class="q-title" id="${name}t">${esc(q.question)}</div><div class="q-opts" role="${m ? "group" : "radiogroup"}" aria-labelledby="${name}t">`;
+    q.options.forEach((o, k) => {
+      h += `<label class="q-opt" data-k="${k}"><input type="${kind}" name="${name}" data-k="${k}"><div class="q-opt-body"><div class="q-opt-label">${k < 6 ? `<span class="q-num">${k + 1}</span>` : ""}${esc(o.label)}</div>${o.description ? `<div class="q-opt-desc">${esc(o.description)}</div>` : ""}</div></label>`;
     });
-    const otherSel = !!s.other || s.selected.has("__other__");
-    html += `<label class="q-opt${otherSel ? " selected" : ""}">
-      <input type="${isMulti ? "checkbox" : "radio"}" name="q_${ev.id}_${cur}" value="__other__"${otherSel ? " checked" : ""}>
-      <div class="q-opt-body">
-        <div class="q-opt-label">Other</div>
-        <input type="text" class="q-other-input" placeholder="Type your own answer" value="${esc(s.other)}">
-      </div>
-    </label>`;
-    html += `</div>`;
-
-    html += `<div class="q-foot">
-      <div><button class="btn q-skip">Skip</button></div>
-      <div style="display:flex;gap:6px">
-        ${!isFirst ? `<button class="btn q-back">Back</button>` : ""}
-        <button class="btn primary q-next">${isLast ? "Send" : "Next"}</button>
-      </div>
-    </div>`;
-
-    d.innerHTML = html;
-    scrollEnd();
-
-    const otherInput = d.querySelector(".q-other-input");
-    otherInput.oninput = e => {
-      s.other = e.target.value;
-      if (s.other) {
-        if (!isMulti) s.selected.clear();
-        s.selected.add("__other__");
-      }
-    };
-    otherInput.onfocus = () => {
-      if (!isMulti) s.selected.clear();
-      s.selected.add("__other__");
-      render();
-      const inp = d.querySelector(".q-other-input");
-      if (inp) { inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length; }
-    };
-
-    d.querySelectorAll(`input[name="q_${ev.id}_${cur}"]`).forEach(inp => {
+    h += `<label class="q-opt" data-k="other"><input type="${kind}" name="${name}" data-k="other"><div class="q-opt-body"><div class="q-opt-label">Other</div><input type="text" class="q-other-input" maxlength="2000" placeholder="Type your own answer" aria-label="Other answer" value=""></div></label></div>`;
+    h += `<div class="q-msg" role="alert"></div><div class="q-foot"><div><button type="button" class="btn q-skip">Skip</button></div><div style="display:flex;gap:6px">${cur > 0 ? '<button type="button" class="btn q-back">Back</button>' : ""}<button type="button" class="btn primary q-next">${isLast ? "Send" : "Next"}</button></div></div>`;
+    d.innerHTML = h;
+    /* what was chosen before (Back, or the same page again) */
+    d.querySelectorAll(".q-opts input[type=radio],.q-opts input[type=checkbox]").forEach(inp => { const k = inp.dataset.k; inp.checked = k === "other" ? st[cur].otherOn : st[cur].sel.has(+k); });
+    const box = d.querySelector(".q-other-input"); box.value = st[cur].other;
+    d.querySelectorAll(".q-opts input[type=radio],.q-opts input[type=checkbox]").forEach(inp => {
       inp.onchange = () => {
-        if (isMulti) {
-          if (inp.value === "__other__") {
-            if (!inp.checked) { s.other = ""; s.selected.delete("__other__"); }
-            else s.selected.add("__other__");
-          } else {
-            if (inp.checked) s.selected.add(inp.value); else s.selected.delete(inp.value);
-          }
-        } else {
-          s.selected.clear();
-          if (inp.value === "__other__") {
-            s.selected.add("__other__");
-          } else {
-            s.other = "";
-            s.selected.add(inp.value);
-          }
-        }
-        render();
+        const k = inp.dataset.k, s = st[cur];
+        if (k === "other") { s.otherOn = inp.checked; if (inp.checked && !m) s.sel.clear(); if (inp.checked) box.focus(); }
+        else if (m) { if (inp.checked) s.sel.add(+k); else s.sel.delete(+k); }
+        else { s.sel.clear(); s.sel.add(+k); s.otherOn = false; }
+        sync();
       };
     });
-
-    d.querySelector(".q-skip").onclick = () => finish(true);
-    if (!isFirst) d.querySelector(".q-back").onclick = () => { cur--; render(); };
-    d.querySelector(".q-next").onclick = () => {
-      if (isLast) {
-        const summary = state.map(st => {
-          const chosen = Array.from(st.selected).filter(x => x !== "__other__");
-          if (st.other.trim()) chosen.push(st.other.trim());
-          return chosen.join(", ");
-        }).filter(Boolean).join("; ");
-        finish(false, summary);
-      } else {
-        cur++;
-        render();
-      }
+    box.oninput = () => {
+      const s = st[cur]; s.other = box.value;
+      if (box.value && !s.otherOn) { s.otherOn = true; if (!m) s.sel.clear(); const r = d.querySelector('.q-opts input[data-k="other"]'); if (r) r.checked = true; }
+      sync();
     };
+    d.querySelector(".q-skip").onclick = () => send(true);
+    const back = d.querySelector(".q-back"); if (back) back.onclick = () => { cur--; render(); };
+    d.querySelector(".q-next").onclick = () => { if (!valid(cur)) return; if (isLast) send(false); else { cur++; render(); } };
+    sync(); scrollEnd();
   };
-
-  d.tabIndex = 0;
   d.onkeydown = e => {
-    if (e.target.tagName === "INPUT" && e.target.type === "text") {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        d.querySelector(".q-next")?.click();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        finish(true);
-      }
-      return;
-    }
-    if (e.key >= "1" && e.key <= "6") {
-      const idx = parseInt(e.key, 10) - 1;
-      const inputs = d.querySelectorAll(`input[name="q_${ev.id}_${cur}"]`);
-      if (inputs[idx]) {
-        inputs[idx].checked = !inputs[idx].checked;
-        inputs[idx].dispatchEvent(new Event("change"));
-      }
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      finish(true);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      d.querySelector(".q-next")?.click();
+    if (over) return;
+    const inText = e.target.tagName === "INPUT" && e.target.type === "text";
+    if (e.key === "Escape") { e.preventDefault(); send(true); }
+    else if (e.key === "Enter") { if (e.target.tagName === "BUTTON") return; e.preventDefault(); d.querySelector(".q-next")?.click(); }
+    else if (!inText && /^[1-6]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const inp = d.querySelector('.q-opts input[data-k="' + (+e.key - 1) + '"]');
+      if (inp) { e.preventDefault(); if (inp.type === "radio") inp.checked = true; else inp.checked = !inp.checked; inp.dispatchEvent(new Event("change")); }
     }
   };
-
   thread().appendChild(d);
   render();
+  voiceAnnounce("ZO-AI is asking you a question: " + String(questions[0].question).slice(0, 200));
+  d.focus({ preventScroll: true });
 }
 document.addEventListener("click", e => { const b = e.target.closest("[data-copy]"); if (b) { navigator.clipboard?.writeText(b.closest(".code-block").querySelector("pre").textContent); toast("Copied"); } });
 
@@ -2474,21 +2419,20 @@ function noteAnswer(chat, title, answered) {
   const named = c.title && title && title !== "New chat";
   showNote(named ? title : "ZO-AI", named ? "ZO-AI: your answer is ready" : "Your answer is ready", "zo-chat-" + chat, chat);
 }
-/* ZO-AI waits for a yes or a no (admins only: restricted accounts have nothing to approve) */
-function noteApproval(ev) {
-  if (restricted() || document.visibilityState === "visible") return;
+/* ZO-AI needs the person: a yes or a no (an approval), or an answer (a question card). Same switch, same wording rules: generic text, the
+   question itself only when the person chose to show chat titles. The tag is per chat, so a second one replaces the first. Tapping the
+   notification opens that chat, where the card waits (the Allow / Deny and answer buttons are in the page, never in the notification). */
+function noteNeedsYou(ev, kind) {
+  if (document.visibilityState === "visible") return;
   const c = noteCfg(); if (!c.approval || notePerm() !== "granted") return;
   setUnseen(noteUnseen + 1);
-  showNote("ZO-AI needs your approval", "A step is waiting for a yes or a no.", "zo-approve-" + (ev && ev.id), chatId);
+  const detail = kind === "question" ? (c.title && ev && ev.questions && ev.questions[0] ? String(ev.questions[0].question).slice(0, 120) : "ZO-AI is asking you a question.") : "A step is waiting for your yes or no.";
+  showNote("ZO-AI needs you", detail, "zo-needs-" + (chatId || ""), chatId);
 }
+/* an approval that this page can answer (a restricted account has none on the server; on My computer it can) */
+function noteApproval(ev) { if (restricted() && !onDesktop()) return; noteNeedsYou(ev, "approval"); }
 /* ZO-AI asks a question (zohara_ask_user) */
-function noteQuestion(ev) {
-  if (document.visibilityState === "visible") return;
-  const c = noteCfg(); if (!c.bg || notePerm() !== "granted") return;
-  setUnseen(noteUnseen + 1);
-  const q0 = ev && ev.questions && ev.questions[0] ? (c.title ? ev.questions[0].question : "ZO-AI is asking a question.") : "ZO-AI needs your answer.";
-  showNote("ZO-AI needs your answer", q0, "zo-question-" + (ev && ev.id), chatId);
-}
+function noteQuestion(ev) { noteNeedsYou(ev, "question"); }
 /* the person tapped a notification (or opened /?chat=...): show that chat */
 function openFromNote(chat) {
   if (!/^[\w-]{1,64}$/.test(chat || "")) return;
@@ -2579,7 +2523,7 @@ async function pageNotifications(b) {
     }
     const upd = (k, v) => { const x = noteCfg(); x[k] = v; noteSave(x); };
     const rows = [switchRow("Answer finished while this tab is in the background", "A notice and a (1) in the tab title. Nothing is shown while you are looking at the tab.", c.bg, v => upd("bg", v))];
-    if (!restricted()) rows.push(switchRow("ZO-AI needs my approval", "A notice when a step waits for your yes or no and the tab is in the background.", c.approval, v => upd("approval", v)));
+    rows.push(switchRow("ZO-AI needs me", "A notice when ZO-AI asks you a question, or waits for your yes or no, and the tab is in the background.", c.approval, v => upd("approval", v)));
     rows.push(switchRow("Show the chat title in notifications", "Off: the notice only says that an answer is ready. On: it also shows the chat's title (on your lock screen too).", c.title, async v => { upd("title", v); if (noteCfg().push) { try { await pushOn(); } catch {} } }));
     rows.push(switchRow("Sound", "Use your system's notification sound (some systems have none).", c.sound, v => upd("sound", v)));
     b.appendChild(cardOf(...rows));

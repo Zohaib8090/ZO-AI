@@ -1883,6 +1883,44 @@ fn approvals_from_the_web_are_forwarded_only_when_the_computer_said_it_takes_the
 }
 
 #[test]
+fn a_question_card_of_a_desktop_session_is_relayed_and_its_answer_is_forwarded_checked() {
+    let u = uniq("lk-ques");
+    let r = rig(&[("tok", &u, "q@x.test"), ("tok2", &uniq("lk-ques2"), "q2@x.test")], "", 200, 600);
+    let (cred, _) = make_device(&r, "tok", "Ques", "desktop");
+    dpoll(&r, &cred, "Ques", caps(false));
+    let t = stream_in_thread(&r, "tok", json!({"target": "desktop", "text": "ask me"}));
+    let job = dpoll_for(&r, &cred, "Ques", caps(false), "send");
+    let jid = job["id"].as_str().unwrap().to_string();
+    let card = json!({"event": "question", "id": 3, "questions": [{"question": "Which?", "header": "H", "multi_select": false, "options": [{"label": "a", "description": ""}, {"label": "b", "description": ""}]}]});
+    post_events(&r, &cred, &jid, json!([card.clone()]), false);
+    // the card reaches the page as it is
+    let sid = (1..400u64).find(|n| call(&r, "tok", "/api/reply", json!({"stream": *n, "op": "answer", "id": 3, "cancelled": true})).status == 200).expect("a running stream");
+    // web approvals are OFF on this computer: a question is not an approval, so the answer is still forwarded (and nothing else is)
+    let fwd = dpoll_for(&r, &cred, "Ques", caps(false), "answer_reply");
+    assert_eq!((fwd["job_id"].as_str(), fwd["question_id"].as_u64(), fwd["cancelled"].as_bool()), (Some(jid.as_str()), Some(3), Some(true)));
+    let ok = call(&r, "tok", "/api/reply", json!({"stream": sid, "op": "answer", "id": 3, "answers": [{"selected": ["b"], "other": null}]}));
+    assert_eq!(ok.status, 200, "{:?}", ok.body);
+    let fwd = dpoll_for(&r, &cred, "Ques", caps(false), "answer_reply");
+    assert_eq!(fwd["answers"], json!([{"selected": ["b"], "other": null}]));
+    // malformed ones never get through
+    for bad in [json!({"op": "answer", "id": "x", "cancelled": true}), json!({"op": "answer", "id": 3}), json!({"op": "answer", "id": 3, "answers": []}),
+                json!({"op": "answer", "id": 3, "answers": [{}, {}, {}, {}, {}]}), json!({"op": "answer", "id": 3, "answers": [{"other": "y".repeat(30_000)}]}), json!({"op": "answer", "id": 3, "answers": "b"})] {
+        let mut b = bad.clone();
+        b["stream"] = json!(sid);
+        assert_eq!(call(&r, "tok", "/api/reply", b).status, 400, "{bad}");
+    }
+    assert!(dpoll(&r, &cred, "Ques", caps(false)).iter().all(|j| j["type"] != "answer_reply"), "nothing malformed was forwarded");
+    // another person cannot answer it
+    let other = call(&r, "tok2", "/api/reply", json!({"stream": sid, "op": "answer", "id": 3, "cancelled": true}));
+    assert_eq!(other.status, 404);
+    assert!(dpoll(&r, &cred, "Ques", caps(false)).iter().all(|j| j["type"] != "answer_reply"));
+    // once the session is over nothing is forwarded
+    post_events(&r, &cred, &jid, json!([]), true);
+    t.join().unwrap();
+    assert_ne!(call(&r, "tok", "/api/reply", json!({"stream": sid, "op": "answer", "id": 3, "cancelled": true})).status, 200);
+}
+
+#[test]
 fn settings_questions_for_the_computer_are_whitelisted_cleaned_and_answered() {
     let u = uniq("lk-op");
     let r = rig(&[("tok", &u, "w@x.test")], "", 200, 600);
@@ -2298,6 +2336,60 @@ fn all_text(lines: &[Value]) -> String {
 
 fn asks(sandbox: &std::path::Path) -> Vec<String> {
     std::fs::read_to_string(sandbox.join("asks.log")).unwrap_or_default().lines().map(String::from).collect()
+}
+
+#[test]
+fn the_real_desktop_link_end_to_end_a_question_card_is_answered_from_the_web_and_stop_ends_a_waiting_one() {
+    let u = uniq("e2e-q");
+    let r = rig(&[("tok-q", &u, "q@x.test")], "", 200, 6000);
+    let sandbox = std::path::PathBuf::from(format!("/tmp/claude-1000/zl-e2eq-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    let (_model, model_url) = start_model();
+    let (cred, _dev) = make_device(&r, "tok-q", "Desk-Q", "desktop");
+    let _desk = start_desktop(&r, &sandbox, &cred, &model_url, "n");
+    wait_online(&r, "tok-q", true);
+
+    // the model asks; the card reaches the web; an invalid answer changes nothing; the valid one goes to the model
+    let rx = stream_live(&r, "tok-q", json!({"target": "desktop", "text": "ask me something", "mode": "manual"}));
+    let mut seen = vec![];
+    let card = loop {
+        let v = rx.recv_timeout(Duration::from_secs(30)).expect("an event").expect("the stream ended before the card");
+        if v["event"] == "question" {
+            break v;
+        }
+        seen.push(v);
+    };
+    let sid = seen.iter().find(|v| v["event"] == "stream").unwrap()["id"].as_u64().unwrap();
+    assert_eq!(card["questions"][0]["options"][1]["label"], "Blue", "{card}");
+    let qid = card["id"].clone();
+    for bad in [json!({"answers": [{"selected": ["Green"]}]}), json!({"answers": [{"selected": ["Red", "Blue"]}]}), json!({"answers": []})] {
+        let mut b = json!({"stream": sid, "op": "answer", "id": qid});
+        b.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+        let _ = call(&r, "tok-q", "/api/reply", b); // forwarded or refused: either way it must not answer the question
+    }
+    assert_eq!(call(&r, "tok-q", "/api/reply", json!({"stream": sid, "op": "answer", "id": qid, "answers": [{"selected": ["Blue"]}]})).status, 200);
+    let rest = drain(&rx, 40);
+    let text = all_text(&rest);
+    assert!(text.contains("Q: Which colour?") && text.contains("A: Blue"), "the model got exactly the valid answer: {rest:?}");
+    assert!(!text.contains("Green") && !text.contains("A: Red"), "{text}");
+    assert!(asks(&sandbox).is_empty(), "a question is not an approval: nothing was asked on the desktop");
+
+    // a question nobody answers ends at once with Stop (it does not wait for the 10 minutes)
+    let rx = stream_live(&r, "tok-q", json!({"target": "desktop", "text": "ask me again", "mode": "manual"}));
+    let first = rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+    let sid = first["id"].as_u64().unwrap();
+    loop {
+        let v = rx.recv_timeout(Duration::from_secs(30)).expect("an event").expect("the stream ended before the card");
+        if v["event"] == "question" {
+            break;
+        }
+    }
+    let t0 = Instant::now();
+    assert_eq!(call(&r, "tok-q", "/api/reply", json!({"stream": sid, "op": "stop"})).status, 200);
+    let rest = drain(&rx, 20);
+    assert!(t0.elapsed() < Duration::from_secs(10), "{:?}", t0.elapsed());
+    assert_eq!(rest.last().unwrap()["event"], "done", "{rest:?}");
+    let _ = std::fs::remove_dir_all(&sandbox);
 }
 
 #[test]

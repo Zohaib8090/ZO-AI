@@ -541,20 +541,27 @@ impl Link {
                 self.pollers.notify_all();
                 Replied::Sent
             }
+            // the person's answer to a question card of the running session. It is only text the person chose or typed, so it does not
+            // need the web-approvals switch; the desktop forwards it only for a card it showed, and checks the content again
             Some("answer") => {
+                if j.done {
+                    return Replied::NotFound;
+                }
                 let Some(d) = inner.devs.get_mut(&key) else { return Replied::NotFound };
                 let aid = match v.get("id") {
-                    Some(Value::String(s)) if !s.is_empty() && s.len() <= 100 => json!(s),
                     Some(Value::Number(n)) if n.is_u64() => json!(n),
                     _ => return Replied::Bad("The question has no valid id."),
                 };
                 let payload = if v.get("cancelled").and_then(Value::as_bool) == Some(true) {
                     json!({"id": new_id(), "type": "answer_reply", "job_id": job, "question_id": aid, "cancelled": true})
-                } else if let Some(answers) = v.get("answers").and_then(Value::as_array) {
+                } else if let Some(answers) = v.get("answers").and_then(Value::as_array).filter(|a| !a.is_empty() && a.len() <= 4 && Value::Array((*a).clone()).to_string().len() <= 24_000) {
                     json!({"id": new_id(), "type": "answer_reply", "job_id": job, "question_id": aid, "answers": answers})
                 } else {
-                    return Replied::Bad("The question needs answers or cancelled: true.");
+                    return Replied::Bad("The question needs 1 to 4 answers (or cancelled: true).");
                 };
+                if d.queue.len() >= 4 * MAX_QUEUED_PER_DEVICE {
+                    return Replied::Bad("Too many things are waiting for this computer.");
+                }
                 d.queue.push_back(QItem { job: None, payload, at: Instant::now() });
                 self.pollers.notify_all();
                 Replied::Sent

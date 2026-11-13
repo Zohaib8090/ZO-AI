@@ -25,14 +25,14 @@ impl Approver for Deny {
 // ── Questions (zohara_ask_user) ──
 
 /// One option inside a question card.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct QuestionOption {
     pub label: String,
     pub description: String,
 }
 
 /// A single question with its header chip and options.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Question {
     pub question: String,
     pub header: String,
@@ -41,22 +41,40 @@ pub struct Question {
 }
 
 /// The person's answer to one question.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct QuestionAnswer {
     pub selected: Vec<String>,
     pub other: Option<String>,
 }
 
-/// Ask the person questions with ready-made options. Returns `None` on cancel / timeout.
-pub trait Questioner {
-    fn ask_questions(&self, questions: &[Question]) -> Option<Vec<QuestionAnswer>>;
+/// What came of asking.
+#[derive(Debug, Clone, PartialEq)]
+pub enum QuestionResult {
+    /// One answer per question, same order, already checked against the questions (see `question::validate_answers`).
+    Answers(Vec<QuestionAnswer>),
+    /// The person pressed Skip.
+    Declined,
+    /// Nobody answered: timeout, Stop, the client left, or this client cannot show questions.
+    Unanswered,
 }
 
-/// Never gets an answer: for when there is no one to ask (CLI, sub-agents, tests).
+/// Ask the person questions with ready-made options.
+pub trait Questioner {
+    fn ask_questions(&self, questions: &[Question]) -> QuestionResult;
+    /// False when there is nobody to ask: the tool is then not offered to the model at all.
+    fn can_ask(&self) -> bool {
+        true
+    }
+}
+
+/// Never gets an answer: for when there is no one to ask (CLI, sub-agents, scheduled tasks, tests).
 pub struct NoQuestions;
 impl Questioner for NoQuestions {
-    fn ask_questions(&self, _: &[Question]) -> Option<Vec<QuestionAnswer>> {
-        None
+    fn ask_questions(&self, _: &[Question]) -> QuestionResult {
+        QuestionResult::Unanswered
+    }
+    fn can_ask(&self) -> bool {
+        false
     }
 }
 

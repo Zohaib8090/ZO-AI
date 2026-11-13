@@ -134,7 +134,7 @@ pub fn handle(msg: &Value, mode: Mode, approver: &dyn Approver) -> Option<Value>
         }
         "ping" => reply(id, json!({})),
         "tools/list" => {
-            let mut list: Vec<Value> = tools::definitions().iter().map(|d| json!({ "name": d.name, "description": d.description, "inputSchema": d.schema() })).collect();
+            let mut list: Vec<Value> = tools::definitions().iter().filter(|d| d.name != "zohara_ask_user").map(|d| json!({ "name": d.name, "description": d.description, "inputSchema": d.schema() })).collect();
             if let Some(ext) = external() {
                 let ext = ext.lock().unwrap_or_else(|p| p.into_inner());
                 list.extend(ext.tools().iter().map(|t| json!({ "name": t.public_name(), "description": t.description, "inputSchema": t.schema })));

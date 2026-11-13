@@ -64,7 +64,30 @@ struct Group {
 
 enum Msg {
     Ev(Event),
+    /// The model asks the person (`zohara_ask_user`): the questions, where the answer goes, and a flag that is set when the wait
+    /// ended without the person (Stop, timeout) so the card can close.
+    Ask(Vec<zo_core::approval::Question>, mpsc::Sender<zo_core::approval::QuestionResult>, Arc<AtomicBool>),
     Done(Result<(), String>, Vec<Turn>, Option<String>),
+}
+
+/// Asks the person in this window: the card is drawn by the main thread (`Msg::Ask`); this thread waits for the answer
+/// (`question::wait`: ends on an answer, Stop, or 10 minutes).
+struct DeskQuestioner {
+    tx: mpsc::Sender<Msg>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl zo_core::approval::Questioner for DeskQuestioner {
+    fn ask_questions(&self, questions: &[zo_core::approval::Question]) -> zo_core::approval::QuestionResult {
+        let (rtx, rrx) = mpsc::channel();
+        let expired = Arc::new(AtomicBool::new(false));
+        if self.tx.send(Msg::Ask(questions.to_vec(), rtx, expired.clone())).is_err() {
+            return zo_core::approval::QuestionResult::Unanswered;
+        }
+        let r = zo_core::question::wait(&rrx, &self.cancel, zo_core::question::WAIT);
+        expired.store(true, Ordering::SeqCst);
+        r
+    }
 }
 
 impl Ctl {
@@ -791,7 +814,7 @@ impl Ctl {
             };
             let r = match &cfg {
                 None => claude_code::run(&model, effort.as_deref(), &mut session, &text, &extra, &cancel, &mut emit),
-                Some(cfg) => agent::run(cfg, &mut history, &text, zo_core::Mode::load(), &zo_core::approval::AppApprover, &zo_core::approval::NoQuestions, &cancel, &mut emit),
+                Some(cfg) => agent::run(cfg, &mut history, &text, zo_core::Mode::load(), &zo_core::approval::AppApprover, &DeskQuestioner { tx: tx.clone(), cancel: cancel.clone() }, &cancel, &mut emit),
             };
             let _ = tx.send(Msg::Done(r, history, session));
         });
@@ -832,6 +855,30 @@ impl Ctl {
                     Ok(Msg::Ev(Event::ToolDone { ok, output, .. })) => {
                         let short: String = output.chars().take(300).collect();
                         me.add(&format!("{} {}", if ok { "✓" } else { "✗" }, short), if ok { "msg-tool-out" } else { "msg-error" });
+                    }
+                    Ok(Msg::Ask(questions, reply, expired)) => {
+                        thinking.set_visible(false);
+                        me.end_group();
+                        let qs = questions.clone();
+                        let first = questions.first().map(|q| q.question.clone()).unwrap_or_default();
+                        let card_slot: Rc<RefCell<Option<gtk::Box>>> = Rc::new(RefCell::new(None));
+                        let (me2, slot2) = (me.clone(), card_slot.clone());
+                        let card = crate::questioncard::build(questions, expired, move |result| {
+                            // the card goes, one line of what was decided stays in the chat, and the model gets the answer
+                            if let Some(c) = slot2.borrow_mut().take() {
+                                me2.thread.remove(&c);
+                            }
+                            crate::ask::question_open(false);
+                            crate::ask::withdraw("zo-question");
+                            me2.add(&crate::questioncard::summary(&qs, &result), "msg-tool");
+                            let _ = reply.send(result);
+                        });
+                        *card_slot.borrow_mut() = Some(card.clone());
+                        me.thread.append(&card);
+                        me.scroll_down();
+                        crate::ask::question_open(true);
+                        crate::ask::needs_you("zo-question", &first, None);
+                        card.grab_focus();
                     }
                     Ok(Msg::Done(result, history, session)) => {
                         thinking.set_visible(false);

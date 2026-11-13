@@ -15,6 +15,7 @@ Needs a signed-in app. **With the switch off, or signed out, there is no network
   * `{id, type:"op", op | inner:{op, id?, provider?, model?, effort?, set?}}`, only `status providers profiles profile_use models select mode`
   * `{id, type:"stop", job_id?}`
   * `{id, type:"approval_reply", job_id, approval, yes}`
+  * `{id, type:"answer_reply", job_id, question_id, answers|cancelled}`: the answer to a question card (`question` event) of a running web session; only for a card that job showed (docs/INTERACTION.md section 6)
 * Jobs are untrusted: id must be `[A-Za-z0-9-_:.]` up to 64; text up to 100 000 characters; attachments at most 20 items / 8 MB; a job whose `age_ms` (or
   `now - created_ms`) is 120 s or more is never run. The request given to the local service is **built from the checked fields**, so a job cannot add a tenant,
   a mode or any other key. Only one web session runs at a time.

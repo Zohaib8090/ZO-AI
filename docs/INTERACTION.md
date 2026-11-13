@@ -3,7 +3,7 @@
 Written 2026-11-13 from the owner's request: like the Claude app, ZO-AI should (1) tell you with a notification when it needs
 a decision (a sensitive action in Manual or Auto mode), and (2) be able to ASK QUESTIONS with ready-made options plus an
 "Other" free-text answer. It must work the same on the desktop app, the web app and the native mobile app.
-This file is the contract; every client is built against it. Status: specified, not built yet.
+This file is the contract; every client is built against it. Status (2026-11-13): core, server relay, desktop (GTK) and web are built and tested (section 6); the native Android app and Web Push for "needs you" are not.
 
 ## 1. The question tool
 
@@ -72,3 +72,42 @@ Privacy: the payload of a push never contains the command, file path or question
 2. Web: card UI, notification hooks (service worker already exists), reply wiring.
 3. Desktop: GTK card in the chat, desktop notification with actions, tray state.
 4. Native Android app: built against this file from the start (card screen, notification channel and actions).
+
+## 6. What is built (branch feat/interact) and what is not
+
+Code: `zo-core/src/question.rs` (parse the model's questions, validate answers, the text for the model, the table of open questions, the wait),
+`approval.rs` (`Questioner`, `QuestionResult`), `ai/agent.rs` (the tool, one call per answer), `service.rs` (`RemoteQuestioner`, the `answer` op),
+`link.rs` (desktop link: `answer_reply` job), `zo-server/src/link.rs` (relay), `zo-ai/src/questioncard.rs` + `ask.rs` + `chat.rs` (GTK card, desktop
+notification), `zo-server/web/index.html` (card, notification).
+
+Rules as built (they refine section 2):
+
+* **A client must say it can show a card**: `"can_ask": true` in the `send` request (the web page and the desktop link do). For any other client
+  (the phone daemon, `zo`, scheduled tasks, sub-agents) the tool is NOT offered to the model at all, and a call that still arrives is answered
+  "There is nobody to ask here". The MCP server (`zo-mcp`) never lists it.
+* Result text for the model: answered `Q: ...\nA: a, b [Other: text]`; Skip: `The person declined to answer.`; timeout, Stop, client gone, a second
+  call in the same answer or no one to ask: `The person did not answer.` (or an error for the model).
+* Validation (`question::validate_answers`, the only place): one answer per question, labels must be among the offered ones, each at most once, one
+  choice only for a single-select question, `other` cleaned of control characters and cut to 2000, something chosen for every question. An invalid
+  answer is ignored and the question stays open; an unknown id is ignored; the first valid answer closes the question (a second one finds nothing).
+* Questions: 1 to 4, texts cleaned of control characters, labels unique and never "Other" (the client adds it).
+* Waiting: 10 minutes (`question::WAIT`), checked every 200 ms against Stop, so Stop ends a waiting question at once; the connection closing or
+  `detached` ends it too. The 3-minute variant for "no notification channel" is NOT built (the service does not know the client's channels).
+* Activity: the item of the answer says "Waiting for your answer" while a question is open (`activity::set_detail_of`).
+* Desktop link: the question event goes to the web as it is. The answer comes back as the job `{type:"answer_reply", job_id, question_id, answers|cancelled}`
+  (server: `POST /api/reply {stream, op:"answer", id, answers|cancelled}`, 1 to 4 answers, at most 24 KB, numeric id). The desktop forwards it only for a
+  running job and only for a card that job showed; the service validates again. It does NOT need "Answer approvals from the web too": a question runs
+  nothing, it is the person's own words (the same as typing a message). The desktop does not show its own card for a web session.
+* Desktop (GTK): `DeskQuestioner` (chat.rs) + `questioncard.rs`: chip, question, options with descriptions, Other + text, Skip, Back/Next/Send, keys 1 to
+  6, Enter, Esc; the card closes itself as "not answered" when the wait ends (Stop, timeout). One line stays in the chat. Notification "ZO-AI needs you"
+  (GIO, `ask::needs_you`) when the window is not in front: approvals have Allow / Deny buttons (they answer the open dialog), a question has an Answer
+  button; the body click shows the window. The tray asks for attention for approvals and questions.
+* Web: card as in section 4; a new card never rebuilds while typing; Send waits for the server's yes (an error keeps the card open); the end of the answer
+  closes open cards; the composer is not touched (it is locked while an answer runs). Notification through the service worker/page, tag per chat
+  (`zo-needs-<chat>`), generic text unless "Show the chat title" is on; the switch is "ZO-AI needs me" (approvals and questions).
+* NOT built: Web Push for a closed tab (a `keep_running` answer cannot take an answer after the tab left: the service refuses approvals and
+  questions after `detached`, so a "needs you" push would only lead to a card that cannot be answered; it needs resumable streams first); the native
+  Android notification channel and screens; the CLI `zo` does not show cards (it does not say `can_ask`); Claude Code mode has no question tool.
+
+Tests: `cargo test -p zo-core question` and `ask_user`, `-p zo-core link::`, `-p zo-server -- question` (relay and the real link end to end with
+the mock model), and in a display container `xvfb-run -a cargo test -p zo-ai -- --ignored the_card` (the GTK card).

@@ -868,3 +868,14 @@ textview.code-view { padding: 10px; }
 .star-btn { opacity: 0.55; }
 .star-btn:hover { opacity: 1; }
 .link-btn { color: #7C9EE0; font-size: 12px; padding: 2px 0; }
+
+/* the question card (docs/INTERACTION.md) */
+.q-card { background-color: #262626; border: 1px solid alpha(white, 0.08); border-radius: 14px; padding: 14px 16px; margin: 6px 0; }
+.q-card:focus-within { border-color: alpha(#5FD4D4, 0.45); }
+.q-chip { background-color: alpha(white, 0.08); color: #BDBDBD; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; font-weight: 600; }
+.q-title { color: #ECECEC; font-size: 14.5px; font-weight: 500; }
+.q-step { color: #8C8C8C; font-size: 11.5px; }
+.q-opt { padding: 6px 8px; border-radius: 9px; }
+.q-opt:hover { background-color: alpha(white, 0.05); }
+.q-opt-label { color: #ECECEC; font-size: 13.5px; font-weight: 500; }
+.q-opt-desc { color: #8C8C8C; font-size: 12px; }
