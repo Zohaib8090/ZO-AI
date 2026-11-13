@@ -38,7 +38,6 @@ import org.zohara.zoai.core.design.ZoIcons
 import org.zohara.zoai.core.design.ZoTheme
 import org.zohara.zoai.core.net.LinkCaps
 import org.zohara.zoai.core.net.LinkDevice
-import org.zohara.zoai.link.DesktopUi
 import org.zohara.zoai.link.LinkModes
 import org.zohara.zoai.link.LinkState
 import org.zohara.zoai.link.ModeRows

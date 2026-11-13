@@ -1,5 +1,6 @@
 package org.zohara.zoai.settings
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,19 +24,38 @@ fun SettingsHomeScreen() {
   val account = rememberAccount()
   val nav = LocalNav.current
   SetTopBar("Settings")
-  SettingsHomeContent(SettingsPages.visible(account?.restricted ?: true)) { nav.settings(it.route) }
+  SettingsHomeContent(SettingsPages.visible(account?.restricted ?: true), onOpen = { nav.settings(it.route) })
+}
+
+/**
+ * NAV-23: at 840 dp and wider the list of pages stays on the left and the selected page is drawn on the right. [page] is the route of the page
+ * to show (the Settings home itself shows the first page of the list); [content] draws it.
+ */
+@Composable
+fun SettingsTwoPane(page: String?, content: @Composable (route: String) -> Unit) {
+  val account = rememberAccount()
+  val nav = LocalNav.current
+  val pages = SettingsPages.visible(account?.restricted ?: true)
+  val selected = pages.firstOrNull { it.route == page } ?: pages.first()
+  SetTopBar("Settings")
+  org.zohara.zoai.nav.TwoPane(
+    list = { SettingsHomeContent(pages, onOpen = { nav.settingsInPane(it.route) }, selected = selected.route, fillWidth = true) },
+    detail = { androidx.compose.runtime.CompositionLocalProvider(LocalSettingsEmbedded provides true) { content(selected.route) } },
+    listWidth = 300.dp,
+  )
 }
 
 @Composable
-fun SettingsHomeContent(pages: List<SettingsPageDef>, onOpen: (SettingsPageDef) -> Unit) {
+fun SettingsHomeContent(pages: List<SettingsPageDef>, selected: String? = null, fillWidth: Boolean = false, onOpen: (SettingsPageDef) -> Unit) {
   androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.TopCenter) {
-    Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+    Column((if (fillWidth) Modifier else Modifier.widthIn(max = 720.dp)).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
       Text("Settings", style = ZoTheme.type.pageTitle, color = ZoTheme.colors.text, modifier = Modifier.padding(top = 12.dp, bottom = 14.dp))
       SettingsCard {
         pages.forEachIndexed { i, p ->
           SettingsRow(
             p.title, subtitle = p.sub, onClick = { onOpen(p) }, divider = i != pages.lastIndex,
-            control = { Text("Open  ›", style = ZoTheme.type.button, color = ZoTheme.colors.dim) },
+            modifier = if (p.route == selected) Modifier.background(ZoTheme.colors.active) else Modifier,
+            control = { Text("Open  ›", style = ZoTheme.type.button, color = if (p.route == selected) ZoTheme.colors.accent else ZoTheme.colors.dim) },
           )
         }
       }

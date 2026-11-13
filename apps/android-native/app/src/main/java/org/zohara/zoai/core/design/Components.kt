@@ -49,6 +49,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -303,8 +304,10 @@ fun ZoTextField(
   isError: Boolean = false,
   keyboardType: KeyboardType = KeyboardType.Text,
   keyboardOptions: KeyboardOptions? = null,
+  keyboardActions: androidx.compose.foundation.text.KeyboardActions = androidx.compose.foundation.text.KeyboardActions.Default,
   trailing: (@Composable () -> Unit)? = null,
   mono: Boolean = false,
+  focusRequester: androidx.compose.ui.focus.FocusRequester? = null,
 ) {
   val c = ZoTheme.colors
   val t = ZoTheme.type
@@ -335,7 +338,8 @@ fun ZoTextField(
           interactionSource = src,
           visualTransformation = if (password && !shown) PasswordVisualTransformation() else VisualTransformation.None,
           keyboardOptions = keyboardOptions ?: KeyboardOptions(keyboardType = if (password) KeyboardType.Password else keyboardType),
-          modifier = Modifier.fillMaxWidth().semantics { (label ?: placeholder.takeIf { it.isNotBlank() })?.let { contentDescription = it } },
+          keyboardActions = keyboardActions,
+          modifier = Modifier.fillMaxWidth().then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).semantics { (label ?: placeholder.takeIf { it.isNotBlank() })?.let { contentDescription = it } },
         )
         if (value.isEmpty() && placeholder.isNotEmpty()) Text(placeholder, style = textStyle, color = c.dimmer)
       }

@@ -56,9 +56,15 @@ fun SearchScreen() {
 @Composable
 fun SearchContent(ui: SearchUi, recent: List<ChatSummary>?, clock: PagesClock, onQuery: (String) -> Unit, onOpen: (String) -> Unit) {
   val display = SearchDisplay.of(ui, recent)
+  // LIST-15: the box takes the keyboard focus when the page opens (desktop grab_focus, web $('q').focus())
+  val focus = remember { androidx.compose.ui.focus.FocusRequester() }
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
     item { PageHeader("Search") }
-    item { ZoTextField(ui.query, onQuery, placeholder = PagesFormat.SEARCH_PLACEHOLDER, trailing = { org.zohara.zoai.core.design.ZoIcon(ZoIcons.Search) }) }
+    item {
+      // the field is inside a lazy list: ask for the focus once it is really composed
+      androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+      ZoTextField(ui.query, onQuery, focusRequester = focus, placeholder = PagesFormat.SEARCH_PLACEHOLDER, trailing = { org.zohara.zoai.core.design.ZoIcon(ZoIcons.Search) })
+    }
     when (display) {
       is SearchDisplay.Recents ->
         if (display.chats.isEmpty()) {

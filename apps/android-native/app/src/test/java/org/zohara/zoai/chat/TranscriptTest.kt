@@ -106,7 +106,11 @@ class TranscriptTest {
     val info = Transcript.context(items, "llama3")
     assertEquals(200, info.history) // 760 chars / 3.8
     assertEquals(200 + 2400 + 3200, info.used)
-    assertEquals(128_000 - info.used, info.free)
+    // CTX-01: a buffer of 20 percent of the window is kept for the summary; free is what is left before it
+    assertEquals(25_600, info.buffer)
+    assertEquals(128_000 - info.used - 25_600, info.free)
+    assertEquals(128_000, info.used + info.buffer + info.free)
+    assertEquals(info.buffer - 0, 128_000 - Transcript.untilCompact(info) - info.used)
     assertEquals(4.5, info.percent, 0.05)
     assertTrue(Transcript.untilCompact(info) > 0)
     assertEquals(1.0, Transcript.context(emptyList(), "gemini-2.0").percent, 0.0)

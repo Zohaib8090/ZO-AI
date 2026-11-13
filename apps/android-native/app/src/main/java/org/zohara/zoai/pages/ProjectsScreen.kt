@@ -18,6 +18,7 @@ import org.zohara.zoai.core.design.ErrorLine
 import org.zohara.zoai.core.design.PrimaryButton
 import org.zohara.zoai.core.design.SecondaryButton
 import org.zohara.zoai.core.design.ZoBottomSheet
+import org.zohara.zoai.core.design.ZoIcon
 import org.zohara.zoai.core.design.ZoIcons
 import org.zohara.zoai.core.design.ZoTextField
 import org.zohara.zoai.core.design.ZoTheme
@@ -46,20 +47,36 @@ fun ProjectsContent(
 ) {
   var creating by remember { mutableStateOf(startWithSheet) }
   var shown by remember { mutableStateOf(startWithProject) }
-  ListPage(
-    state = state,
+  var query by remember { mutableStateOf("") }
+  val all = state.value
+  val filtered = all?.let { PagesFormat.filterProjects(it, query) }
+  val wide = org.zohara.zoai.nav.isTwoPane()
+  val list: @Composable () -> Unit = { ListPage(
+    state = if (filtered != null && query.isNotBlank()) state.copy(value = filtered) else state,
     title = "Projects",
     onRefresh = onRefresh,
     headerAction = { PrimaryButton("New project", { creating = true }, icon = ZoIcons.Plus) },
+    beforeList = if (all.isNullOrEmpty()) null else ({
+      item(key = "project-search") {
+        ZoTextField(query, { query = it }, placeholder = "Search projects", trailing = { ZoIcon(ZoIcons.Search) })
+      }
+    }),
     empty = {
-      EmptyBox(
+      if (!all.isNullOrEmpty()) EmptyBox("Nothing matches that.", icon = ZoIcons.Search)
+      else EmptyBox(
         PagesFormat.PROJECTS_EMPTY_TITLE, subtitle = PagesFormat.PROJECTS_EMPTY_TEXT, icon = ZoIcons.Folder,
         action = { PrimaryButton("New project", { creating = true }) },
       )
     },
-  ) { p -> PageCard(ZoIcons.Folder, p.name, meta = p.meta, onClick = { shown = p }) }
+  ) { p -> PageCard(ZoIcons.Folder, p.name, meta = p.meta, onClick = { shown = p }, selected = wide && shown?.id == p.id) } }
+  if (wide) {
+    // NAV-23: the opened project is shown beside the list instead of in a sheet
+    org.zohara.zoai.nav.TwoPane(list, detail = { shown?.let { ProjectDetail(it, Modifier.padding(16.dp)) } ?: PickAnItem("Pick a project to see it here") })
+  } else {
+    list()
+    shown?.let { ProjectSheet(it) { shown = null } }
+  }
   if (creating) NewProjectSheet(onCreate = onCreate, onDismiss = { creating = false })
-  shown?.let { ProjectSheet(it) { shown = null } }
 }
 
 /** PROJ-05: Name (required) and Goal. */
@@ -97,8 +114,22 @@ fun NewProjectSheet(onCreate: suspend (String, String) -> String?, onDismiss: ()
  */
 @Composable
 fun ProjectSheet(p: PagesFormat.Project, onDismiss: () -> Unit) {
+  ZoBottomSheet(title = p.name, onDismiss = onDismiss, footer = { SecondaryButton("Close", onDismiss) }) { ProjectDetailBody(p) }
+}
+
+/** The opened project in the right pane of the two-pane layout (NAV-23). */
+@Composable
+fun ProjectDetail(p: PagesFormat.Project, modifier: Modifier = Modifier) {
+  Column(modifier) {
+    Text(p.name, style = ZoTheme.type.sheetTitle, color = ZoTheme.colors.text, modifier = Modifier.padding(bottom = 10.dp))
+    ProjectDetailBody(p)
+  }
+}
+
+@Composable
+fun ProjectDetailBody(p: PagesFormat.Project) {
   val c = ZoTheme.colors
-  ZoBottomSheet(title = p.name, onDismiss = onDismiss, footer = { SecondaryButton("Close", onDismiss) }) {
+  run {
     Column {
       Text(
         p.goal.ifBlank { "ZO-AI remembers the same knowledge every time you talk to it in this project." },

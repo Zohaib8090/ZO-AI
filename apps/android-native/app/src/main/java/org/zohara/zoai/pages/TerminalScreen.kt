@@ -56,12 +56,14 @@ fun TerminalScreen() {
   val c = LocalAppContainer.current
   val runOn by c.prefs.runOn.collectAsState(initial = RunOn.Cloud)
   var text by remember { mutableStateOf("") }
+  val computerName = rememberComputerName()
   TerminalContent(
     ui, runOn, text, { text = it },
     onRun = { holder.run(text, !runOn.isCloud); text = "" },
     onClear = holder::clear,
     onUp = { holder.historyUp()?.let { text = it } },
     onDown = { holder.historyDown()?.let { text = it } },
+    computerName = computerName,
   )
 }
 
@@ -75,6 +77,7 @@ fun TerminalContent(
   onClear: () -> Unit,
   onUp: () -> Unit,
   onDown: () -> Unit,
+  computerName: String? = null,
 ) {
   val c = ZoTheme.colors
   val t = ZoTheme.type
@@ -88,7 +91,7 @@ fun TerminalContent(
     // TERM-01: the target line, a blue dot for the cloud session and a teal one for a computer
     Row(verticalAlignment = Alignment.CenterVertically) {
       Box(Modifier.size(8.dp).clip(CircleShape).background(if (runOn.isCloud) c.blue else c.accent))
-      Text(if (runOn.isCloud) "Cloud session" else runOn.device.orEmpty(), style = t.cardMeta, color = c.dim, modifier = Modifier.padding(start = 8.dp))
+      Text(if (runOn.isCloud) "Cloud session" else computerName ?: PagesFormat.COMPUTER_FALLBACK, style = t.cardMeta, color = c.dim, modifier = Modifier.padding(start = 8.dp))
     }
     Box(Modifier.weight(1f).fillMaxWidth().clip(ZoTheme.shapes.code).background(c.input).border(1.dp, c.border, ZoTheme.shapes.code)) {
       // no wrapping: columns of command output stay aligned and the log scrolls sideways

@@ -73,6 +73,7 @@ fun ActivityScreen() {
   val hub = rememberPagesHub()
   val ui by hub.activity.ui.collectAsState()
   val runOn by LocalAppContainerPrefsRunOn()
+  val computerName = rememberComputerName()
   val nav = LocalNav.current
   val toast = rememberToastLambda()
   val scope = rememberCoroutineScope()
@@ -85,6 +86,7 @@ fun ActivityScreen() {
       onOpenChat = { nav.openChat(it) },
     ),
     onRetry = hub.activity::refresh,
+    computerName = computerName,
   )
 }
 
@@ -95,7 +97,8 @@ private fun LocalAppContainerPrefsRunOn(): androidx.compose.runtime.State<RunOn>
 }
 
 @Composable
-fun ActivityContent(ui: ActivityUi, localNow: Long, runOn: RunOn, actions: ActivityActions, onRetry: () -> Unit = {}) {
+fun ActivityContent(ui: ActivityUi, localNow: Long, runOn: RunOn, actions: ActivityActions, onRetry: () -> Unit = {}, computerName: String? = null) {
+  val computer = computerName ?: PagesFormat.COMPUTER_FALLBACK
   val c = ZoTheme.colors
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
     item { PageHeader("Activity") }
@@ -114,7 +117,7 @@ fun ActivityContent(ui: ActivityUi, localNow: Long, runOn: RunOn, actions: Activ
     item {
       SettingsCard {
         SettingsRow("This phone", subtitle = "This app (Active)")
-        if (!runOn.isCloud) SettingsRow("Linked computer", subtitle = "${runOn.device} (Online and ready)")
+        if (!runOn.isCloud) SettingsRow("Linked computer", subtitle = "$computer (Online and ready)")
         SettingsRow("Web app and command line", subtitle = PagesFormat.clientsSeenText(ui.clientsSeen, ui.serverNow), divider = ui.clients.isNotEmpty())
         if (ui.clients.isNotEmpty()) SettingsRow("Connected clients", subtitle = PagesFormat.connectionsLine(ui.clients.size), divider = false)
       }
@@ -124,7 +127,7 @@ fun ActivityContent(ui: ActivityUi, localNow: Long, runOn: RunOn, actions: Activ
     item {
       SettingsCard {
         for ((name, text) in PagesFormat.BACKGROUND_SERVICES) SettingsRow(name, subtitle = text)
-        SettingsRow("Desktop link", subtitle = if (runOn.isCloud) PagesFormat.DESKTOP_LINK_STANDBY else "Connected to ${runOn.device}", divider = false)
+        SettingsRow("Desktop link", subtitle = if (runOn.isCloud) PagesFormat.DESKTOP_LINK_STANDBY else "Connected to $computer", divider = false)
       }
     }
   }

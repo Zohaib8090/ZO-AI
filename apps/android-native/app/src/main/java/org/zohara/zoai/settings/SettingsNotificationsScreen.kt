@@ -56,6 +56,10 @@ object NotifLogic {
     is PushResult.Failed -> r.message
   }
 
+  /** NOTIF-12: the system page of one notification channel (Android 8+), where importance, sound and the lock screen are set. */
+  fun channelSettings(pkg: String, channelId: String): Intent =
+    Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, pkg).putExtra(Settings.EXTRA_CHANNEL_ID, channelId)
+
   fun deviceTitle(s: PushSubscription, thisId: String): String =
     s.label.ifBlank { if (s.kind == "fcm") "Android app" else "Browser" } + if (s.id == thisId) " (this device)" else ""
 
@@ -78,7 +82,7 @@ data class NotifState(
 )
 
 class NotifActions(
-  val onAsk: () -> Unit = {}, val onOpenSystem: () -> Unit = {},
+  val onAsk: () -> Unit = {}, val onOpenSystem: () -> Unit = {}, val onOpenChannel: (String) -> Unit = {},
   val onAnswers: (Boolean) -> Unit = {}, val onNeedsYou: (Boolean) -> Unit = {}, val onDetails: (Boolean) -> Unit = {},
   val onShowTitle: (Boolean) -> Unit = {}, val onSound: (Boolean) -> Unit = {}, val onTest: () -> Unit = {},
   val onClosed: (Boolean) -> Unit = {}, val onRemoveDevice: (PushSubscription) -> Unit = {},
@@ -119,6 +123,7 @@ fun SettingsNotificationsScreen() {
       NotifActions(
         onAsk = { if (Build.VERSION.SDK_INT >= 33) launcher.launch(Manifest.permission.POST_NOTIFICATIONS) else denied = true },
         onOpenSystem = { context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
+        onOpenChannel = { id -> context.startActivity(NotifLogic.channelSettings(context.packageName, id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
         onAnswers = { v -> scope.launch { container.prefs.setNotifAnswers(v) } },
         onNeedsYou = { v -> scope.launch { container.prefs.setNotifNeedsYou(v) } },
         onDetails = { v -> scope.launch { container.prefs.setNotifDetails(v) } },
@@ -174,6 +179,12 @@ fun NotificationsContent(s: NotifState, a: NotifActions) {
   }
   Spacer(Modifier.height(12.dp))
   SettingsCard { ActionRow("Test", "Shows a notification now, even though you are looking at the app.", divider = false, actions = { PillButton("Send a test notification", a.onTest) }) }
+  SectionHeader("System settings")
+  SettingsCard {
+    ActionRow("Open system notification settings", "All notification settings of ZO-AI in Android.", actions = { PillButton("Open", a.onOpenSystem) })
+    ActionRow("Answers", "Sound, importance and the lock screen of the answer notices.", actions = { PillButton("Open", { a.onOpenChannel(NotificationChannels.ANSWERS) }) })
+    ActionRow("Needs you", "The same for the notices that wait for your yes or an answer.", divider = false, actions = { PillButton("Open", { a.onOpenChannel(NotificationChannels.NEEDS_YOU) }) })
+  }
   SectionHeader("When the app is closed")
   SettingsCard {
     SettingsRow("Also notify me when the app is closed", subtitle = NotifLogic.CLOSED, divider = false, control = { ZoSwitch(s.closed, a.onClosed) })

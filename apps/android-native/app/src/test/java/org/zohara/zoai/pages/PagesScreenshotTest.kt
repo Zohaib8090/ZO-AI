@@ -137,7 +137,7 @@ class PagesScreenshotTest {
     clientsSeen = listOf(ClientSeen(now - 7_000, "web")), serverNow = now, fetchedAt = now, loaded = true, stopSent = setOf(4),
   )
   @Test fun activity() = both("activity") { ActivityContent(activity, now, RunOn.Cloud, ActivityActions({}, {})) }
-  @Test fun activityComputer() = both("activity_computer") { ActivityContent(activity.copy(items = emptyList(), clientsSeen = emptyList()), now, RunOn("Zohaib's desktop"), ActivityActions({}, {})) }
+  @Test fun activityComputer() = both("activity_computer") { ActivityContent(activity.copy(items = emptyList(), clientsSeen = emptyList()), now, RunOn("d1"), ActivityActions({}, {}), computerName = "Zohaib's desktop") }
 
   @Test fun runningNow() = both("running_now") {
     Column(Modifier.padding(16.dp)) { RunningNowContent(activity, now, ActivityActions({}, {})) }
@@ -150,6 +150,6 @@ class PagesScreenshotTest {
     TerminalContent(TerminalUi("ZO-AI Terminal\nConnected. Type a shell command below (e.g. ls, pwd, df -h, uname -a).\n\$ df -h\nFilesystem      Size  Used Avail Use% Mounted on\n/dev/vda1        20G  7.1G   12G  38% /\n"), RunOn.Cloud, "uname", {}, {}, {}, {}, {})
   }
   @Test fun terminalComputer() = both("terminal_computer") {
-    TerminalContent(TerminalUi(), RunOn("Zohaib's desktop"), "", {}, {}, {}, {}, {})
+    TerminalContent(TerminalUi(), RunOn("d1"), "", {}, {}, {}, {}, {}, computerName = "Zohaib's desktop")
   }
 }

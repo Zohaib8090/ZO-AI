@@ -97,7 +97,7 @@ fun CodeBlock(language: String, code: String, modifier: Modifier = Modifier) {
   Column(modifier.fillMaxWidth().background(c.code, ZoTheme.shapes.code).border(1.dp, c.line, ZoTheme.shapes.code)) {
     Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
       Text(language.ifBlank { "code" }, style = ZoTheme.type.fieldHint, color = c.dim, modifier = Modifier.weight(1f))
-      ZoIconButton(ZoIcons.Copy, "Copy code", { clipboard.setText(AnnotatedString(code)) }, size = 36.dp, iconSize = 16.dp)
+      ZoIconButton(ZoIcons.Copy, "Copy the code", { clipboard.setText(AnnotatedString(code)) }, size = 36.dp, iconSize = 16.dp)
     }
     Text(
       code,

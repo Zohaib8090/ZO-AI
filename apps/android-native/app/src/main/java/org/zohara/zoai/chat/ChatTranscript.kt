@@ -130,14 +130,16 @@ object Transcript {
     return Math.max(0, Math.round(chars / 3.8f))
   }
 
-  data class ContextInfo(val used: Int, val window: Int, val history: Int, val system: Int, val tools: Int, val free: Int, val percent: Double)
+  data class ContextInfo(val used: Int, val window: Int, val history: Int, val system: Int, val tools: Int, val free: Int, val percent: Double, val buffer: Int = 0)
 
   fun context(items: List<ChatItem>, model: String): ContextInfo {
     val window = windowFor(model)
     val history = historyTokens(items)
     val used = history + SYSTEM_TOKENS + TOOL_TOKENS
     val pct = Math.min(100.0, Math.max(1.0, used.toDouble() / window * 100))
-    return ContextInfo(used, window, history, SYSTEM_TOKENS, TOOL_TOKENS, Math.max(0, window - used), Math.round(pct * 10) / 10.0)
+    // CTX-01: the auto-compact buffer is the last 20 percent of the window (compaction starts at 80, see untilCompact); free is what is left before it
+    val buffer = Math.min((window * 0.2).toInt(), Math.max(0, window - used))
+    return ContextInfo(used, window, history, SYSTEM_TOKENS, TOOL_TOKENS, Math.max(0, window - used - buffer), Math.round(pct * 10) / 10.0, buffer)
   }
 
   /** "N until auto-compact" (CTX-05): the desktop compacts at 80 percent of the window. */

@@ -314,12 +314,27 @@ class WholeAppTest {
     assertEquals("chat (touch size)", emptyList<String>(), tooSmall())
   }
 
-  @Test fun theModelPillOpensTheModelSheetAndMoreOpensSettings() { // CHAT model pill "More...", SET-model
+  @Test fun theModelPillOpensTheModelMenuAndMoreModelsOpensTheFullSheetOverTheChat() { // MODEL-01, 03, 04
     launch()
     rule.onNode(androidx.compose.ui.test.hasContentDescription("Model:", substring = true)).performClick()
-    waitFor("the model sheet") { hasText("Model and API key…") }
-    rule.onNodeWithText("Model and API key…").performClick()
-    waitFor("Settings > Model and profiles") { has("Back to Settings") }
+    waitFor("the model menu") { hasText("More models…") }
+    // nothing is pinned on this account: the empty state of the menu (MODEL-03)
+    assertTrue(hasText("Pin models in Settings"))
+    assertTrue(hasText("Star the models you use and they show here, one tap away"))
+    assertTrue(hasText("All models, key and address"))
+    rule.onNodeWithText("More models…").performClick()
+    waitFor("the full model sheet, still on the chat") { hasText("Model and API key") }
+    assertFalse("it does not leave the chat", has("Back to Settings"))
+  }
+
+  @Test fun theModelMenuOffersTheEffortLevelsOfTheModel() { // MODEL-07
+    server.effortsJson = """["low","medium","high"]"""
+    launch()
+    rule.onNode(androidx.compose.ui.test.hasContentDescription("Model:", substring = true)).performClick()
+    waitFor("the effort row") { hasText("Effort · Default") }
+    assertTrue(hasText("How hard it thinks before answering"))
+    rule.onNodeWithText("Effort · Default").performClick()
+    waitFor("the levels") { hasText("Medium") && hasText("High") }
   }
 
   @Test fun theMemoryAndAccountPagesDraw() { // screenshots of the settings pages

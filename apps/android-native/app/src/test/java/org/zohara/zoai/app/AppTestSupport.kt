@@ -21,6 +21,8 @@ class AppServer(isAdmin: Boolean = true) {
   val paths = java.util.concurrent.CopyOnWriteArrayList<String>()
   val ops = java.util.concurrent.CopyOnWriteArrayList<String>()
   @Volatile var admin: Boolean = isAdmin
+  /** the `efforts` of the models op (a JSON array) */
+  @Volatile var effortsJson: String = "[]"
   /** milliseconds `whoami` waits before it answers (the splash screen is on until then) */
   @Volatile var slowWhoami: Long = 0
   @Volatile var chatsJson: String = """[{"id":"c1","pinned":true,"title":"Pinned plan","updated":1794509131852},{"id":"c2","pinned":false,"title":"Recent idea","updated":1794509120577}]"""
@@ -59,7 +61,7 @@ class AppServer(isAdmin: Boolean = true) {
               "chats" -> json("""{"ok":true,"chats":$chatsJson}""")
               "status" -> json("""{"ok":true,"mode":"Manual","model":"claude-opus-5-5","provider":"anthropic","ready":true,"version":"0.1.0"}""")
               "providers" -> json("""{"ok":true,"current":"anthropic","providers":[{"id":"anthropic","name":"Anthropic (Claude)","local":false,"has_key":true,"current":true}]}""")
-              "models" -> json("""{"ok":true,"provider":"anthropic","models":["claude-opus-5-5","claude-sonnet-5-5"],"current":"claude-opus-5-5","efforts":[],"effort":null}""")
+              "models" -> json("""{"ok":true,"provider":"anthropic","models":["claude-opus-5-5","claude-sonnet-5-5"],"current":"claude-opus-5-5","efforts":$effortsJson,"effort":null}""")
               "profiles" -> json("""{"ok":true,"active":"","profiles":[]}""")
               "chat" -> if (runCatching { ZoJson.parseToJsonElement(body).jsonObject["id"]!!.jsonPrimitive.content }.getOrNull() == "cnew")
                 json("""{"ok":true,"id":"cnew","title":"Hello there","entries":[{"kind":"msg-user","text":"hello there"},{"kind":"msg-ai","text":"Hi from the **fake** model."}],"takes":[]}""")

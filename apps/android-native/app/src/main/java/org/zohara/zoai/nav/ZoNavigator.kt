@@ -39,6 +39,10 @@ class ZoNavigator(private val controller: NavHostController, val drawer: DrawerC
   fun terminal() = go(Routes.TERMINAL)
   /** [page] is one of the `Routes.SETTINGS_*` routes, or null for the Settings home */
   fun settings(page: String? = null) = go(page ?: Routes.SETTINGS)
+  /** NAV-23: in the two-pane layout a page chosen in the list replaces the page on the right (back still leaves Settings in one step) */
+  fun settingsInPane(page: String) {
+    controller.navigate(page) { popUpTo(Routes.SETTINGS) { inclusive = false }; launchSingleTop = true }
+  }
   fun camera() = go(Routes.CAMERA)
   fun picture(index: Int) = go(Routes.picture(index))
   /** any route of [Routes] (already encoded) */

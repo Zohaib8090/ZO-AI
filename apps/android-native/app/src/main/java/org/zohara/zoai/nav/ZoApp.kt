@@ -118,6 +118,9 @@ private fun MainShell(container: AppContainer, auth: AuthState.SignedIn, pending
   val backEntry by nav.currentBackStackEntryAsState()
   val route = backEntry?.destination?.route
   val running by container.runningCount.collectAsState()
+  // VOICE-11: which chat is on screen
+  val chatArg = backEntry?.arguments?.getString(Routes.ARG_ID)
+  LaunchedEffect(route, chatArg) { org.zohara.zoai.chat.ChatHooks.screen.value = route to chatArg }
   val banner by container.session.banner.collectAsState()
   val activity = LocalActivity.current
 
@@ -137,7 +140,10 @@ private fun MainShell(container: AppContainer, auth: AuthState.SignedIn, pending
   // NAV-21: back at the first screen minimizes the app, it never ends a running answer
   BackHandler(enabled = route == Routes.HOME && !drawer.isOpen) { activity?.moveTaskToBack(true) }
 
-  CompositionLocalProvider(LocalNav provides navigator, LocalTopBar provides topBar) {
+  // VOICE-09: "Listening" and "Stopped" are spoken by the screen reader
+  val view = androidx.compose.ui.platform.LocalView.current
+  val announce = remember(view) { screenReaderAnnouncer(view) }
+  CompositionLocalProvider(LocalNav provides navigator, LocalTopBar provides topBar, org.zohara.zoai.media.LocalAnnounce provides announce) {
     ZoDrawerLayout(
       state = drawer,
       drawerContent = {
@@ -198,3 +204,6 @@ fun NetBannerRow(banner: NetBanner?, onSignInAgain: () -> Unit, modifier: Modifi
     if (banner == NetBanner.SignedOut) SecondaryButton("Sign in again", onSignInAgain)
   }
 }
+
+/** VOICE-09: a function that has a screen reader speak a short sentence ("Listening", "Stopped") without moving the focus. */
+fun screenReaderAnnouncer(view: android.view.View): (String) -> Unit = { text -> @Suppress("DEPRECATION") view.announceForAccessibility(text) }

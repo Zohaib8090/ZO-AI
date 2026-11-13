@@ -263,9 +263,22 @@ class PagesInteractionTest {
   }
 
   @Test fun onAComputerTheLinkRowsSayWhichOne() {
-    themed { ActivityContent(ActivityUi(loaded = true), 0, RunOn("Desk"), ActivityActions({}, {})) }
+    themed { ActivityContent(ActivityUi(loaded = true), 0, RunOn("dev-1"), ActivityActions({}, {}), computerName = "Desk") }
     rule.onNodeWithText("Desk (Online and ready)").assertExists()
     rule.onNodeWithText("Connected to Desk").assertExists()
+  }
+
+  @Test fun aComputerWithoutAKnownNameIsCalledYourComputerNotItsId() { // LINK-15
+    themed { ActivityContent(ActivityUi(loaded = true), 0, RunOn("dev-9f3a"), ActivityActions({}, {})) }
+    rule.onNodeWithText("Your computer (Online and ready)").assertExists()
+    rule.onNodeWithText("Connected to Your computer").assertExists()
+    assertEquals(0, rule.onAllNodesWithText("dev-9f3a", substring = true).fetchSemanticsNodes().size)
+  }
+
+  @Test fun theTerminalTargetLineNeverShowsTheDeviceId() { // LINK-15
+    themed { TerminalContent(TerminalUi(), RunOn("dev-9f3a"), "", {}, {}, {}, {}, {}) }
+    rule.onNodeWithText("Your computer").assertExists()
+    assertEquals(0, rule.onAllNodesWithText("dev-9f3a", substring = true).fetchSemanticsNodes().size)
   }
 
   @Test fun runningNowSheetPartShowsNothingRunning() {
@@ -283,7 +296,7 @@ class PagesInteractionTest {
   }
 
   @Test fun terminalOnAComputerNamesIt() {
-    themed { TerminalContent(TerminalUi(), RunOn("Desk"), "ls", {}, {}, {}, {}, {}) }
+    themed { TerminalContent(TerminalUi(), RunOn("dev-1"), "ls", {}, {}, {}, {}, {}, computerName = "Desk") }
     rule.onNodeWithText("Desk").assertExists()
     rule.onNodeWithText("Run").assertIsEnabled()
   }

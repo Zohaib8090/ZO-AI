@@ -88,10 +88,14 @@ class ModelMenuController(
           val name = { id: String -> prov.providers.firstOrNull { it.id == id }?.name?.ifBlank { id } ?: id }
           val cached = status.provider.takeIf { it.isNotBlank() }?.let { modelsCache.get(ModelLogic.cacheKey(it, "")) }
           val active = prof.profiles.firstOrNull { it.id == prof.active }
+          // MODEL-07: the levels come from the models list; ask for it when the cache does not have it yet
+          val models = cached ?: status.provider.takeIf { it.isNotBlank() }?.let {
+            try { api.models(it).also { r -> modelsCache.put(ModelLogic.cacheKey(it, ""), r) } } catch (e: ApiException) { null }
+          }
           _state.value = ModelMenuState(
             loading = false, groups = ModelLogic.menuGroups(prof, name), activeProfile = prof.active, currentModel = status.model,
             currentProviderName = name(status.provider), hasProvider = status.ready || status.provider.isNotBlank(),
-            efforts = cached?.efforts.orEmpty(), effort = active?.effort ?: cached?.effort.orEmpty(),
+            efforts = models?.efforts.orEmpty(), effort = active?.effort ?: models?.effort.orEmpty(),
           )
         }
       } catch (e: CancellationException) {
@@ -156,7 +160,7 @@ fun ModelMenuSheet(onDismiss: () -> Unit, onMore: () -> Unit, onChanged: () -> U
     ModelMenuBody(
       s,
       onPick = { id, m -> ctl.pick(id, m) { onChanged(); onDismiss() } },
-      onMore = { onDismiss(); onMore() },
+      onMore = onMore, // the host swaps the menu for the full sheet; dismissing here would close the host too
       onOpenSettings = { onDismiss(); nav.settings(Routes.SETTINGS_MODEL) },
       onEffort = ctl::setEffort,
     )

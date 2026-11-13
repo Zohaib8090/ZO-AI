@@ -29,12 +29,35 @@ import org.zohara.zoai.settings.SettingsModelScreen
 import org.zohara.zoai.settings.SettingsNotificationsScreen
 import org.zohara.zoai.settings.SettingsPersonalityScreen
 import org.zohara.zoai.settings.SettingsSyncScreen
+import org.zohara.zoai.settings.SettingsTwoPane
 
 /**
  * Route pattern -> the screen composable. The navigation graph is built from this map; [Routes.all] lists every screen and a unit test checks
  * that both have the same keys, so a screen can not be added to one and forgotten in the other.
  */
 object ScreenRegistry {
+  /** the page screens of Settings by route, for the right pane of the two-pane layout (NAV-23) */
+  private val settingsPages: Map<String, @Composable () -> Unit> = mapOf(
+    Routes.SETTINGS_MODEL to { SettingsModelScreen() },
+    Routes.SETTINGS_PERSONALITY to { SettingsPersonalityScreen() },
+    Routes.SETTINGS_MEMORY to { SettingsMemoryScreen() },
+    Routes.SETTINGS_GENERAL to { SettingsGeneralScreen() },
+    Routes.SETTINGS_APPS to { SettingsAppsScreen() },
+    Routes.SETTINGS_MACHINES to { SettingsMachinesScreen() },
+    Routes.SETTINGS_SYNC to { SettingsSyncScreen() },
+    Routes.SETTINGS_COMPUTERS to { MyComputersScreen() },
+    Routes.SETTINGS_NOTIFICATIONS to { SettingsNotificationsScreen() },
+    Routes.SETTINGS_ACCOUNT to { SettingsAccountScreen() },
+    Routes.SETTINGS_ADVANCED to { SettingsAdvancedScreen() },
+    Routes.SETTINGS_DATA to { SettingsDataScreen() },
+    Routes.SETTINGS_ABOUT to { SettingsAboutScreen() },
+  )
+
+  /** a Settings route: a single screen on a phone, the list and the page together from 840 dp (NAV-23) */
+  private fun settings(route: String?, page: @Composable () -> Unit): @Composable (NavBackStackEntry) -> Unit = { _ ->
+    if (isTwoPane()) SettingsTwoPane(route) { r -> (settingsPages[r] ?: page)() } else page()
+  }
+
   val screens: Map<String, @Composable (NavBackStackEntry) -> Unit> = mapOf(
     Routes.HOME to { _ -> HomeScreen() },
     Routes.CHAT to { e -> ChatScreen(e.arguments?.getString(Routes.ARG_ID).orEmpty()) },
@@ -46,20 +69,20 @@ object ScreenRegistry {
     Routes.SCHEDULED to { _ -> ScheduledScreen() },
     Routes.ACTIVITY to { _ -> ActivityScreen() },
     Routes.TERMINAL to { _ -> TerminalScreen() },
-    Routes.SETTINGS to { _ -> SettingsHomeScreen() },
-    Routes.SETTINGS_MODEL to { _ -> SettingsModelScreen() },
-    Routes.SETTINGS_PERSONALITY to { _ -> SettingsPersonalityScreen() },
-    Routes.SETTINGS_MEMORY to { _ -> SettingsMemoryScreen() },
-    Routes.SETTINGS_GENERAL to { _ -> SettingsGeneralScreen() },
-    Routes.SETTINGS_APPS to { _ -> SettingsAppsScreen() },
-    Routes.SETTINGS_MACHINES to { _ -> SettingsMachinesScreen() },
-    Routes.SETTINGS_SYNC to { _ -> SettingsSyncScreen() },
-    Routes.SETTINGS_COMPUTERS to { _ -> MyComputersScreen() },
-    Routes.SETTINGS_NOTIFICATIONS to { _ -> SettingsNotificationsScreen() },
-    Routes.SETTINGS_ACCOUNT to { _ -> SettingsAccountScreen() },
-    Routes.SETTINGS_ADVANCED to { _ -> SettingsAdvancedScreen() },
-    Routes.SETTINGS_DATA to { _ -> SettingsDataScreen() },
-    Routes.SETTINGS_ABOUT to { _ -> SettingsAboutScreen() },
+    Routes.SETTINGS to settings(null) { SettingsHomeScreen() },
+    Routes.SETTINGS_MODEL to settings(Routes.SETTINGS_MODEL) { SettingsModelScreen() },
+    Routes.SETTINGS_PERSONALITY to settings(Routes.SETTINGS_PERSONALITY) { SettingsPersonalityScreen() },
+    Routes.SETTINGS_MEMORY to settings(Routes.SETTINGS_MEMORY) { SettingsMemoryScreen() },
+    Routes.SETTINGS_GENERAL to settings(Routes.SETTINGS_GENERAL) { SettingsGeneralScreen() },
+    Routes.SETTINGS_APPS to settings(Routes.SETTINGS_APPS) { SettingsAppsScreen() },
+    Routes.SETTINGS_MACHINES to settings(Routes.SETTINGS_MACHINES) { SettingsMachinesScreen() },
+    Routes.SETTINGS_SYNC to settings(Routes.SETTINGS_SYNC) { SettingsSyncScreen() },
+    Routes.SETTINGS_COMPUTERS to settings(Routes.SETTINGS_COMPUTERS) { MyComputersScreen() },
+    Routes.SETTINGS_NOTIFICATIONS to settings(Routes.SETTINGS_NOTIFICATIONS) { SettingsNotificationsScreen() },
+    Routes.SETTINGS_ACCOUNT to settings(Routes.SETTINGS_ACCOUNT) { SettingsAccountScreen() },
+    Routes.SETTINGS_ADVANCED to settings(Routes.SETTINGS_ADVANCED) { SettingsAdvancedScreen() },
+    Routes.SETTINGS_DATA to settings(Routes.SETTINGS_DATA) { SettingsDataScreen() },
+    Routes.SETTINGS_ABOUT to settings(Routes.SETTINGS_ABOUT) { SettingsAboutScreen() },
     Routes.SETTINGS_APPROVE to { _ -> SettingsApproveScreen() },
     Routes.CAMERA to { _ -> CameraScreen() },
     Routes.PICTURE to { e -> PictureScreen(e.arguments?.getInt(Routes.ARG_INDEX) ?: 0) },

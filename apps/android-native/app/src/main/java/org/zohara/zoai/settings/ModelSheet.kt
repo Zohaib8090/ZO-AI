@@ -234,7 +234,12 @@ private fun ModelListSection(s: ModelSheetState, a: ModelSheetActions) {
       modifier = Modifier.fillMaxWidth(),
     )
     val pins = s.pins
-    val items = ModelLogic.orderModels(s.models, pins, s.filter)
+    // MODEL-08: Claude Code lists the newest model of each family and keeps the older ones under "More models" (a search shows all)
+    val grouped = s.providerId == "claude-code" && s.filter.isBlank()
+    val split = if (grouped) ModelLogic.splitMain(s.models) else s.models to emptyList()
+    val items = ModelLogic.orderModels(split.first, pins, s.filter)
+    val older = split.second
+    var showOlder by remember(s.providerId) { mutableStateOf(false) }
     val custom = ModelLogic.customOffer(s.models, s.filter)
     Spacer(Modifier.size(8.dp))
     if (s.fetching) {
@@ -248,6 +253,18 @@ private fun ModelListSection(s: ModelSheetState, a: ModelSheetActions) {
         Modifier.fillMaxWidth().heightIn(max = 260.dp).clip(ZoTheme.shapes.field).border(1.dp, c.line, ZoTheme.shapes.field),
       ) {
         items(items, key = { it }) { m -> ModelRow(m, m == s.chosen, m in pins, a) }
+        if (older.isNotEmpty()) {
+          item(key = "more-models") {
+            Row(
+              Modifier.fillMaxWidth().clickable(role = Role.Button) { showOlder = !showOlder }.padding(horizontal = 14.dp, vertical = 12.dp),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text("More models", style = ZoTheme.type.body, color = c.text2, modifier = Modifier.weight(1f))
+              ZoIcon(if (showOlder) ZoIcons.Down else ZoIcons.Chevron, tint = c.dim, size = 16.dp)
+            }
+          }
+          if (showOlder) items(older, key = { "older:$it" }) { m -> ModelRow(m, m == s.chosen, m in pins, a) }
+        }
         if (custom.isNotEmpty()) item(key = "custom:$custom") { CustomRow(custom, custom == s.chosen, a.onChoose) }
         if (items.isEmpty() && custom.isEmpty()) item(key = "none") {
           Text(

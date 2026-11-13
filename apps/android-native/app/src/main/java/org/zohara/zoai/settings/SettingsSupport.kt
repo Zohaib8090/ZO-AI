@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -214,9 +217,14 @@ fun rememberAccount(): Whoami? {
 
 // ================================================================================================================ page scaffold and rows
 
+/** True while a settings page is drawn in the right pane of the two-pane layout (NAV-23): the back link is hidden. */
+val LocalSettingsEmbedded = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 /** The "‹ Settings" link at the top of every page under Settings (SET-02). */
 @Composable
 fun SettingsBackLink(modifier: Modifier = Modifier) {
+  // NAV-23: beside the list of pages there is nothing to go back to
+  if (LocalSettingsEmbedded.current) return
   val c = ZoTheme.colors
   val nav = LocalNav.current
   Row(modifier.padding(top = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -327,21 +335,25 @@ fun InputSheet(
   var busy by remember { mutableStateOf(false) }
   var error by remember { mutableStateOf<String?>(null) }
   val scope = rememberCoroutineScope()
+  val go: () -> Unit = {
+    busy = true; error = null
+    scope.launch {
+      try { submit(value); onDismiss() } catch (e: ApiException) { error = e.text } finally { busy = false }
+    }
+  }
   ZoBottomSheet(
     title = title, onDismiss = onDismiss,
     footer = {
       SecondaryButton("Cancel", onDismiss)
-      PrimaryButton(confirmLabel, {
-        busy = true; error = null
-        scope.launch {
-          try { submit(value); onDismiss() } catch (e: ApiException) { error = e.text } finally { busy = false }
-        }
-      }, loading = busy)
+      PrimaryButton(confirmLabel, { go() }, loading = busy)
     },
   ) {
     ZoTextField(
       value, { value = if (maxLength > 0) it.take(maxLength) else it }, label = label, placeholder = placeholder, hint = if (busy && busyHint != null) busyHint else if (error == null) hint else null,
       singleLine = minLines <= 1, minLines = minLines, modifier = Modifier.fillMaxWidth(),
+      // SYS-06: Enter on the keyboard confirms a one-line sheet (a note stays multi-line)
+      keyboardOptions = if (minLines <= 1) KeyboardOptions(imeAction = ImeAction.Done) else null,
+      keyboardActions = KeyboardActions(onDone = { if (!busy) go() }),
     )
     error?.let { ErrorLine(it, Modifier.padding(top = 8.dp)) }
   }

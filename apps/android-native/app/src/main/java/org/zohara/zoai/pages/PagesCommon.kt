@@ -29,6 +29,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -123,11 +124,13 @@ fun PageCard(
   onLongClick: (() -> Unit)? = null,
   iconTint: Color = ZoTheme.colors.icon,
   trailing: (@Composable () -> Unit)? = null,
+  /** NAV-23: the item shown in the right pane */
+  selected: Boolean = false,
 ) {
   val c = ZoTheme.colors
   val t = ZoTheme.type
   Row(
-    modifier.fillMaxWidth().clip(ZoTheme.shapes.card).background(c.card).border(1.dp, c.line, ZoTheme.shapes.card)
+    modifier.fillMaxWidth().clip(ZoTheme.shapes.card).background(if (selected) c.active else c.card).border(1.dp, c.line, ZoTheme.shapes.card)
       .then(if (onClick != null || onLongClick != null) Modifier.combinedClickable(role = Role.Button, onClick = onClick ?: {}, onLongClick = onLongClick) else Modifier)
       .padding(horizontal = 14.dp, vertical = 12.dp),
     verticalAlignment = Alignment.CenterVertically,
@@ -247,4 +250,18 @@ fun MoreMenuButton(actions: List<MenuAction>, description: String, modifier: Mod
     ZoIconButton(ZoIcons.More, description, { open = true }, size = size, iconSize = 18.dp)
     ActionMenu(open, { open = false }, actions)
   }
+}
+
+/** LINK-15: the name of the computer the phone runs on (from the link module's choice), or null while it is not known. */
+@Composable
+fun rememberComputerName(): String? {
+  val container = org.zohara.zoai.LocalAppContainer.current
+  val choice by org.zohara.zoai.link.LinkModule.of(container).runOn.choice.collectAsState()
+  return choice.name.takeIf { choice.device != null && it.isNotBlank() }
+}
+
+/** NAV-23: what the right pane says before an item is chosen. */
+@Composable
+fun PickAnItem(text: String) {
+  Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { EmptyBox(text, icon = ZoIcons.Chat) }
 }

@@ -123,7 +123,7 @@ fun SettingsModelScreen() {
     }
   }
   if (newProfile) {
-    InputSheet("New profile", "Create", { newProfile = false }, label = "Name", placeholder = "Work, Home, Free models…", hint = "It starts from the provider and model in use now.", maxLength = 40) { name ->
+    InputSheet("New profile", "Create", { newProfile = false }, label = "Name", placeholder = "Work, Home, Free models…", hint = ModelLogic.NEW_PROFILE_HINT, maxLength = 40) { name ->
       container.api.profileCreate(name); refresh()
     }
   }

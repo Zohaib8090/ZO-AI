@@ -454,15 +454,16 @@ fun AddLinkSheet(media: ComposerMedia) {
   ZoBottomSheet("Add a link", onDismiss = close, footer = {
     SecondaryButton("Cancel", close)
     PrimaryButton("Add", go)
-  }) { AddLinkBody(value) { value = it } }
+  }) { AddLinkBody(value, onDone = { go() }) { value = it } }
 }
 
 @Composable
-fun AddLinkBody(value: String, onChange: (String) -> Unit) {
+fun AddLinkBody(value: String, onDone: () -> Unit = {}, onChange: (String) -> Unit) {
   ZoTextField(
     value, onChange, label = "Web address", placeholder = "https://example.com/page", keyboardType = KeyboardType.Uri,
     hint = "ZO-AI reads the page with its web tool after you send the message.",
     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { onDone() }),
   )
 }
 

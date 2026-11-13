@@ -57,7 +57,9 @@ fun ScheduledContent(
 ) {
   var creating by remember { mutableStateOf(startWithSheet) }
   var cancelling by remember { mutableStateOf(startWithConfirm) }
-  ListPage(
+  var shown by remember { mutableStateOf<ScheduledTask?>(null) }
+  val wide = org.zohara.zoai.nav.isTwoPane()
+  val list: @Composable () -> Unit = { ListPage(
     state = state,
     title = "Scheduled",
     onRefresh = onRefresh,
@@ -67,9 +69,23 @@ fun ScheduledContent(
     PageCard(
       ZoIcons.Alarm, PagesFormat.taskTitle(t), meta = PagesFormat.taskWhen(t, clock.locale, clock.zone),
       extra = t.prompt.takeIf { it.isNotBlank() && it != PagesFormat.taskTitle(t) },
+      onClick = if (wide) ({ shown = t }) else null, selected = wide && shown?.id == t.id,
       trailing = { ZoIconButton(ZoIcons.Trash, "Cancel this task", { cancelling = t }, size = 36.dp, iconSize = 18.dp) },
     )
-  }
+  } }
+  if (wide) {
+    // NAV-23: the task that was tapped is described beside the list
+    org.zohara.zoai.nav.TwoPane(list, detail = {
+      shown?.let { t ->
+        androidx.compose.foundation.layout.Column(Modifier.padding(16.dp)) {
+          Text(PagesFormat.taskTitle(t), style = ZoTheme.type.sheetTitle, color = ZoTheme.colors.text)
+          Text(PagesFormat.taskWhen(t, clock.locale, clock.zone), style = ZoTheme.type.cardMeta, color = ZoTheme.colors.dim, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
+          if (t.prompt.isNotBlank()) Text(t.prompt, style = ZoTheme.type.body, color = ZoTheme.colors.text)
+          androidx.compose.foundation.layout.Column(Modifier.padding(top = 14.dp)) { SecondaryButton("Cancel this task", { cancelling = t }) }
+        }
+      } ?: PickAnItem("Pick a task to see it here")
+    })
+  } else list()
   cancelling?.let { t ->
     ConfirmSheet(
       PagesFormat.CANCEL_TASK_TITLE, PagesFormat.CANCEL_TASK_TEXT, PagesFormat.CANCEL_TASK_BUTTON,

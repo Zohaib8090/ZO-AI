@@ -46,6 +46,21 @@ fun AdminOnly(content: @Composable () -> Unit) {
 object McpLogic {
   const val READ_ONLY_TEXT = "Tools that only read run on their own; the rest ask first, unless the mode is Bypass."
 
+  /** SET-APP-04: a server that wants a browser sign-in cannot finish it on a phone. */
+  const val SIGN_IN_HINT = "If it needs a sign-in, add it in the desktop app first."
+
+  /** SET-APP-10: progress while one server is tried. */
+  const val CONNECTING = "Connecting…"
+
+  /** SET-APP-05: "Trying N server(s)…" while a pasted config is tried (N is the number of servers in the JSON; 1 when it cannot be counted). */
+  fun trying(json: String): String {
+    val n = runCatching {
+      val o = kotlinx.serialization.json.Json.parseToJsonElement(json).let { it as? kotlinx.serialization.json.JsonObject }
+      ((o?.get("mcpServers") ?: o) as? kotlinx.serialization.json.JsonObject)?.size ?: 1
+    }.getOrDefault(1).coerceAtLeast(1)
+    return "Trying $n server(s)…"
+  }
+
   /** SET-APP-10: "" when the form can be sent, else the sentence. Only remote (https) servers can be added from a phone. */
   fun validate(name: String, address: String, existing: List<McpServer>): String {
     val n = name.trim(); val a = address.trim()
@@ -131,7 +146,7 @@ fun AddMcpSheet(existing: List<McpServer>, onDismiss: () -> Unit, submit: suspen
         val bad = McpLogic.validate(name, address, existing)
         if (bad.isNotEmpty()) { error = bad } else {
           busy = true; error = null
-          scope.launch { try { submit(name.trim(), address.trim(), token.ifBlank { null }); onDismiss() } catch (e: ApiException) { error = "It did not work: " + e.text } finally { busy = false } }
+          scope.launch { try { submit(name.trim(), address.trim(), token.ifBlank { null }); onDismiss() } catch (e: ApiException) { error = "It did not work: " + e.text + " " + McpLogic.SIGN_IN_HINT } finally { busy = false } }
         }
       }, loading = busy)
     },
@@ -142,7 +157,7 @@ fun AddMcpSheet(existing: List<McpServer>, onDismiss: () -> Unit, submit: suspen
       ZoTextField(address, { address = it }, label = "Address of the server", placeholder = "https://example.com/mcp", keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, modifier = Modifier.fillMaxWidth())
       androidx.compose.foundation.layout.Spacer(Modifier.size(10.dp))
       ZoTextField(token, { token = it }, label = "Access token (only if the MCP server needs one)", password = true, modifier = Modifier.fillMaxWidth())
-      Text(if (busy) "Connecting…" else McpLogic.READ_ONLY_TEXT, style = ZoTheme.type.fieldHint, color = ZoTheme.colors.dimmer, modifier = Modifier.padding(top = 8.dp))
+      Text(if (busy) McpLogic.CONNECTING else McpLogic.READ_ONLY_TEXT, style = ZoTheme.type.fieldHint, color = ZoTheme.colors.dimmer, modifier = Modifier.padding(top = 8.dp))
       error?.let { ErrorLine(it, Modifier.padding(top = 8.dp)) }
     }
   }
@@ -168,7 +183,7 @@ fun PasteConfigSheet(onDismiss: () -> Unit, submit: suspend (String) -> String) 
   ) {
     Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
       ZoTextField(text, { text = it }, label = "JSON of the servers", placeholder = "{\"mcpServers\": {\"name\": {\"url\": \"https://...\"}}}", singleLine = false, minLines = 6, mono = true, modifier = Modifier.fillMaxWidth())
-      Text("Remote servers (with a url) are added. A server that starts a program is reported as not supported here.", style = ZoTheme.type.fieldHint, color = ZoTheme.colors.dimmer, modifier = Modifier.padding(top = 6.dp))
+      Text(if (busy) McpLogic.trying(text) else "Remote servers (with a url) are added. A server that starts a program is reported as not supported here.", style = ZoTheme.type.fieldHint, color = ZoTheme.colors.dimmer, modifier = Modifier.padding(top = 6.dp))
       report?.let { Text(it, style = ZoTheme.type.cardMeta, color = ZoTheme.colors.text2, modifier = Modifier.padding(top = 10.dp), overflow = TextOverflow.Clip) }
       error?.let { ErrorLine(it, Modifier.padding(top = 8.dp)) }
     }

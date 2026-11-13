@@ -94,12 +94,6 @@ class RunOnController(
     return SendCheck.Ok
   }
 
-  /** the computer's abilities (approvals from the web?), null in the cloud */
-  fun currentDevice(): LinkDevice? = repo.state.value.device(_choice.value.device)
-
-  /** Adds `target: "desktop"` and the computer's id to a send when it runs on a computer (LINK-04). */
-  fun apply(req: SendRequest): SendRequest { val d = _choice.value.device; return if (d == null) req else req.copy(target = "desktop", device = d) }
-
   /** the account was switched or deleted: forget the choice */
   fun reset() { _choice.value = RunOnChoice.Cloud; repo.clear() }
 }

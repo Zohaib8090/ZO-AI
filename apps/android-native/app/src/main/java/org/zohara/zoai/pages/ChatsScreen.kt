@@ -21,6 +21,9 @@ import org.zohara.zoai.core.design.ZoIcons
 import org.zohara.zoai.core.design.ZoTheme
 import org.zohara.zoai.core.net.ChatSummary
 import org.zohara.zoai.nav.LocalNav
+import org.zohara.zoai.nav.TwoPane
+import org.zohara.zoai.nav.isTwoPane
+import androidx.compose.runtime.saveable.rememberSaveable
 
 /** Saved chats list. Parity rows: LIST-01..04, 08, 09, 12, 13. Refreshes on entry, on return to the app and every 60 s (LIST-04). */
 @Composable
@@ -30,7 +33,17 @@ fun ChatsScreen() {
   val nav = LocalNav.current
   val actions = rememberChatActions(hub, activeChatId = null)
   RefreshWhileVisible(60_000) { hub.chats.refresh() }
-  ChatsContent(state, remember(state) { PagesClock(System.currentTimeMillis()) }, onRefresh = hub.chats::refresh, onOpen = { nav.openChat(it.id) }, menu = actions::menu)
+  val clock = remember(state) { PagesClock(System.currentTimeMillis()) }
+  if (isTwoPane()) {
+    // NAV-23: the list on the left, the chat that was tapped on the right
+    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    TwoPane(
+      list = { ChatsContent(state, clock, onRefresh = hub.chats::refresh, onOpen = { selected = it.id }, selectedId = selected, menu = actions::menu) },
+      detail = { selected?.let { id -> org.zohara.zoai.chat.ChatScreen(id) } ?: PickAnItem("Pick a chat to read it here") },
+    )
+  } else {
+    ChatsContent(state, clock, onRefresh = hub.chats::refresh, onOpen = { nav.openChat(it.id) }, menu = actions::menu)
+  }
   actions.DeleteConfirm()
 }
 
@@ -40,6 +53,7 @@ fun ChatsContent(
   clock: PagesClock,
   onRefresh: () -> Unit,
   onOpen: (ChatSummary) -> Unit,
+  selectedId: String? = null,
   menu: (ChatSummary) -> List<MenuAction>,
 ) {
   ListPage(
@@ -50,17 +64,18 @@ fun ChatsContent(
     footer = if ((state.value?.size ?: 0) >= PagesFormat.SERVICE_CHAT_LIMIT) ({
       Text(PagesFormat.OLDER_CHATS_NOTE, style = ZoTheme.type.cardMeta, color = ZoTheme.colors.dim, modifier = Modifier.padding(top = 4.dp))
     }) else null,
-  ) { c -> ChatCardRow(c, clock, onOpen, menu(c)) }
+  ) { c -> ChatCardRow(c, clock, onOpen, menu(c), c.id == selectedId) }
 }
 
 @Composable
-private fun ChatCardRow(c: ChatSummary, clock: PagesClock, onOpen: (ChatSummary) -> Unit, actions: List<MenuAction>) {
+private fun ChatCardRow(c: ChatSummary, clock: PagesClock, onOpen: (ChatSummary) -> Unit, actions: List<MenuAction>, selected: Boolean = false) {
   var open by remember { mutableStateOf(false) }
   PageCard(
     icon = ZoIcons.Chat,
     name = PagesFormat.title(c),
     meta = clock.whenText(c.updated),
     onClick = { onOpen(c) },
+    selected = selected,
     onLongClick = { open = true },
     trailing = {
       Row(verticalAlignment = Alignment.CenterVertically) {

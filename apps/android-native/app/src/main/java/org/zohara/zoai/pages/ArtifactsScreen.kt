@@ -66,21 +66,41 @@ fun ArtifactsContent(
   startWith: ArtifactItem? = null,
 ) {
   var shown by remember { mutableStateOf(startWith) }
-  ListPage(
-    state = state,
-    title = "Artifacts",
-    onRefresh = onRefresh,
-    empty = { EmptyBox(PagesFormat.ARTIFACTS_EMPTY_TITLE, subtitle = PagesFormat.ARTIFACTS_EMPTY_TEXT, icon = ZoIcons.Folder) },
-  ) { a ->
-    PageCard(artifactIcon(a.kind), a.title.ifBlank { a.path.ifBlank { "Untitled" } }, meta = PagesFormat.artifactSubline(a, clock.now, clock.zone), onClick = { shown = a })
+  val wide = org.zohara.zoai.nav.isTwoPane()
+  val list: @Composable () -> Unit = {
+    ListPage(
+      state = state,
+      title = "Artifacts",
+      onRefresh = onRefresh,
+      empty = { EmptyBox(PagesFormat.ARTIFACTS_EMPTY_TITLE, subtitle = PagesFormat.ARTIFACTS_EMPTY_TEXT, icon = ZoIcons.Folder) },
+    ) { a ->
+      PageCard(
+        artifactIcon(a.kind), a.title.ifBlank { a.path.ifBlank { "Untitled" } }, meta = PagesFormat.artifactSubline(a, clock.now, clock.zone),
+        onClick = { shown = a }, selected = wide && shown == a,
+      )
+    }
   }
-  shown?.let { ArtifactSheet(it, onCopy, onOpenChat) { shown = null } }
+  if (wide) {
+    // NAV-23: the opened item is shown beside the list instead of in a sheet
+    org.zohara.zoai.nav.TwoPane(list, detail = {
+      shown?.let { a ->
+        Column(Modifier.padding(16.dp)) {
+          Text(a.title.ifBlank { "Untitled" }, style = ZoTheme.type.sheetTitle, color = ZoTheme.colors.text, modifier = Modifier.padding(bottom = 10.dp))
+          ArtifactBody(a, onCopy, onOpenChat, onDismiss = {})
+          val body = PagesFormat.artifactBody(a)
+          if (body.isNotEmpty()) Column(Modifier.padding(top = 12.dp)) { PrimaryButton("Copy", { onCopy(body) }) }
+        }
+      } ?: PickAnItem("Pick an item to see it here")
+    })
+  } else {
+    list()
+    shown?.let { ArtifactSheet(it, onCopy, onOpenChat) { shown = null } }
+  }
 }
 
 /** ART-03: "Show the code" for text; the path (or a note) for the rest. */
 @Composable
 fun ArtifactSheet(a: ArtifactItem, onCopy: (String) -> Unit, onOpenChat: (String) -> Unit, onDismiss: () -> Unit) {
-  val c = ZoTheme.colors
   val body = PagesFormat.artifactBody(a)
   ZoBottomSheet(
     title = a.title.ifBlank { "Untitled" },
@@ -89,7 +109,15 @@ fun ArtifactSheet(a: ArtifactItem, onCopy: (String) -> Unit, onOpenChat: (String
       SecondaryButton("Close", onDismiss)
       if (body.isNotEmpty()) PrimaryButton("Copy", { onCopy(body) })
     },
-  ) {
+  ) { ArtifactBody(a, onCopy, onOpenChat, onDismiss) }
+}
+
+/** What the viewer shows: the code or the path, a note for a file kept on the server, and the way to the chat it came from. */
+@Composable
+fun ArtifactBody(a: ArtifactItem, onCopy: (String) -> Unit, onOpenChat: (String) -> Unit, onDismiss: () -> Unit) {
+  val c = ZoTheme.colors
+  val body = PagesFormat.artifactBody(a)
+  Column {
     if (body.isNotEmpty()) {
       val v = rememberScrollState()
       val h = rememberScrollState()

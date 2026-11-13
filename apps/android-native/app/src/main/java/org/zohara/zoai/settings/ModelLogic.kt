@@ -95,6 +95,23 @@ object ModelLogic {
     return hit.filter { it in pins } + hit.filter { it !in pins }
   }
 
+  /** MODEL-26: the hint of the "New profile" sheet (the desktop's words) */
+  const val NEW_PROFILE_HINT = "Keeps the provider, model, address, effort and the API key that is in use now."
+
+  /** The family of a Claude model id: opus, sonnet, haiku, fable, or the id itself (zo-core `models::family`). */
+  fun family(id: String): String = id.removePrefix("claude-").substringBefore('-')
+
+  /**
+   * MODEL-08: (main, more) for the Claude Code list, as `models::split_main`: the first (newest) model of each family is main, the older
+   * ones go under "More models". Only Claude Code has such a group; other providers keep a flat list.
+   */
+  fun splitMain(models: List<String>): Pair<List<String>, List<String>> {
+    val seen = mutableSetOf<String>()
+    val main = mutableListOf<String>(); val more = mutableListOf<String>()
+    for (m in models) if (seen.add(family(m))) main += m else more += m
+    return main to more
+  }
+
   /** MODEL-14/17: typed text that is not in the list is offered as "Use “x” as the model name". */
   fun customOffer(models: List<String>, filter: String): String {
     val q = filter.trim()

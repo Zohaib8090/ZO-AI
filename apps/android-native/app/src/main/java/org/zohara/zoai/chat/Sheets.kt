@@ -138,19 +138,21 @@ fun ContextSheetContent(v: ContextView, onRefresh: () -> Unit, onCompact: () -> 
       Text("≈ ${n(i.used)} / ${n(i.window)} tokens", style = ZoTheme.type.fieldHint, color = c.dim)
     }
     val segs = listOf(
-      Triple(i.system, c.accent, "System instructions"), Triple(i.history, c.blue, "Chat history"), Triple(i.tools, c.gold, "Tools & MCP"), Triple(i.free, c.line12, "Free capacity"),
+      Triple(i.system, c.accent, "System instructions"), Triple(i.history, c.blue, "Chat history"), Triple(i.tools, c.gold, "Tools & MCP"), Triple(i.buffer, c.dimmer.copy(alpha = 0.45f), "Auto-compact buffer"), Triple(i.free, c.line12, "Free capacity"),
     )
     Row(Modifier.fillMaxWidth().padding(vertical = 12.dp).height(10.dp).clip(CircleShape).background(c.line8).semantics { contentDescription = "${i.percent} percent of the context window is used" }) {
       for ((tokens, color, _) in segs.take(3)) {
         val w = (tokens.toFloat() / i.window).coerceAtLeast(0.01f)
         Box(Modifier.weight(w).height(10.dp).background(color))
       }
-      Box(Modifier.weight((1f - (i.used.toFloat() / i.window)).coerceAtLeast(0.0001f)).height(10.dp))
+      // the free part stays empty (track colour); the buffer sits at the end of the bar, as on the desktop
+      Box(Modifier.weight(((i.free.toFloat() / i.window)).coerceAtLeast(0.0001f)).height(10.dp))
+      Box(Modifier.weight((i.buffer.toFloat() / i.window).coerceAtLeast(0.0001f)).height(10.dp).background(c.dimmer.copy(alpha = 0.45f)))
     }
     Column(Modifier.fillMaxWidth().clip(ZoTheme.shapes.card).background(c.card2).padding(horizontal = 14.dp, vertical = 6.dp)) {
       for ((tokens, color, label) in segs) {
         Row(Modifier.fillMaxWidth().heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically) {
-          Box(Modifier.size(10.dp).clip(CircleShape).background(if (label == "Free capacity") c.line12 else color))
+          Box(Modifier.size(10.dp).clip(CircleShape).background(color))
           Spacer(Modifier.width(10.dp))
           Text(label, style = ZoTheme.type.body, color = c.text, modifier = Modifier.weight(1f))
           val pct = tokens.toDouble() / i.window * 100

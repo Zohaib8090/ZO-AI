@@ -105,6 +105,16 @@ object PagesFormat {
     }
   }
 
+  /** PROJ-03: the client-side filter of the Projects page: by name and goal, case-insensitive; a blank query keeps all. */
+  fun filterProjects(list: List<Project>, query: String): List<Project> {
+    val q = query.trim()
+    if (q.isEmpty()) return list
+    return list.filter { it.name.contains(q, ignoreCase = true) || it.goal.contains(q, ignoreCase = true) }
+  }
+
+  /** LINK-15: the name shown when the linked computer's name is not known (web `devName` fallback) */
+  const val COMPUTER_FALLBACK = "Your computer"
+
   // ------------------------------------------------------------ artifacts (ART-01)
 
   /** the sub line: the path, or "N lines of code", then the relative time */

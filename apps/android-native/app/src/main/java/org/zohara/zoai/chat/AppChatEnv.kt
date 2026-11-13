@@ -70,8 +70,17 @@ class AppChatEnv(private val c: AppContainer) : ChatEnv {
   override suspend fun beforeSend(): String? = when (val r = org.zohara.zoai.link.LinkModule.of(c).runOn.ensureReachable()) { is org.zohara.zoai.link.SendCheck.Stop -> r.message; else -> null }
   override fun answerFinished(chatId: String?, title: String, answer: String) {
     chatId?.let { media.notifier.answerFinished(it, title) } // only when the app is in the background
-    // VOICE-11: "Read answers aloud" reads each new answer when it ends and the app is on screen (same id as the speaker button, so it shows Stop)
-    if (org.zohara.zoai.media.notify.AppVisibility.foreground.value && media.readAloudAuto.value) c.scope.launch(kotlinx.coroutines.Dispatchers.Main) { media.readAloud.speak("answer-" + answer.hashCode(), answer) }
+    // VOICE-11: "Read answers aloud" reads each new answer when it ends, if that chat is still on screen and the answer has text (same id as the speaker button, so it shows Stop)
+    val (route, routeChat) = ChatHooks.screen.value
+    val shown = routeChat == chatId || (route == org.zohara.zoai.nav.Routes.HOME && chatId != null && ChatHub.of(c).hub.home().chatId == chatId)
+    if (readAloudNow(org.zohara.zoai.media.notify.AppVisibility.foreground.value, media.readAloudAuto.value, shown, answer)) {
+      c.scope.launch(kotlinx.coroutines.Dispatchers.Main) { media.readAloud.speak("answer-" + answer.hashCode(), answer) }
+    }
   }
   override fun desktopOffline() { c.scope.launch { runCatching { c.api.linkStatus() } } }
+
+  companion object {
+    /** VOICE-11 (web `send`: acc is not empty and the element is still connected): the app is on screen, the setting is on, the chat is shown, the answer has text. */
+    fun readAloudNow(foreground: Boolean, auto: Boolean, chatShown: Boolean, answer: String): Boolean = foreground && auto && chatShown && answer.isNotBlank()
+  }
 }

@@ -38,4 +38,6 @@ object ChatHooks {
   var readAloud by mutableStateOf<((String) -> Unit)?>(null)
   val chatsChanged = MutableSharedFlow<Long>(extraBufferCapacity = 8)
   val prefill = MutableStateFlow<String?>(null)
+  /** the route on screen and its chat id argument (set by the app shell); VOICE-11 reads an answer aloud only when its chat is still the one shown */
+  val screen = MutableStateFlow<Pair<String?, String?>>(null to null)
 }

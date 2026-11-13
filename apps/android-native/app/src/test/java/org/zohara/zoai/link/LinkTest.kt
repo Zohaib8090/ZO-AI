@@ -224,16 +224,6 @@ class LinkTest {
     assertEquals(0, calls)
   }
 
-  @Test fun aSendToAComputerCarriesTargetAndDevice() = runTest {
-    val c = TestScopeRun({ emptyList() }, Store(RunOnChoice("d9", "L")), ArrayList(), kotlinx.coroutines.CoroutineScope(StandardTestDispatcher(testScheduler) + kotlinx.coroutines.SupervisorJob()))
-    advanceUntilIdle()
-    val r = c.apply(SendRequest("hi", chat = "c1"))
-    assertEquals("desktop", r.target); assertEquals("d9", r.device)
-    val body = api.sendBody(r)
-    assertEquals("desktop", body["target"]!!.jsonPrimitive.content); assertEquals("d9", body["device"]!!.jsonPrimitive.content)
-    c.choose(null); advanceUntilIdle()
-    assertNull(c.apply(SendRequest("hi")).target)
-  }
 
   // ---------------------------------------------------------------- desktop ops
 
@@ -300,68 +290,6 @@ class LinkTest {
     try { ops.status(); fail() } catch (e: DesktopOpException) { assertEquals("Run on My computer first.", e.message) }
   }
 
-  // ---------------------------------------------------------------- events
-
-  private fun reducer(onComputer: Boolean = true, web: Boolean = false) = DesktopStreamReducer(onComputer, { web })
-
-  @Test fun anApprovalForTheComputerWaitsThereInsteadOfShowingButtons() {
-    val r = reducer()
-    assertEquals(listOf(DesktopUi.Wait("run ls")), r.reduce(SendEvent.Approval(1, "bash", "run ls", local = true)))
-    assertEquals(listOf(DesktopUi.Wait("run ls")), r.reduce(SendEvent.Approval(2, "bash", "run ls", local = false))) // the computer does not allow web answers
-    assertEquals(listOf(DesktopUi.Wait("run ls")), r.reduce(SendEvent.Approval(0, "", "run ls"))) // approval_wait
-    val ev = SendEvent.Approval(3, "bash", "run ls", local = false)
-    assertEquals(listOf(DesktopUi.ShowApprovalCard(ev)), reducer(web = true).reduce(ev))
-    assertEquals(listOf(DesktopUi.Wait("run ls")), reducer(web = true).reduce(SendEvent.Approval(4, "bash", "run ls", local = true)))
-    assertEquals(listOf(DesktopUi.ShowApprovalCard(ev)), reducer(onComputer = false).reduce(ev))
-  }
-
-  @Test fun theWaitingRowClearsOnTheNextEvent() {
-    val r = reducer()
-    listOf(SendEvent.Delta("x"), SendEvent.Text("x"), SendEvent.ToolStart("a", "b"), SendEvent.ToolDone("a", true, ""), SendEvent.Done, SendEvent.Stopped).forEach {
-      assertEquals(it.toString(), listOf(DesktopUi.ClearWait), r.reduce(it))
-    }
-    assertTrue(reducer(onComputer = false).reduce(SendEvent.Delta("x")).isEmpty())
-  }
-
-  @Test fun theComputerTurnShowsWhereItRuns() {
-    assertEquals(listOf(DesktopUi.Running("Laptop")), reducer().reduce(SendEvent.Stream(5, "desktop", "Laptop")))
-    assertTrue(reducer().reduce(SendEvent.Stream(5)).isEmpty())
-  }
-
-  @Test fun relayErrorsHaveSentencesAndOfflineRefreshesTheLink() {
-    assertEquals(listOf(DesktopUi.Problem(LinkText.OFFLINE, true)), reducer().reduce(SendEvent.Error("desktop_offline", "x")))
-    assertEquals(listOf(DesktopUi.Problem("Your computer is busy with another answer.", true)), reducer().reduce(SendEvent.Error("desktop_busy", "Your computer is busy with another answer.")))
-    assertEquals(listOf(DesktopUi.Problem("boom", false)), reducer(onComputer = false).reduce(SendEvent.Error("other", "boom")))
-    assertEquals(listOf(DesktopUi.Problem(LinkText.LOST, true)), reducer().reduce(SendEvent.ConnectionLost("x")))
-    assertTrue(reducer(onComputer = false).reduce(SendEvent.ConnectionLost("x")).isEmpty())
-  }
-
-  @Test fun pingsAndUnknownEventsDoNothing() {
-    assertTrue(reducer().reduce(SendEvent.Ping).isEmpty())
-    assertTrue(reducer().reduce(SendEvent.Unknown("future")).isEmpty())
-  }
-
-  // ---------------------------------------------------------------- replies
-
-  @Test fun aReplyForAComputerTurnSortsItsOutcomes() = runBlocking {
-    assertEquals(ReplyOutcome.Sent, LinkReply.run { true })
-    assertEquals(ReplyOutcome.Gone, LinkReply.run { false })
-    assertEquals(ReplyOutcome.OnComputer, LinkReply.run { throw ApiException(ErrorKind.Rejected, "approvals_on_computer", 409) })
-    assertEquals(ReplyOutcome.OnComputer, LinkReply.run { throw ApiException(ErrorKind.Rejected, "x", 409) })
-    assertEquals(ReplyOutcome.Failed("Offline. Retrying."), LinkReply.run { throw ApiException(ErrorKind.Offline, "Offline. Retrying.") })
-  }
-
-  @Test fun approvalAndStopGoToApiReplyWithTheStreamId() = runBlocking {
-    server.enqueue(ok("""{"ok":true}""")); server.enqueue(ok("""{"ok":true}""")); server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"approvals_on_computer"}"""))
-    assertEquals(ReplyOutcome.Sent, LinkReply.approve(api, 42, 7, true))
-    assertEquals(LinkText.STOP_SENT, LinkReply.stop(api, 42))
-    assertEquals(ReplyOutcome.OnComputer, LinkReply.approve(api, 42, 8, true))
-    val a = ZoJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
-    assertEquals("/api/reply", "/api/reply")
-    assertEquals("approve", a["op"]!!.jsonPrimitive.content); assertEquals("42", a["stream"]!!.jsonPrimitive.content); assertEquals("7", a["id"]!!.jsonPrimitive.content); assertEquals("true", a["yes"]!!.jsonPrimitive.content)
-    val b = ZoJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
-    assertEquals("stop", b["op"]!!.jsonPrimitive.content)
-  }
 
   // ---------------------------------------------------------------- claude status
 

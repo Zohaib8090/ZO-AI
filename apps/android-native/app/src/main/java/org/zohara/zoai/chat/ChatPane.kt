@@ -133,11 +133,8 @@ fun ChatPane(session: ChatSession, hub: ChatHub.Instance, greetingText: String?,
 
     when (sheet) {
       // MODEL-32: on My computer the model controls act on that computer (desktop_op), so the sheet is the link module's
-      "model" -> if (!hub.env.runOn().isCloud) org.zohara.zoai.link.DesktopModelSheet(org.zohara.zoai.link.LinkModule.of(container).desktop, onDismiss = { sheet = ""; hub.pills.refresh() }) else ModelSheet(
-        pills, { sheet = "" },
-        onPickModel = { p, m -> hub.pills.chooseModel(p, m) { err -> if (err != null) toast(err) }; sheet = "" },
-        onPickProfile = { id -> hub.pills.chooseProfile(id) { err -> if (err != null) toast(err) }; sheet = "" },
-        onMore = { sheet = ""; nav.navigate(Routes.SETTINGS_MODEL) },
+      "model" -> if (!hub.env.runOn().isCloud) org.zohara.zoai.link.DesktopModelSheet(org.zohara.zoai.link.LinkModule.of(container).desktop, onDismiss = { sheet = ""; hub.pills.refresh() }) else org.zohara.zoai.settings.ModelPickerHost(
+        visible = true, onDismiss = { sheet = ""; hub.pills.refresh() }, onChanged = { hub.pills.refresh() },
       )
       "mode" -> if (!hub.env.runOn().isCloud) org.zohara.zoai.core.design.ZoBottomSheet("What ZO-AI may do", { sheet = "" }) {
         // PERM-03, LINK-11: only Manual and Auto on a computer, Bypass is shown as Auto, and a note says the computer may limit it

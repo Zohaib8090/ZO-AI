@@ -375,7 +375,7 @@ class ChatInteractionTest {
     val code = "fn main() {\n    println!(\"hi\");\n}"
     themed { ThreadView(state(AiItem(1, "Try this:\n\n```rust\n$code\n```\n")), cb(Rec())) }
     rule.onNodeWithText("rust").assertExists()
-    rule.onNodeWithContentDescription("Copy code").performClick()
+    rule.onNodeWithContentDescription("Copy the code").performClick()
     assertEquals(code, clipboardText())
   }
 
