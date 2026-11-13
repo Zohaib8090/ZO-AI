@@ -27,6 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -103,7 +105,8 @@ fun ZoDrawerLayout(
         if (p > 0f) {
           Box(
             Modifier.fillMaxSize().graphicsLayer { alpha = p }.background(c.scrim)
-              .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { state.close() },
+              .semantics { contentDescription = "Close the sidebar" }
+              .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, role = androidx.compose.ui.semantics.Role.Button) { state.close() },
           )
           Box(
             Modifier.fillMaxHeight().width(panelWidth)

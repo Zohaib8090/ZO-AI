@@ -70,7 +70,7 @@ fun AuthFrame(title: String, modifier: Modifier = Modifier, content: @Composable
 @Composable
 private fun LegalLine(prefix: String, onTerms: () -> Unit, onPrivacy: () -> Unit, between: String = " and ") {
   val c = ZoTheme.colors
-  val link = TextLinkStyles(SpanStyle(color = c.accent, textDecoration = TextDecoration.Underline))
+  val link = TextLinkStyles(SpanStyle(color = c.link, textDecoration = TextDecoration.Underline))
   val text = buildAnnotatedString {
     append(prefix)
     withLink(LinkAnnotation.Clickable("terms", link) { onTerms() }) { append("Terms") }
@@ -157,7 +157,7 @@ fun LoginContent(
 
 @Composable
 fun LinkButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-  Text(text, style = ZoTheme.type.cardMeta, color = ZoTheme.colors.accent, modifier = modifier.clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button, onClick = onClick).padding(vertical = 6.dp, horizontal = 2.dp))
+  Text(text, style = ZoTheme.type.cardMeta, color = ZoTheme.colors.link, modifier = modifier.clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button, onClick = onClick).padding(vertical = 6.dp, horizontal = 2.dp))
 }
 
 /** AUTH-12: "Check your inbox". */

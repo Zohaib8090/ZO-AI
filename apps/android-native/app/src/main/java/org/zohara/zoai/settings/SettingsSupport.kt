@@ -214,6 +214,22 @@ fun rememberAccount(): Whoami? {
 
 // ================================================================================================================ page scaffold and rows
 
+/** The "‹ Settings" link at the top of every page under Settings (SET-02). */
+@Composable
+fun SettingsBackLink(modifier: Modifier = Modifier) {
+  val c = ZoTheme.colors
+  val nav = LocalNav.current
+  Row(modifier.padding(top = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Text(
+      "‹ Settings", style = ZoTheme.type.button, color = c.link,
+      modifier = Modifier
+        .clickable(role = Role.Button) { if (!nav.back()) nav.settings() }
+        .semantics { contentDescription = "Back to Settings" }
+        .padding(end = 14.dp, top = 8.dp, bottom = 8.dp),
+    )
+  }
+}
+
 /** A settings page: "‹ Settings" back button, the serif title, the scrolling body (SET-02). */
 @Composable
 fun SettingsPage(title: String, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
@@ -222,15 +238,7 @@ fun SettingsPage(title: String, modifier: Modifier = Modifier, content: @Composa
   SetTopBar("Settings")
   Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).navigationBarsPadding()) {
-      Row(Modifier.padding(top = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(
-          "‹ Settings", style = ZoTheme.type.button, color = c.accent,
-          modifier = Modifier
-            .clickable(role = Role.Button) { if (!nav.back()) nav.settings() }
-            .semantics { contentDescription = "Back to Settings" }
-            .padding(end = 14.dp, top = 8.dp, bottom = 8.dp),
-        )
-      }
+      SettingsBackLink()
       Text(title, style = ZoTheme.type.pageTitle, color = c.text, modifier = Modifier.padding(bottom = 8.dp))
       content()
       Spacer(Modifier.height(32.dp))

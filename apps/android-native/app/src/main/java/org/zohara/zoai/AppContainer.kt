@@ -54,8 +54,14 @@ class AppContainer(val app: Application) {
   val runningCount = MutableStateFlow(0)
 
   init {
-    scope.launch { prefs.serverUrl.collect { if (ZoHttp.isAcceptableServer(it, BuildConfig.DEBUG)) serverUrl = ZoHttp.normalizeServer(it) } }
+    scope.launch { prefs.serverUrl.collect { if (!serverPinnedForTests && ZoHttp.isAcceptableServer(it, BuildConfig.DEBUG)) serverUrl = ZoHttp.normalizeServer(it) } }
   }
+
+  @Volatile private var serverPinnedForTests = false
+
+  /** Tests only: point the API client at a mock server (an http address is accepted in the debug build) and ignore the stored preference. */
+  @androidx.annotation.VisibleForTesting
+  internal fun useServerForTests(url: String) { serverPinnedForTests = true; serverUrl = url.trimEnd('/') }
 
   /** Start background parts: the Firebase session. */
   fun start() {

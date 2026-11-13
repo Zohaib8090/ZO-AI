@@ -37,9 +37,25 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
+  // Release signing is read from gradle.properties (ZO_STORE_FILE, ZO_STORE_PASSWORD, ZO_KEY_ALIAS, ZO_KEY_PASSWORD) or the environment
+  // with the same names. Nothing is committed; without them 'assembleRelease' still builds, unsigned.
+  fun signingValue(name: String): String? = (providers.gradleProperty(name).orNull ?: System.getenv(name))?.takeIf { it.isNotBlank() }
+  val storeFile = signingValue("ZO_STORE_FILE")
+  val releaseSigning = if (storeFile != null && file(storeFile).exists()) {
+    signingConfigs.create("release") {
+      this.storeFile = file(storeFile)
+      storePassword = signingValue("ZO_STORE_PASSWORD")
+      keyAlias = signingValue("ZO_KEY_ALIAS")
+      keyPassword = signingValue("ZO_KEY_PASSWORD") ?: signingValue("ZO_STORE_PASSWORD")
+    }
+  } else null
+
   buildTypes {
     release {
-      isMinifyEnabled = false
+      isMinifyEnabled = true
+      isShrinkResources = true
+      isDebuggable = false
+      if (releaseSigning != null) signingConfig = releaseSigning
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
     debug {

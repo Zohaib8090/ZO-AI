@@ -91,12 +91,16 @@ fun MyComputersScreen() {
   val link by module.runOn.link.collectAsState()
   val scope = rememberCoroutineScope()
   LaunchedEffect(Unit) { module.runOn.refresh() }
+  org.zohara.zoai.nav.SetTopBar("Settings")
   LinkPresence()
-  MyComputersContent(
-    link, choice,
-    onUse = { d -> module.runOn.choose(d); nav.home() },
-    onCheck = { scope.launch { module.runOn.refresh() } },
-  ) { ClaudeCodeCard() }
+  androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.fillMaxSize()) {
+    org.zohara.zoai.settings.SettingsBackLink(androidx.compose.ui.Modifier.padding(horizontal = 16.dp))
+    MyComputersContent(
+      link, choice,
+      onUse = { d -> module.runOn.choose(d); nav.home() },
+      onCheck = { scope.launch { module.runOn.refresh() } },
+    ) { ClaudeCodeCard() }
+  }
 }
 
 /** The page without the module, so it can be drawn in tests. */

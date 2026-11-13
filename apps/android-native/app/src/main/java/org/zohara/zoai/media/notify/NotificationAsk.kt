@@ -5,6 +5,9 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Text
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Modifier
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +52,6 @@ fun NotificationAskOnce() {
     SecondaryButton("Not now", finish)
     PrimaryButton("Turn on", { if (Build.VERSION.SDK_INT >= 33) launcher.launch(Manifest.permission.POST_NOTIFICATIONS) else { finish(); scope.launch { module.setClosedPush(true) } } })
   }) {
-    Text(NotificationAskText.BODY, style = ZoTheme.type.body, color = ZoTheme.colors.text2)
+    Text(NotificationAskText.BODY, style = ZoTheme.type.body, color = ZoTheme.colors.text2, modifier = Modifier.verticalScroll(rememberScrollState()))
   }
 }

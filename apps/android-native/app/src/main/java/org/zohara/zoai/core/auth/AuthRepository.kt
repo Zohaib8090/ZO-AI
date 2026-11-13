@@ -72,6 +72,11 @@ class AuthRepository(
     }.getOrNull()
   }
 
+  /** Tests only: sets the state without Firebase (the whole-app tests sign in this way). */
+  @androidx.annotation.VisibleForTesting
+  internal fun forceStateForTests(state: AuthState, token: String? = "test-token") { _state.value = state; tokenForTests = token }
+  private var tokenForTests: String? = null
+
   val configured: Boolean get() = auth != null
   val googleConfigured: Boolean get() = auth != null && googleWebClientId.isNotBlank()
 
@@ -98,6 +103,7 @@ class AuthRepository(
 
   // ---- token (blocking, for the OkHttp interceptor) ----
   override fun idToken(forceRefresh: Boolean): String? {
+    tokenForTests?.let { return it }
     val u = auth?.currentUser ?: return null
     return try {
       com.google.android.gms.tasks.Tasks.await(u.getIdToken(forceRefresh), 20, java.util.concurrent.TimeUnit.SECONDS).token

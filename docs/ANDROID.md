@@ -1,4 +1,36 @@
-# ZO-AI Android store app
+# ZO-AI on Android
+
+**The native app in `apps/android-native` is the Android app.** It is Kotlin + Jetpack Compose (no WebView), package `org.zohara.zoai`, and it replaces the
+Capacitor wrapper in `apps/android-web`, which is kept only as a legacy reference (its README says so; do not add features there). The native app has
+what the desktop app and the web app have; the list of everything, one row per feature with its test, is `docs/ANDROID-NATIVE-PARITY.md`.
+
+* Build, test, release signing, architecture, and the Firebase steps for the owner (add the Android app `org.zohara.zoai` in project `zo-ai-144`, SHA-1/SHA-256 of the
+  debug and release keys, `google-services.json` into `apps/android-native/app/`, the Web client id for Google sign-in, FCM) are in `apps/android-native/README.md`.
+* It talks to the public ZO-AI service only through `POST /api/op`, `/api/send` (NDJSON), `/api/reply`, `/api/account/*`, `/api/link/status` with the Firebase ID
+  token; the shapes are in `apps/android-native/docs/API.md` (live-verified). Question cards and "needs you" notifications follow `docs/INTERACTION.md`.
+* The package id is the same as the wrapper's, so the Firebase app, the Play listing and the SHA fingerprints are shared; the native app can be installed over the
+  wrapper only when both are signed with the same key; the account is the Firebase account, nothing is stored locally, so the login is the same.
+* Verification so far is JVM only (JUnit, MockWebServer, Robolectric, Compose UI tests, Roborazzi screenshots in both themes); nothing was run on a device,
+  with real Firebase or FCM, or with a real microphone. The README lists what is not verified.
+
+## What is still open in the matrix (23 rows of 425 that apply; the rest are ticked with a named test)
+
+Needs a real Firebase project or a device (cannot be proven on the JVM): AUTH-11 (account creation sends the verification e-mail), AUTH-12 (the "I verified" and
+resend calls behind the Check your inbox screen; the screen itself is tested), AUTH-13 (a 403 for an unverified address shows the verify screen; today a refusal signs out
+with the message), AUTH-23 (stay signed in across launches), PHN-06 (the keyboard insets: the code pads by the keyboard or the navigation bar, not measured), VOICE-11
+(read answers aloud: the setting and the call in `AppChatEnv.answerFinished` exist; the speech itself needs a device), VOICE-15 and ATT-16 (hardware key and drag and drop).
+
+Not built or only partly: AUTH-06 (autofill hints; the Compose version in use has no `contentType` semantics yet), NET-12 (offline cache of the chat list), THEME-12 (reduced
+motion is not checked), THEME-13 (skeleton shimmer in the model lists), NAV-23 (two panes for Settings and lists; the sidebar is permanent from 900 dp), SRV-06 (`/healthz`
+diagnosis), SRV-09 (Export and Delete on the consent screen; they are in Settings > Account), PHN-11 (copy toast "Copied" is in the chat, no test; pasted keys are not marked
+sensitive), PHN-12 (right to left and the big fonts are tested; text direction by content is not), PHN-13 (the strings are in the Kotlin files, not in `strings.xml`),
+BG-06 (the camera cache is cleared after a day, not at sign-out), A11Y-04 (some names differ from the desktop tooltips, e.g. "Add pictures, files or a link"),
+MODEL-18, MODEL-35, SRV-12 (settings module, see the matrix).
+
+---
+
+# Legacy: the Capacitor wrapper (`apps/android-web`)
+
 
 A thin Capacitor wrapper in `apps/android-web/` that loads the website (`server.url`), so the app updates whenever the site does.
 Package `org.zohara.zoai`, name ZO-AI. It is separate from Zohara Link (`~/Documents/zohara-link`, a different app and package).

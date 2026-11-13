@@ -16,7 +16,7 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
-    pendingChat.value = DeepLinks.chatIdFrom(intent)
+    pendingChat.value = DeepLinks.pendingFrom(intent)
     val container = (application as ZoApplication).container
     setContent { ZoApp(container, pendingChat) }
   }
@@ -24,6 +24,6 @@ class MainActivity : ComponentActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
-    DeepLinks.chatIdFrom(intent)?.let { pendingChat.value = it }
+    DeepLinks.pendingFrom(intent)?.let { pendingChat.value = it }
   }
 }

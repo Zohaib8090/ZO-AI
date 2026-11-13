@@ -55,6 +55,7 @@ object ApproveLogic {
   /** the person has to tick the box for a terminal and for a request from another network */
   fun strict(i: DeviceLookup) = !i.sameNetwork || i.kind == "cli"
 
+  const val TOO_MANY = "Too many wrong codes. Wait a few minutes before trying again."
   const val NOT_FOUND = "That code was not found. It may have expired (they last 10 minutes) or been used. Check it and try again, or start again in the app."
 }
 
@@ -89,7 +90,7 @@ fun SettingsApproveScreen() {
           busy = true; error = ""
           scope.launch {
             try { val i = container.api.deviceLookup(code); sure = false; step = Step.Confirm(code, i) }
-            catch (e: ApiException) { error = if (e.status == 404) ApproveLogic.NOT_FOUND else e.text }
+            catch (e: ApiException) { error = if (e.status == 404) ApproveLogic.NOT_FOUND else if (e.status == 429) ApproveLogic.TOO_MANY else e.text }
             finally { busy = false }
           }
         }, enabled = ApproveLogic.codeComplete(code), loading = busy)

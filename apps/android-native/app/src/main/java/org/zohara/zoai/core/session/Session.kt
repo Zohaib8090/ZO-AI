@@ -93,7 +93,6 @@ class Session(
     scope.launch {
       try {
         api.acceptTerms(version)
-        prefs.setConsentVersion(version)
         load()
       } catch (e: ApiException) {
         onError(e.text)

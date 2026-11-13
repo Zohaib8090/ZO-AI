@@ -39,6 +39,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -54,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -171,24 +173,32 @@ fun DangerButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifie
 
 // ---------------------------------------------------------------- switch, spinner
 
+/** The name a [ZoSwitch] takes when it has no label of its own: the title of the settings row it sits in. */
+val LocalSwitchLabel = androidx.compose.runtime.compositionLocalOf<String?> { null }
+
 @Composable
-fun ZoSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun ZoSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true, label: String? = null) {
   val c = ZoTheme.colors
   val track by animateColorAsState(if (checked) c.accent else c.raise, tween(120), label = "track")
   val knob by animateColorAsState(if (checked) c.onAccent else c.text3, tween(120), label = "knob")
   val x by animateDpAsState(if (checked) 20.dp else 2.dp, tween(120), label = "x")
+  val name = label ?: LocalSwitchLabel.current
+  // the touch target is 48 dp (A11Y-02); the drawn switch stays 42 x 24
   Box(
     modifier
-      .size(width = 42.dp, height = 24.dp)
-      .clip(CircleShape)
-      .background(track)
-      .then(if (!checked) Modifier.border(1.dp, c.line12, CircleShape) else Modifier)
-      .semantics { role = Role.Switch; stateDescription = if (checked) "On" else "Off" }
+      .minimumInteractiveComponentSize()
+      .semantics { role = Role.Switch; stateDescription = if (checked) "On" else "Off"; name?.let { contentDescription = it } }
       .then(if (onCheckedChange != null) Modifier.clickable(enabled = enabled, role = Role.Switch) { onCheckedChange(!checked) } else Modifier)
       .alpha(if (enabled) 1f else 0.45f),
-    contentAlignment = Alignment.CenterStart,
+    contentAlignment = Alignment.Center,
   ) {
-    Box(Modifier.offset(x = x).size(20.dp).clip(CircleShape).background(knob))
+    Box(
+      Modifier.size(width = 42.dp, height = 24.dp).clip(CircleShape).background(track)
+        .then(if (!checked) Modifier.border(1.dp, c.line12, CircleShape) else Modifier),
+      contentAlignment = Alignment.CenterStart,
+    ) {
+      Box(Modifier.offset(x = x).size(20.dp).clip(CircleShape).background(knob))
+    }
   }
 }
 
@@ -261,7 +271,8 @@ fun SettingsRow(
       }
       if (control != null) {
         Spacer(Modifier.width(12.dp))
-        control()
+        // a switch inside the row is named after the row's title (TalkBack reads "Remember things between chats, switch, on")
+        CompositionLocalProvider(LocalSwitchLabel provides title) { control() }
       }
     }
     if (divider) ZoDivider(Modifier.padding(start = 16.dp))
@@ -324,7 +335,7 @@ fun ZoTextField(
           interactionSource = src,
           visualTransformation = if (password && !shown) PasswordVisualTransformation() else VisualTransformation.None,
           keyboardOptions = keyboardOptions ?: KeyboardOptions(keyboardType = if (password) KeyboardType.Password else keyboardType),
-          modifier = Modifier.fillMaxWidth(),
+          modifier = Modifier.fillMaxWidth().semantics { (label ?: placeholder.takeIf { it.isNotBlank() })?.let { contentDescription = it } },
         )
         if (value.isEmpty() && placeholder.isNotEmpty()) Text(placeholder, style = textStyle, color = c.dimmer)
       }
@@ -351,7 +362,8 @@ fun SheetContent(title: String, onClose: (() -> Unit)?, modifier: Modifier = Mod
       Text(title, style = ZoTheme.type.sheetTitle, color = c.text, modifier = Modifier.weight(1f))
       if (onClose != null) ZoIconButton(ZoIcons.Close, "Close", onClose)
     }
-    Column(Modifier.padding(horizontal = 18.dp, vertical = 6.dp), content = body)
+    // the body gives way first: the footer buttons stay on screen with a big font on a small phone (PHN-12)
+    Column(Modifier.weight(1f, fill = false).padding(horizontal = 18.dp, vertical = 6.dp), content = body)
     if (footer != null) Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End), content = footer)
     else Spacer(Modifier.size(12.dp))
   }

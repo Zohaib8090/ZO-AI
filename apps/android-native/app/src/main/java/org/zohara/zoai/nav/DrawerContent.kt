@@ -77,6 +77,7 @@ fun DrawerContent(
 ) {
   val c = ZoTheme.colors
   var menu by remember { mutableStateOf(false) }
+  var confirmSignOut by remember { mutableStateOf(false) }
   Column(modifier.fillMaxSize().background(c.bg).statusBarsPadding().navigationBarsPadding()) {
     // NAV-01 brand row
     Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -106,10 +107,15 @@ fun DrawerContent(
       Avatar(userInitial, badge = runningCount)
       Text(userLabel, style = ZoTheme.type.sideItem, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 12.dp).weight(1f))
       ZoIconButton(ZoIcons.Gear, "Settings", onSettings)
-      ZoIconButton(ZoIcons.SignOut, "Sign out", onSignOut)
+      ZoIconButton(ZoIcons.SignOut, "Sign out", { confirmSignOut = true })
     }
   }
-  if (menu) UserMenuSheet(userLabel, onDismiss = { menu = false }, onSettings = { menu = false; onSettings() }, onSignOut = { menu = false; onSignOut() })
+  if (menu) UserMenuSheet(userLabel, onDismiss = { menu = false }, onSettings = { menu = false; onSettings() }, onSignOut = { menu = false; confirmSignOut = true })
+  // SET-ACC-09: signing out is asked once, the default is to stay
+  if (confirmSignOut) org.zohara.zoai.settings.ConfirmSheet(
+    "Sign out of ZO-AI on this phone?", "Your chats stay on the server.", "Sign out",
+    onConfirm = { confirmSignOut = false; onSignOut() }, onDismiss = { confirmSignOut = false },
+  )
 }
 
 /** NAV-14: the footer menu as a bottom sheet: "Running now" (pages module), Settings, Sign out. */

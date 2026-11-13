@@ -15,7 +15,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
@@ -120,8 +124,11 @@ private fun MainShell(container: AppContainer, auth: AuthState.SignedIn, pending
   // NAV-20: a notification or link opens a chat
   val pending by pendingChat.collectAsState()
   LaunchedEffect(pending) {
-    val id = DeepLinks.validChatId(pending)
-    if (id != null) { navigator.openChat(id); pendingChat.value = null }
+    when {
+      pending == DeepLinks.NEW_CHAT -> { navigator.home(); pendingChat.value = null }
+      pending == DeepLinks.APPROVE -> { navigator.settings(Routes.SETTINGS_APPROVE); pendingChat.value = null }
+      DeepLinks.validChatId(pending) != null -> { navigator.openChat(pending!!); pendingChat.value = null }
+    }
   }
   // ATT-22: something shared from another app opens a new message
   org.zohara.zoai.media.ShareNavigation { navigator.home() }
@@ -152,7 +159,8 @@ private fun MainShell(container: AppContainer, auth: AuthState.SignedIn, pending
       Column(Modifier.fillMaxSize().background(ZoTheme.colors.bg)) {
         ZoTopBar(routeTitle = Routes.titleFor(route), showMenuButton = !permanent, onMenu = { drawer.open() })
         NetBannerRow(banner, onSignInAgain = { container.session.signOut() })
-        Box(Modifier.weight(1f).fillMaxWidth().imePadding()) {
+        // the keyboard or the navigation bar, whichever is taller (the composer must not add the bar a second time above the keyboard)
+        Box(Modifier.weight(1f).fillMaxWidth().windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))) {
           NavHost(
             navController = nav,
             startDestination = Routes.HOME,

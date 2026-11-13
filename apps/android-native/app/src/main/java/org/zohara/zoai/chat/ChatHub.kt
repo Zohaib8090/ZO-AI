@@ -47,12 +47,10 @@ class ChatHub(private val make: () -> ChatSession, private val max: Int = 8) {
   }
 
   companion object {
-    @Volatile private var instance: Instance? = null
+    private val instances = java.util.WeakHashMap<AppContainer, Instance>()
 
-    /** the app's hub, made once from the container */
-    fun of(container: AppContainer): Instance = instance ?: synchronized(this) {
-      instance ?: Instance(container).also { instance = it }
-    }
+    /** the hub of the container, made once (the app has one container; a test makes its own) */
+    fun of(container: AppContainer): Instance = synchronized(instances) { instances.getOrPut(container) { Instance(container) } }
   }
 
   /** The hub plus the shared pill state, bound to the real container. */

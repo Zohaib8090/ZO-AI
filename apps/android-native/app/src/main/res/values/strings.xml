@@ -1,3 +1,4 @@
 <resources>
   <string name="app_name">ZO-AI</string>
+  <string name="shortcut_new_chat">New chat</string>
 </resources>
