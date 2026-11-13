@@ -543,7 +543,10 @@ mod tests {
         let p = Pty::spawn(&sh("grep -E 'SigIgn|SigBlk' /proc/self/status"));
         unsafe { libc::signal(libc::SIGINT, old) };
         let t = drain(&p.unwrap(), 8);
-        assert!(t.contains("SigIgn:\t0000000000000000") && t.contains("SigBlk:\t0000000000000000"), "{t}");
+        // only the signals a person can send (1 to 31) are checked: signals 32 and 33 are glibc's own, a runner may hand them down ignored (CI did)
+        let mask = |key: &str| t.lines().find_map(|l| l.trim().strip_prefix(key)).and_then(|v| u64::from_str_radix(v.trim(), 16).ok()).expect(&t);
+        assert_eq!(mask("SigIgn:") & 0x7fff_ffff, 0, "{t}");
+        assert_eq!(mask("SigBlk:") & 0x7fff_ffff, 0, "{t}");
     }
 
     #[test]
