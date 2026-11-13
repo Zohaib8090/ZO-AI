@@ -23,7 +23,7 @@ import org.zohara.chat.core.design.ZoTextField
 import org.zohara.chat.core.net.ZoHttp
 
 object AdvancedLogic {
-  const val BAD = "Use an https address, for example https://zo-ai.example.com. Plain http is only for a server on this phone's own network while testing."
+  const val BAD = "Use an https address, for example https://chat.example.com. Plain http is only for a server on this phone's own network while testing."
 
   /** AUTH-28: "" when [url] may be the server address. */
   fun validate(url: String, debug: Boolean): String = if (ZoHttp.isAcceptableServer(url.trim(), debug)) "" else BAD
