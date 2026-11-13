@@ -306,7 +306,7 @@ pub fn busy_count() -> usize {
     list().iter().filter(|i| !matches!(i.kind, Kind::Sync | Kind::Client | Kind::Terminal)).count()
 }
 
-/// What a "Quit ZO-AI?" question is about: work in progress (answers, tasks, commands) and the terminals that are open (closing
+/// What a "Quit Zohara Chat?" question is about: work in progress (answers, tasks, commands) and the terminals that are open (closing
 /// one ends what runs in it). Not the sync, the clients, nor the short memory job (it is stopped on quit).
 pub fn quit_count() -> usize {
     list().iter().filter(|i| !matches!(i.kind, Kind::Sync | Kind::Client | Kind::MemoryJob)).count()

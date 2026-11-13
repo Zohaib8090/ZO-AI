@@ -79,14 +79,19 @@ impl Questioner for NoQuestions {
 }
 
 pub fn socket_path() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("zohara-chat-approve.sock")
+}
+
+/// The approval socket of the version before the rename (ZO-AI); asked when the new one is not there.
+pub fn old_socket_path() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("zo-ai-approve.sock")
 }
 
-/// Asks the running ZO-AI app, waiting up to two minutes for an answer.
+/// Asks the running Zohara Chat app, waiting up to two minutes for an answer.
 pub struct AppApprover;
 impl Approver for AppApprover {
     fn approve(&self, tool: &str, summary: &str) -> bool {
-        let Ok(mut s) = UnixStream::connect(socket_path()) else { return false };
+        let Ok(mut s) = UnixStream::connect(socket_path()).or_else(|_| UnixStream::connect(old_socket_path())) else { return false };
         let _ = s.set_read_timeout(Some(Duration::from_secs(120)));
         if writeln!(s, "{}", json!({ "tool": tool, "summary": summary })).is_err() {
             return false;
@@ -120,4 +125,37 @@ pub fn serve(ask: impl Fn(String, String) -> bool + Send + Sync + 'static) -> st
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+
+    /// The approver asks an old app that still runs (the socket of the version before the rename) when the new socket is not there.
+    #[test]
+    fn the_approver_falls_back_to_the_old_socket() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("zo-ap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let before = std::env::var_os("XDG_RUNTIME_DIR");
+        std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        assert!(dir.join("zohara-chat-approve.sock") == socket_path() && dir.join("zo-ai-approve.sock") == old_socket_path());
+        let l = UnixListener::bind(old_socket_path()).unwrap();
+        let t = std::thread::spawn(move || {
+            let (c, _) = l.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(&c).read_line(&mut line).unwrap();
+            let mut c = c;
+            writeln!(c, "allow").unwrap();
+            line
+        });
+        assert!(AppApprover.approve("shell", "ls"));
+        assert!(t.join().unwrap().contains("shell"));
+        match before {
+            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+            None => std::env::remove_var("XDG_RUNTIME_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

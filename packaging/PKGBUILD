@@ -1,10 +1,14 @@
 # Maintainer: Zohaib Baig <zohaibbaig144@gmail.com>
-# PKGBUILD for zohara-ai. CI (.github/workflows/build.yml) compiles first, copies this file to the repository root and
+# PKGBUILD for zohara-chat. CI (.github/workflows/build.yml) compiles first, copies this file to the repository root and
 # runs makepkg, which only packages the finished binaries. Version: _PKGVER from CI, else Cargo's.
-pkgname=zohara-ai
+pkgname=zohara-chat
 pkgver=${_PKGVER:-0.1.0}
 pkgrel=1
-pkgdesc="ZO-AI: the AI built into Zohara OS, with an MCP server that lets any MCP client control the system"
+# The package was called zohara-ai before the rename to Zohara Chat: replaces/conflicts/provides make pacman upgrade it in place.
+replaces=('zohara-ai')
+conflicts=('zohara-ai')
+provides=('zohara-ai')
+pkgdesc="Zohara Chat: the AI built into Zohara OS, with an MCP server that lets any MCP client control the system"
 arch=('x86_64')
 url="https://github.com/Zohaib8090/ZO-AI"
 license=('GPL-3.0-or-later')
@@ -17,13 +21,15 @@ optdepends=('android-tools: control Android devices over adb'
 
 package() {
   cd "$startdir"
-  local d=crates/zo-ai/data
-  install -Dm755 target/release/zo-ai  "$pkgdir/usr/bin/zo-ai"
+  local d=crates/zohara-chat/data
+  install -Dm755 target/release/zohara-chat  "$pkgdir/usr/bin/zohara-chat"
+  install -Dm755 target/release/zo-ai "$pkgdir/usr/bin/zo-ai"   # the old command name: prints a hint, starts zohara-chat
   install -Dm755 target/release/zo-mcp "$pkgdir/usr/bin/zo-mcp"
   install -Dm755 target/release/zo "$pkgdir/usr/bin/zo"
-  install -Dm644 $d/org.zohara.ZoAi.desktop    "$pkgdir/usr/share/applications/org.zohara.ZoAi.desktop"
-  install -Dm644 $d/zo-ai-quick.desktop      "$pkgdir/usr/share/applications/zo-ai-quick.desktop"
-  install -Dm644 $d/zo-ai-background.desktop "$pkgdir/etc/xdg/autostart/zo-ai-background.desktop"
-  install -Dm644 $d/org.zohara.ZoAi.metainfo.xml "$pkgdir/usr/share/metainfo/org.zohara.ZoAi.metainfo.xml"
-  install -Dm644 $d/zo-ai.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/zo-ai.svg"
+  install -Dm644 $d/org.zohara.Chat.desktop    "$pkgdir/usr/share/applications/org.zohara.Chat.desktop"
+  install -Dm644 $d/org.zohara.ZoAi.desktop "$pkgdir/usr/share/applications/org.zohara.ZoAi.desktop"   # old launcher id, hidden: panel pins keep working
+  install -Dm644 $d/zohara-chat-quick.desktop      "$pkgdir/usr/share/applications/zohara-chat-quick.desktop"
+  install -Dm644 $d/zohara-chat-background.desktop "$pkgdir/etc/xdg/autostart/zohara-chat-background.desktop"
+  install -Dm644 $d/org.zohara.Chat.metainfo.xml "$pkgdir/usr/share/metainfo/org.zohara.Chat.metainfo.xml"
+  install -Dm644 $d/zohara-chat.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/zohara-chat.svg"
 }

@@ -1,6 +1,6 @@
 # SSH machines
 
-ZO-AI can run commands on other computers (a cloud VM, a server at home) over SSH, read and write files there, and start
+Zohara Chat can run commands on other computers (a cloud VM, a server at home) over SSH, read and write files there, and start
 Claude Code on them.
 
 ## Add a machine
@@ -10,7 +10,7 @@ Settings > Machines > Add machine. Give it:
 - a **name** (letters, digits, `.` `_` `-`; this is what the AI uses),
 - the **address** (a host name or IPv4 address), **user** and **port** (22 by default),
 - the **private key** text (from `-----BEGIN` to `-----END`; "Paste key" fills it from the clipboard). The key must have no
-  passphrase (ZO-AI cannot type one). Make one for ZO-AI with `ssh-keygen -t ed25519 -N ""` and put the `.pub` file in the
+  passphrase (Zohara Chat cannot type one). Make one for Zohara Chat with `ssh-keygen -t ed25519 -N ""` and put the `.pub` file in the
   machine's `~/.ssh/authorized_keys`.
 
 "Test" on a machine runs `echo ok` there and shows the answer or the error. The same exists as service ops: `machines`,
@@ -35,11 +35,11 @@ yet: it ends when it finishes or at its timeout (the whole local ssh process gro
 
 ## Where things are kept
 
-- `~/.config/zo-ai/machines.json`: name, host, user, port, note. No key.
-- The private key: the key store (`ai::keys`, id `ssh-<name>`): the system keyring, or `ZO_AI_KEYS_FILE` on a server. No
+- `~/.config/zohara-chat/machines.json`: name, host, user, port, note. No key.
+- The private key: the key store (`ai::keys`, id `ssh-<name>`): the system keyring, or `ZOHARA_CHAT_KEYS_FILE` on a server. No
   operation returns it; they only say `has_key`.
-- `~/.config/zo-ai/known_hosts`: host keys, trusted on first use (`StrictHostKeyChecking=accept-new`); a changed host key is
-  refused. ZO-AI does not read or write the person's own `~/.ssh/known_hosts`.
+- `~/.config/zohara-chat/known_hosts`: host keys, trusted on first use (`StrictHostKeyChecking=accept-new`); a changed host key is
+  refused. Zohara Chat does not read or write the person's own `~/.ssh/known_hosts`.
 
 ## Security notes
 
@@ -50,7 +50,7 @@ yet: it ends when it finishes or at its timeout (the whole local ssh process gro
   last single argument. It is the only text a (remote) shell reads, and paths are shell-quoted by a tested function.
 - ssh options: `-F /dev/null` (ignore the person's ssh config), `BatchMode=yes`, `ConnectTimeout=15`, `IdentitiesOnly=yes`,
   `IdentityAgent=none`, `-i <temporary key file>`, `-T`.
-- The temporary key file is created `0600` in `$XDG_RUNTIME_DIR/zo-ai` (a `0700` folder; `/tmp/zo-ai` if there is none) and is
+- The temporary key file is created `0600` in `$XDG_RUNTIME_DIR/zohara-chat` (a `0700` folder; `/tmp/zohara-chat` if there is none) and is
   removed as soon as the process ends, also on timeout or error. The key text is never in an argument or an environment variable
   and never in the log (the audit log records tool arguments, which never contain a key).
 - A remote command can of course do anything the remote user can. Use a user with only the rights the job needs.

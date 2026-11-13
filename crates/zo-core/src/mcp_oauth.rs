@@ -1,5 +1,5 @@
 //! Signing in to a remote MCP server that asks for it (the MCP "OAuth" way): find out where the server's sign-in lives, register
-//! ZO-AI there, open the person's browser, catch the answer on a local address and keep the tokens in the system keyring.
+//! Zohara Chat there, open the person's browser, catch the answer on a local address and keep the tokens in the system keyring.
 //! Nothing is stored in a file; the tokens belong to the keyring entry `mcp-<server name>`.
 
 use serde_json::{json, Value};
@@ -54,10 +54,10 @@ impl Saved {
     }
 }
 
-/// What the person told ZO-AI about signing in to one server (all optional).
+/// What the person told Zohara Chat about signing in to one server (all optional).
 #[derive(Clone, Debug, Default)]
 pub struct SignInOptions {
-    /// A client id registered for ZO-AI at the server, for servers that do not register apps by themselves.
+    /// A client id registered for Zohara Chat at the server, for servers that do not register apps by themselves.
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
     /// A fixed local port for the sign-in to come back to (http://127.0.0.1:PORT/callback).
@@ -209,7 +209,7 @@ pub fn sign_in(server: &str, mcp_url: &str, opts: &SignInOptions, open: &dyn Fn(
     let mut found: Option<(String, String)> = None;
     let mut last = String::from("Could not reach the server.");
     for url in &candidates {
-        let probe = http().post(url).set("Accept", "application/json, text/event-stream").send_json(json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": { "name": "zo-ai", "version": "0" } } }));
+        let probe = http().post(url).set("Accept", "application/json, text/event-stream").send_json(json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": { "name": "zohara-chat", "version": "0" } } }));
         match probe {
             Err(ureq::Error::Status(401, r)) => {
                 found = Some((url.clone(), r.header("www-authenticate").unwrap_or("").to_string()));
@@ -230,7 +230,7 @@ pub fn sign_in(server: &str, mcp_url: &str, opts: &SignInOptions, open: &dyn Fn(
     let authorize = meta["authorization_endpoint"].as_str().ok_or("The server's sign-in has no authorization address.")?.to_string();
     let token_endpoint = meta["token_endpoint"].as_str().ok_or("The server's sign-in has no token address.")?.to_string();
 
-    // 2. a local address to catch the answer, and ZO-AI registered as a client
+    // 2. a local address to catch the answer, and Zohara Chat registered as a client
     let listener = TcpListener::bind(("127.0.0.1", opts.callback_port.unwrap_or(0))).map_err(|e| format!("Could not open the local address for the sign-in (port {}): {e}", opts.callback_port.map_or("any".to_string(), |p| p.to_string())))?;
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     let redirect = format!("http://127.0.0.1:{}/callback", listener.local_addr().map_err(|e| e.to_string())?.port());
@@ -242,13 +242,13 @@ pub fn sign_in(server: &str, mcp_url: &str, opts: &SignInOptions, open: &dyn Fn(
         // a client the person registered by hand: no automatic registration
         (id, opts.client_secret.clone())
     } else {
-        let reg = meta["registration_endpoint"].as_str().ok_or_else(|| format!("This server does not register apps by itself. Register ZO-AI there, with the redirect address {redirect} (a fixed port can be set in the server's settings), and enter the client id."))?;
+        let reg = meta["registration_endpoint"].as_str().ok_or_else(|| format!("This server does not register apps by itself. Register Zohara Chat there, with the redirect address {redirect} (a fixed port can be set in the server's settings), and enter the client id."))?;
         // a server that lists the methods it takes and does not list "none" gets a client secret instead
         let auth_method = if methods.is_empty() || has("none") { "none" } else if basic_auth { "client_secret_basic" } else { "client_secret_post" };
         let registered: Value = http()
             .post(reg)
-            .send_json(json!({ "client_name": "ZO-AI", "redirect_uris": [redirect], "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"], "token_endpoint_auth_method": auth_method }))
-            .map_err(|e| format!("The server did not accept ZO-AI: {e}"))?
+            .send_json(json!({ "client_name": "Zohara Chat", "redirect_uris": [redirect], "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"], "token_endpoint_auth_method": auth_method }))
+            .map_err(|e| format!("The server did not accept Zohara Chat: {e}"))?
             .into_json()
             .map_err(|e| e.to_string())?;
         (registered["client_id"].as_str().ok_or("The server gave no client id.")?.to_string(), registered["client_secret"].as_str().map(str::to_string))
@@ -309,7 +309,7 @@ fn wait_for_code(listener: &TcpListener, state: &str, wait: Duration) -> Result<
                 let req = String::from_utf8_lossy(&buf[..n]).to_string();
                 let query = req.lines().next().unwrap_or("").split_whitespace().nth(1).unwrap_or("").split('?').nth(1).unwrap_or("").to_string();
                 let get = |k: &str| query.split('&').find_map(|p| p.strip_prefix(&format!("{k}=")).map(decode));
-                let page = |text: &str| format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<html><body style=\"font-family:sans-serif;background:#191919;color:#ececec;text-align:center;padding-top:20vh\"><h2>{text}</h2><p>You can close this tab and go back to ZO-AI.</p></body></html>");
+                let page = |text: &str| format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<html><body style=\"font-family:sans-serif;background:#191919;color:#ececec;text-align:center;padding-top:20vh\"><h2>{text}</h2><p>You can close this tab and go back to Zohara Chat.</p></body></html>");
                 if let Some(err) = get("error") {
                     let _ = stream.write_all(page("Sign-in was not completed.").as_bytes());
                     return Err(format!("The sign-in was refused: {err}"));

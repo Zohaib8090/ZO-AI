@@ -1,4 +1,4 @@
-//! Machines ZO-AI may work on over SSH (a cloud VM, a server at home). The list is in `~/.config/zo-ai/machines.json`; the private
+//! Machines Zohara Chat may work on over SSH (a cloud VM, a server at home). The list is in `~/.config/zohara-chat/machines.json`; the private
 //! key of each machine is a secret and lives in the key store (`ai::keys`, id `ssh-<name>`), never in that file.
 
 use serde::{Deserialize, Serialize};
@@ -87,7 +87,7 @@ pub fn clean_key(text: &str) -> Result<String, String> {
         return Err("That does not look like a private key (it should start with -----BEGIN ... PRIVATE KEY-----).".into());
     }
     if t.contains("ENCRYPTED") {
-        return Err("This key is protected by a passphrase. ZO-AI cannot type one: make a key without a passphrase for it.".into());
+        return Err("This key is protected by a passphrase. Zohara Chat cannot type one: make a key without a passphrase for it.".into());
     }
     Ok(format!("{t}\n"))
 }
@@ -189,7 +189,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("XDG_CONFIG_HOME", &dir);
-        std::env::set_var("ZO_AI_KEYS_FILE", dir.join("keys.json"));
+        std::env::set_var("ZOHARA_CHAT_KEYS_FILE", dir.join("keys.json"));
         let key = "-----BEGIN OPENSSH PRIVATE KEY-----\nSECRETSECRET\n-----END OPENSSH PRIVATE KEY-----";
         assert!(add(m("a", "h", "u", 22), None).is_err(), "no key, no machine");
         assert!(add(m("a", "h", "u", 22), Some("nope")).is_err());
@@ -207,7 +207,7 @@ mod tests {
         assert!(get("a").is_none() && crate::ai::keys::get("ssh-a").is_none());
         assert!(remove("a").is_err());
         std::env::remove_var("XDG_CONFIG_HOME");
-        std::env::remove_var("ZO_AI_KEYS_FILE");
+        std::env::remove_var("ZOHARA_CHAT_KEYS_FILE");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

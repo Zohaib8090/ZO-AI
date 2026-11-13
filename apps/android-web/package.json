@@ -2,7 +2,7 @@
   "name": "zo-ai-android",
   "private": true,
   "version": "0.1.0",
-  "description": "ZO-AI Android store app: a thin Capacitor wrapper that loads the website.",
+  "description": "Zohara Chat Android store app: a thin Capacitor wrapper that loads the website.",
   "scripts": {
     "sync": "cap sync android",
     "assets": "node scripts/make-assets.mjs",

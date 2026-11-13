@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>ZO-AI</title>
-<meta name="description" content="ZO-AI — your AI assistant from Zohara OS, available in any browser. Chat, use tools and control your computer, with models you choose.">
-<meta property="og:title" content="ZO-AI">
+<title>Zohara Chat</title>
+<meta name="description" content="Zohara Chat — your AI assistant from Zohara OS, available in any browser. Chat, use tools and control your computer, with models you choose.">
+<meta property="og:title" content="Zohara Chat">
 <meta property="og:description" content="Your AI assistant from Zohara OS. Chat with any model, use tools, and control your computer — from any browser.">
 <meta property="og:image" content="https://zo-ai-server.onrender.com/logo.png">
 <meta property="og:url" content="https://zo-ai-server.onrender.com/">
 <meta property="og:type" content="website">
 <link rel="canonical" href="https://zo-ai-server.onrender.com/">
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"ZO-AI","url":"https://zo-ai-server.onrender.com/","description":"The AI assistant built into Zohara OS — chat with any model, use tools and control your computer from any browser.","applicationCategory":"UtilitiesApplication","operatingSystem":"Any","logo":{"@type":"ImageObject","url":"https://zo-ai-server.onrender.com/logo.png","width":512,"height":512},"publisher":{"@type":"Organization","name":"Zohara","logo":{"@type":"ImageObject","url":"https://zo-ai-server.onrender.com/logo.png","width":512,"height":512}}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"Zohara Chat","url":"https://zo-ai-server.onrender.com/","description":"The AI assistant built into Zohara OS — chat with any model, use tools and control your computer from any browser.","applicationCategory":"UtilitiesApplication","operatingSystem":"Any","logo":{"@type":"ImageObject","url":"https://zo-ai-server.onrender.com/logo.png","width":512,"height":512},"publisher":{"@type":"Organization","name":"Zohara","logo":{"@type":"ImageObject","url":"https://zo-ai-server.onrender.com/logo.png","width":512,"height":512}}}</script>
 <!-- ---- installable app ---- -->
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#191919" media="(prefers-color-scheme: dark)">
@@ -20,13 +20,13 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="ZO-AI">
+<meta name="apple-mobile-web-app-title" content="Zohara Chat">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400&display=swap" rel="stylesheet">
 <style>
-/* The same look as the desktop app (crates/zo-ai/src/style.css and theme.rs): its dark palette, and the light one it swaps in. */
+/* The same look as the desktop app (crates/zohara-chat/src/style.css and theme.rs): its dark palette, and the light one it swaps in. */
 :root{
   --bg:#191919;--card:#202020;--card2:#242424;--raise:#2E2E2E;--comp:#303030;--user:#2B2B2B;--input:#171717;--pop:#262626;--sheet:#202020;
   --text:#ECECEC;--text2:#D0D0D0;--text3:#BDBDBD;--dim:#8C8C8C;--dimmer:#7C7C7C;--icon:#9A9A9A;
@@ -458,7 +458,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 </head>
 <body>
 <div id="login" class="hide">
-  <div class="hero-title"><svg class="mark" id="loginMark" viewBox="0 0 120 120"></svg>ZO-AI</div>
+  <div class="hero-title"><svg class="mark" id="loginMark" viewBox="0 0 120 120"></svg>Zohara Chat</div>
   <p id="lintro">Your AI, from any browser. Sign in to continue and bring your own API key.</p>
   <div class="lcard">
     <button class="page-btn primary" id="signin" type="button">Sign in with Google</button>
@@ -502,7 +502,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 <div id="consent" class="hide">
   <div class="hero-title"><svg class="mark" id="consentMark" viewBox="0 0 120 120"></svg>Before you start</div>
   <div class="box"><ul>
-    <li><b>What this is.</b> ZO-AI on the web is the assistant built into Zohara OS. Here it can chat, search the web and keep notes about you (memory).</li>
+    <li><b>What this is.</b> Zohara Chat on the web is the assistant built into Zohara OS. Here it can chat, search the web and keep notes about you (memory).</li>
     <li><b>Where your data goes.</b> Your chats and memory are stored in the cloud (Google Firebase) under your own account, so they follow you between the web, the desktop app and the terminal. The person who runs this service can technically access the database. Do not put sensitive secrets in chats.</li>
     <li><b>Your own API key.</b> You bring your own key from an AI provider. It is stored encrypted on our server and only used to call that provider for you.</li>
     <li><b>No access to your computer.</b> The web version cannot see or control your computer. Computer-control tools run only in your own desktop app, which can sync its chats here.</li>
@@ -516,7 +516,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 <div id="net" class="netbar hide" role="status"><span id="netmsg"></span><button class="btn" id="netin">Sign in again</button></div>
 <div id="app" class="hide">
   <aside class="sidebar" id="side">
-    <div class="brand"><svg class="mark" viewBox="0 0 120 120" data-mark></svg><div class="wordmark">ZO-AI</div><button class="icon-btn" id="hideSide" title="Hide the sidebar" data-i="sidebar"></button></div>
+    <div class="brand"><svg class="mark" viewBox="0 0 120 120" data-mark></svg><div class="wordmark">Zohara Chat</div><button class="icon-btn" id="hideSide" title="Hide the sidebar" data-i="sidebar"></button></div>
     <button class="nav-item" data-nav="new"><i data-i="plus"></i>New</button>
     <button class="nav-item" data-nav="chats"><i data-i="chat"></i>Chats</button>
     <button class="nav-item" data-nav="search"><i data-i="search"></i>Search</button>
@@ -584,7 +584,7 @@ const P = {
 P.paste = '<rect x="6" y="5" width="12" height="15" rx="2"/><path d="M9 5V4h6v1M9 11h6M9 15h6"/>';
 P.star = '<path d="M12 4l2.4 5 5.4.7-4 3.8 1 5.4L12 16.3 7.2 18.9l1-5.4-4-3.8 5.4-.7z"/>';
 const icon = n => `<svg viewBox="0 0 24 24">${P[n] || ""}</svg>`;
-const MARK = '<circle cx="60" cy="60" r="48" fill="none" stroke="currentColor" stroke-width="8" mask="url(#zoGap)"/><path d="M60 30Q60 60 90 60Q60 60 60 90Q60 60 30 60Q60 60 60 30Z" fill="var(--accent2)" stroke="none"/><path d="M94 14Q94 26 106 26Q94 26 94 38Q94 26 82 26Q94 26 94 14Z" fill="#F2B84B" stroke="none"/>'; // the exact shapes of crates/zo-ai/data/zo-ai-mark.svg
+const MARK = '<circle cx="60" cy="60" r="48" fill="none" stroke="currentColor" stroke-width="8" mask="url(#zoGap)"/><path d="M60 30Q60 60 90 60Q60 60 60 90Q60 60 30 60Q60 60 60 30Z" fill="var(--accent2)" stroke="none"/><path d="M94 14Q94 26 106 26Q94 26 94 38Q94 26 82 26Q94 26 94 14Z" fill="#F2B84B" stroke="none"/>'; // the exact shapes of crates/zohara-chat/data/zohara-chat-mark.svg
 document.body.insertAdjacentHTML("afterbegin", '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><mask id="zoGap"><rect width="120" height="120" fill="#fff"/><circle cx="94" cy="26" r="16" fill="#000"/></mask></defs></svg>');
 function paint(root = document) {
   root.querySelectorAll("[data-i]").forEach(e => { if (!e.dataset.done) { e.innerHTML = icon(e.dataset.i); e.dataset.done = 1; } });
@@ -680,8 +680,8 @@ function composerHTML() {
     <button class="tool-btn send" id="send" title="Send" data-i="up"></button><button class="tool-btn stop hide" id="stop" title="Stop" data-i="stop"></button></div></div>
     <div class="runnote hide" id="runNote" role="status" aria-live="polite"></div>
     <div class="runnote hide" id="ccBanner" role="status" aria-live="polite"></div>
-    <div class="pills"><button class="pill pill-run" id="pRun" aria-haspopup="menu" title="Where ZO-AI runs"><span class="pdot" id="pRunDot"></span><span class="pt" id="pRunT">Cloud</span><i data-i="down"></i></button><button class="pill" id="pModel"><span id="pModelT">…</span><i data-i="down"></i></button><button class="pill pill-muted" id="pMode">${esc(mode)}</button><button class="pill" id="pContext" title="Context usage and token breakdown"><i data-i="context"></i><span id="pContextT">Context</span></button><button class="pill" id="pTerminal" title="Interactive terminal"><i data-i="terminal"></i><span id="pTerminalT">Terminal</span></button></div>
-    <div class="foot-note" id="footNote">ZO-AI can make mistakes. Check what it did.</div>`;
+    <div class="pills"><button class="pill pill-run" id="pRun" aria-haspopup="menu" title="Where Zohara Chat runs"><span class="pdot" id="pRunDot"></span><span class="pt" id="pRunT">Cloud</span><i data-i="down"></i></button><button class="pill" id="pModel"><span id="pModelT">…</span><i data-i="down"></i></button><button class="pill pill-muted" id="pMode">${esc(mode)}</button><button class="pill" id="pContext" title="Context usage and token breakdown"><i data-i="context"></i><span id="pContextT">Context</span></button><button class="pill" id="pTerminal" title="Interactive terminal"><i data-i="terminal"></i><span id="pTerminalT">Terminal</span></button></div>
+    <div class="foot-note" id="footNote">Zohara Chat can make mistakes. Check what it did.</div>`;
 }
 function wireComposer() {
   paint(view());
@@ -718,7 +718,7 @@ async function refreshModel() {
 
 /* ===== LINK-BEGIN: run on my own computer (the desktop link) and the owner's Claude subscription =====
    Everything a desktop sends back (its name, events, tool output) is untrusted: it only goes into the page through textContent or esc(). */
-const OFFLINE_MSG = "Your computer is not reachable. Start ZO-AI on your computer (it can run in the tray) and turn on Settings > Account and sync > Control this computer from the web.";
+const OFFLINE_MSG = "Your computer is not reachable. Start Zohara Chat on your computer (it can run in the tray) and turn on Settings > Account and sync > Control this computer from the web.";
 const RUNON_KEY = "zo-runon";
 let runOn = "", runName = "";
 try { const j = JSON.parse(localStorage.getItem(RUNON_KEY) || "null"); if (j && typeof j.id === "string") { runOn = j.id.slice(0, 80); runName = String(j.name || "").slice(0, 60); } } catch {}
@@ -758,15 +758,15 @@ function runPaint() { dockUpdateTermTarget();
     const b = btn(links.busy ? "Checking…" : "Check again", "", () => linkRefresh()); b.disabled = links.busy; n.appendChild(b);
   }
   const f = $("footNote");
-  if (f) f.textContent = (on ? "Running on " + (nm ? "your computer (" + nm + ")" : "your computer") + ": it can use the files and tools there, and asks on the computer before it changes anything. " : "Running in the cloud: chat, web search and memory. Choose My computer to use the tools on your own computer. ") + "ZO-AI can make mistakes. Check what it did.";
+  if (f) f.textContent = (on ? "Running on " + (nm ? "your computer (" + nm + ")" : "your computer") + ": it can use the files and tools there, and asks on the computer before it changes anything. " : "Running in the cloud: chat, web search and memory. Choose My computer to use the tools on your own computer. ") + "Zohara Chat can make mistakes. Check what it did.";
 }
 function runPopover(a) {
   const p = popover(a, "");
   const fill = () => {
     const row = (id, title, sub, dotc, checked) => `<button class="pop-row" data-r="${esc(id)}" data-n="${esc(title)}"><div class="c"><div class="pop-title">${dotc !== null ? `<span class="pdot${dotc ? " on" : ""}"></span> ` : ""}${esc(title)}</div><div class="pop-sub">${esc(sub)}</div></div><span class="pop-check">${checked ? icon("check") : ""}</span></button>`;
-    p.innerHTML = '<div class="pop-head">Run on</div>' + row("", "Cloud", "The ZO-AI server: chat, web search and memory.", null, !runOn)
+    p.innerHTML = '<div class="pop-head">Run on</div>' + row("", "Cloud", "The Zohara Chat server: chat, web search and memory.", null, !runOn)
       + links.devices.map(d => row(d.id, "My computer (" + devName(d) + ")", d.online ? "Online" + (dcaps(d).claude_code ? " · Claude Code installed" : "") : "Not reachable" + (d.last_seen ? " · last seen " + ago(secs(d.last_seen)) : ""), d.online, runOn === d.id)).join("")
-      + (links.ok && !links.devices.length ? '<div class="pop-sub" style="padding:6px 10px">No computer is linked yet. On your computer: open ZO-AI, sign in with this account, then turn on Settings > Account and sync > Control this computer from the web.</div>' : "")
+      + (links.ok && !links.devices.length ? '<div class="pop-sub" style="padding:6px 10px">No computer is linked yet. On your computer: open Zohara Chat, sign in with this account, then turn on Settings > Account and sync > Control this computer from the web.</div>' : "")
       + (!links.ok && links.at === 0 && !links.busy ? '<div class="pop-sub" style="padding:6px 10px">Could not check your computers.</div>' : "")
       + '<div class="pop-sep"></div><button class="pop-row" data-check><div class="c"><div class="pop-title">' + (links.busy ? "Checking…" : "Check again") + "</div></div></button>";
     paint(p);
@@ -796,12 +796,12 @@ function waitApproval(summary) {
 async function pageComputers(b) {
   await linkRefresh(); b.innerHTML = "";
   b.appendChild(head("My computers"));
-  b.appendChild(cardOf(row("Run ZO-AI on your own computer", "A linked computer lets this page run ZO-AI there, with that computer's files and tools. Choose it with the Run on control under the message box. Anyone who can sign in to your account on the web can run tools on this computer. Keep Ask-first on.")));
+  b.appendChild(cardOf(row("Run Zohara Chat on your own computer", "A linked computer lets this page run Zohara Chat there, with that computer's files and tools. Choose it with the Run on control under the message box. Anyone who can sign in to your account on the web can run tools on this computer. Keep Ask-first on.")));
   if (!links.ok) { const r = btn("Try again", "primary", () => settingsPage("computers")); b.appendChild(cardOf(row("Could not check your computers", "Check your connection and try again.", r))); return; }
   const rows = links.devices.map(d => {
     const c = dcaps(d), chips = [];
     chips.push(c.claude_code ? "Claude Code installed" : "Claude Code not found");
-    if (c.version) chips.push("ZO-AI " + String(c.version).slice(0, 24)); if (c.os) chips.push(String(c.os).slice(0, 32));
+    if (c.version) chips.push("Zohara Chat " + String(c.version).slice(0, 24)); if (c.os) chips.push(String(c.os).slice(0, 32));
     chips.push(c.approvals_from_web ? "Approvals can be answered here" : "Approvals are answered on the computer");
     const use = btn(runOn === d.id ? "In use" : "Run chats here", runOn === d.id ? "" : "primary", () => { setRunOn(d.id, devName(d)); go("new"); }); use.disabled = runOn === d.id || !d.online;
     const r = row(devName(d), (d.online ? "Online now" : "Not reachable" + (d.last_seen ? " · last seen " + ago(secs(d.last_seen)) : "")), use);
@@ -810,8 +810,8 @@ async function pageComputers(b) {
     return r;
   });
   b.appendChild(head("Linked computers"));
-  b.appendChild(cardOf(...(rows.length ? rows : [row("No computer is linked", "Open ZO-AI on your computer and sign in with this account. Then turn on Settings > Account and sync > Control this computer from the web. The app can run in the tray.")]),
-    row("Presence", "A computer counts as online when ZO-AI on it checked in within the last 40 seconds.", btn("Check again", "", () => settingsPage("computers")))));
+  b.appendChild(cardOf(...(rows.length ? rows : [row("No computer is linked", "Open Zohara Chat on your computer and sign in with this account. Then turn on Settings > Account and sync > Control this computer from the web. The app can run in the tray.")]),
+    row("Presence", "A computer counts as online when Zohara Chat on it checked in within the last 40 seconds.", btn("Check again", "", () => settingsPage("computers")))));
   for (const d of links.devices.filter(x => x.online).slice(0, 10)) { b.appendChild(head("Look at " + devName(d))); b.appendChild(ctlCard(d)); }
 }
 /* ----- FULL-CONTROL phase 1 (docs/FULL-CONTROL.md): look at a linked computer: system status, files (read-only), a screenshot.
@@ -904,7 +904,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && !$
 /* ===== LINK-END ===== */
 
 /* ---------- voice: speech in (Web Speech API) and answers read aloud (speechSynthesis) ---------- */
-/* Chrome and Edge send the audio to the browser maker's speech service; it never goes to ZO-AI's server. */
+/* Chrome and Edge send the audio to the browser maker's speech service; it never goes to Zohara Chat's server. */
 const VOICE_LANGS = [["", "Browser default"], ["en-US", "English (US)"], ["en-GB", "English (UK)"], ["ur-PK", "Urdu"], ["hi-IN", "Hindi"], ["ar-SA", "Arabic"], ["bn-BD", "Bengali"], ["es-ES", "Spanish"], ["fr-FR", "French"], ["de-DE", "German"], ["it-IT", "Italian"], ["pt-BR", "Portuguese (Brazil)"], ["tr-TR", "Turkish"], ["ru-RU", "Russian"], ["id-ID", "Indonesian"], ["zh-CN", "Chinese (Mandarin)"], ["ja-JP", "Japanese"], ["ko-KR", "Korean"]];
 const voiceGet = k => { try { return localStorage.getItem("zo-voice-" + k) || ""; } catch { return ""; } };
 const voiceSet = (k, v) => { try { v ? localStorage.setItem("zo-voice-" + k, v) : localStorage.removeItem("zo-voice-" + k); } catch {} };
@@ -937,7 +937,7 @@ function voiceFill(s) {
 function voiceStart() {
   const R = voiceCtor(), t = $("text");
   if (!R) { toast("Voice input needs Chrome, Edge or Safari"); return; }
-  if (!window.isSecureContext) { toast("Voice input only works on https pages (or localhost). Open ZO-AI with its https address.", 5000); return; }
+  if (!window.isSecureContext) { toast("Voice input only works on https pages (or localhost). Open Zohara Chat with its https address.", 5000); return; }
   if (vRec || !t || t.disabled || busy) return;
   voiceSpeakStop();
   let r; try { r = new R(); } catch { toast("Voice input could not start in this browser."); return; }
@@ -1139,17 +1139,17 @@ async function send(opts) {
 function ask(ev) {
   noteApproval(ev);
   const d = document.createElement("div"); d.className = "ask";
-  d.innerHTML = `<div>${onDesktop() ? "Your computer: " : ""}ZO-AI wants to: ${esc(ev.summary || ev.tool)}</div><div class="row"><button class="btn primary">Allow</button><button class="btn">Deny</button></div>`;
+  d.innerHTML = `<div>${onDesktop() ? "Your computer: " : ""}Zohara Chat wants to: ${esc(ev.summary || ev.tool)}</div><div class="row"><button class="btn primary">Allow</button><button class="btn">Deny</button></div>`;
   thread().appendChild(d); scrollEnd();
   const [yes, no] = d.querySelectorAll("button");
   const myStream = stream;
   const answer = ok => { api("/api/reply", { stream: myStream, op: "approve", id: ev.id, yes: ok }).catch(() => {}); d.innerHTML = `<span class="pc-meta">${ok ? "Allowed" : "Denied"}: ${esc(ev.summary || ev.tool)}</span>`; };
   yes.onclick = () => answer(true); no.onclick = () => answer(false);
 }
-/* ZO-AI asks a question (zohara_ask_user, docs/INTERACTION.md). One card for up to 4 questions: header chip, the question, the options
+/* Zohara Chat asks a question (zohara_ask_user, docs/INTERACTION.md). One card for up to 4 questions: header chip, the question, the options
    (radio, or check boxes for a multi-select) with their descriptions, an "Other" row with a text box, Skip, and Back / Next with one
    Send at the end. Keys: 1 to 6 pick an option, Enter goes on, Esc skips. The answer is sent to /api/reply with the id of the
-   stream the card came from; the composer stays as the running answer left it (it is locked while ZO-AI works). */
+   stream the card came from; the composer stays as the running answer left it (it is locked while Zohara Chat works). */
 const qCards = new Set();
 /* the answer ended (done, stopped, an error, a lost connection) while cards were still open: they close as "not answered" */
 function closeQuestionCards() { Array.from(qCards).forEach(c => c.close()); }
@@ -1159,7 +1159,7 @@ function askQuestion(ev) {
   noteQuestion(ev);
   const myStream = stream;
   const d = document.createElement("div"); d.className = "q-card"; d.tabIndex = 0;
-  d.setAttribute("role", "group"); d.setAttribute("aria-label", "ZO-AI is asking you a question");
+  d.setAttribute("role", "group"); d.setAttribute("aria-label", "Zohara Chat is asking you a question");
   /* per question: the chosen option numbers, whether Other is on and its text */
   const st = questions.map(() => ({ sel: new Set(), otherOn: false, other: "" }));
   let cur = 0, over = false, sending = false;
@@ -1239,7 +1239,7 @@ function askQuestion(ev) {
   };
   thread().appendChild(d);
   render();
-  voiceAnnounce("ZO-AI is asking you a question: " + String(questions[0].question).slice(0, 200));
+  voiceAnnounce("Zohara Chat is asking you a question: " + String(questions[0].question).slice(0, 200));
   d.focus({ preventScroll: true });
 }
 document.addEventListener("click", e => { const b = e.target.closest("[data-copy]"); if (b) { navigator.clipboard?.writeText(b.closest(".code-block").querySelector("pre").textContent); toast("Copied"); } });
@@ -1649,7 +1649,7 @@ function aPick(accept, capture) {
 function aMenu(anchor) {
   const touch = matchMedia("(pointer:coarse)").matches || navigator.maxTouchPoints > 0;
   const row = (id, ic, t, s) => `<button class="pop-row" data-a="${id}" role="menuitem"><i data-i="${ic}"></i><div class="c"><div class="pop-title">${t}</div><div class="pop-sub">${s}</div></div></button>`;
-  const p = popover(anchor, '<div role="menu" aria-label="Add to your message">' + row("files", "aFile", "Upload images or files", "Pictures, PDF, ZIP, text and code") + (touch ? row("photo", "aCam", "Take a photo", "Use the camera") : "") + row("link", "aLink", "Add a link", "ZO-AI reads the page for you") + "</div>");
+  const p = popover(anchor, '<div role="menu" aria-label="Add to your message">' + row("files", "aFile", "Upload images or files", "Pictures, PDF, ZIP, text and code") + (touch ? row("photo", "aCam", "Take a photo", "Use the camera") : "") + row("link", "aLink", "Add a link", "Zohara Chat reads the page for you") + "</div>");
   p.style.right = "auto"; const r = anchor.getBoundingClientRect(); p.style.left = Math.max(8, Math.min(r.left, innerWidth - p.offsetWidth - 8)) + "px";
   const first = p.querySelector("button"); if (first) first.focus();
   p.onkeydown = e => { if (e.key === "Escape") { p.remove(); anchor.focus(); } };
@@ -1659,7 +1659,7 @@ function aMenu(anchor) {
 }
 function aLinkSheet() {
   const w = document.createElement("div");
-  w.innerHTML = '<div class="field-label">Web address</div><input class="field-input" id="aLinkIn" type="url" inputmode="url" placeholder="https://example.com/page" autocomplete="off" spellcheck="false" aria-label="Web address"><div class="field-hint">ZO-AI reads the page with its web tool after you send the message.</div>';
+  w.innerHTML = '<div class="field-label">Web address</div><input class="field-input" id="aLinkIn" type="url" inputmode="url" placeholder="https://example.com/page" autocomplete="off" spellcheck="false" aria-label="Web address"><div class="field-hint">Zohara Chat reads the page with its web tool after you send the message.</div>';
   const go = () => { aAddLink(inp.value); if (aUrl(inp.value)) sh.close(); };
   const sh = sheet("Add a link", w, [btn("Cancel", "", () => sh.close()), btn("Add", "primary", go)]);
   const inp = w.querySelector("#aLinkIn"); inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); go(); } else if (e.key === "Escape") sh.close(); }; inp.focus();
@@ -1734,7 +1734,7 @@ function aBubble(list) {
 const modes = () => (restricted() || onDesktop()) ? ["Manual", "Auto"] : ["Manual", "Auto", "Bypass"];
 function modePopover(a) {
   const info = { Manual: "Asks before every change and command.", Auto: "Looking around runs; changes ask first.", Bypass: "Never asks." };
-  const p = popover(a, '<div class="pop-head">What ZO-AI may do</div>' + modes().map(m => `<button class="pop-row" data-m="${m}"><div class="c"><div class="pop-title">${m}</div><div class="pop-sub">${info[m]}</div></div><span class="pop-check">${m === curMode() ? icon("check") : ""}</span></button>`).join("") + (onDesktop() ? '<div class="pop-sub" style="padding:4px 10px 8px">Your computer may limit this: web sessions never run on Bypass unless you allowed it there.</div>' : ""));
+  const p = popover(a, '<div class="pop-head">What Zohara Chat may do</div>' + modes().map(m => `<button class="pop-row" data-m="${m}"><div class="c"><div class="pop-title">${m}</div><div class="pop-sub">${info[m]}</div></div><span class="pop-check">${m === curMode() ? icon("check") : ""}</span></button>`).join("") + (onDesktop() ? '<div class="pop-sub" style="padding:4px 10px 8px">Your computer may limit this: web sessions never run on Bypass unless you allowed it there.</div>' : ""));
   p.querySelectorAll("[data-m]").forEach(b => b.onclick = async () => { try { await mop("mode", { set: b.dataset.m }); if (!onDesktop()) mode = b.dataset.m; } catch (e) { toast(e.message); } p.remove(); refreshModel(); });
 }
 /* ---------- model data: small cache so the pickers do not repeat calls ---------- */
@@ -1973,14 +1973,14 @@ async function showProjects() {
     const sh = sheet("New project", w, [btn("Cancel", "", () => sh.close()), btn("Create", "primary", async () => { try { await op("project_create", { name: w.querySelector("#pn").value, goal: w.querySelector("#pg").value }); sh.close(); showProjects(); } catch (e) { toast(e.message); } })]); };
   try { const r = await op("projects"); const t = (r.text || "").trim(); b.innerHTML = "";
     const lines = /no projects/i.test(t) ? [] : t.split("\n").map(l => l.split("|").map(x => x.trim())).filter(c => c.length >= 2);
-    if (!lines.length) return b.innerHTML = empty("No projects yet", "Projects keep one long-running thing together — its files, notes and context — so ZO-AI keeps working inside it.");
+    if (!lines.length) return b.innerHTML = empty("No projects yet", "Projects keep one long-running thing together — its files, notes and context — so Zohara Chat keeps working inside it.");
     lines.forEach(c => { const d = document.createElement("div"); d.className = "card project-card"; d.style.cursor = "default"; d.innerHTML = `<div class="pc-icon">${icon("folder")}</div><div class="pc-col"><div class="pc-name"></div><div class="pc-meta"></div></div>`;
       d.querySelector(".pc-name").textContent = c[1]; d.querySelector(".pc-meta").textContent = c.slice(2).filter(Boolean).join(" · "); b.appendChild(d); });
   } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
 }
 async function showArtifacts() {
   setNav("artifacts"); setTitle("Artifacts"); const b = pageBox("Artifacts");
-  try { const r = await op("artifacts"); if (!r.items.length) return b.innerHTML = empty("No artifacts yet", "Files, screenshots and code that ZO-AI makes on the server show up here.");
+  try { const r = await op("artifacts"); if (!r.items.length) return b.innerHTML = empty("No artifacts yet", "Files, screenshots and code that Zohara Chat makes on the server show up here.");
     r.items.forEach(a => { const d = document.createElement("div"); d.className = "card project-card"; d.innerHTML = `<div class="pc-icon">${icon("list")}</div><div class="pc-col"><div class="pc-name"></div><div class="pc-meta"></div></div>`; d.querySelector(".pc-name").textContent = a.title; d.querySelector(".pc-meta").textContent = a.kind + " · " + when(a.created);
       d.onclick = () => { const pre = document.createElement("pre"); pre.className = "code-body"; pre.style.cssText = "background:var(--input);border-radius:10px;padding:12px;margin:0"; pre.textContent = a.text || a.path || ""; const sh = sheet(a.title, pre, [btn("Close", "", () => sh.close())], true); };
       b.appendChild(d); });
@@ -1988,7 +1988,7 @@ async function showArtifacts() {
 }
 async function showScheduled() {
   setNav("scheduled"); setTitle("Scheduled"); const b = pageBox("Scheduled");
-  try { const r = await op("scheduled"); if (!r.tasks.length) return b.innerHTML = empty("Nothing scheduled", "Ask ZO-AI in a chat to do something later or on repeat.");
+  try { const r = await op("scheduled"); if (!r.tasks.length) return b.innerHTML = empty("Nothing scheduled", "Ask Zohara Chat in a chat to do something later or on repeat.");
     r.tasks.forEach(t => { const d = document.createElement("div"); d.className = "card project-card"; d.innerHTML = `<div class="pc-icon">${icon("alarm")}</div><div class="pc-col"><div class="pc-name"></div><div class="pc-meta"></div></div><button class="icon-btn" title="Cancel this task" data-i="trash"></button>`; d.querySelector(".pc-name").textContent = t.title || t.prompt; d.querySelector(".pc-meta").textContent = (t.repeat ? t.repeat + " · " : "") + "next " + when(t.next_run); paint(d);
       d.querySelector("button").onclick = () => confirmBox("Cancel this task?", "It will not run again.", "Cancel task", async () => { await op("schedule_cancel", { id: t.id }); showScheduled(); }); b.appendChild(d); });
   } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
@@ -2009,7 +2009,7 @@ function ccLine(cc) {
   if (!cc.allowed) return "Claude Code on this server is only for the owner's account. Sign in to Claude Code on your own computer and use it through My computer.";
   if (!cc.present) return "Not logged in. Press Log in: you sign in to Claude in your browser and paste the code back here. Nothing is typed into a terminal.";
   if (cc.source === "server") return "Using the server's own Claude sign-in. Press Log in to use your own subscription instead.";
-  return "Logged in with your Claude subscription" + (cc.set_at ? " " + when(secs(+cc.set_at)) : "") + ". The sign-in lasts about a year; ZO-AI keeps it encrypted and never shows it.";
+  return "Logged in with your Claude subscription" + (cc.set_at ? " " + when(secs(+cc.set_at)) : "") + ". The sign-in lasts about a year; Zohara Chat keeps it encrypted and never shows it.";
 }
 /* only Anthropic's sign-in pages may be opened from the link the server hands over */
 function ccSafeUrl(u) {
@@ -2029,7 +2029,7 @@ async function claudeLogin(after) {
     const st = view.state, add = h => { const d = document.createElement("div"); d.innerHTML = h; body.appendChild(d); return d; };
     if (st === "idle" || st === "cancelled" || st === "failed") {
       if (st === "failed") add(`<div class="msg-error" role="alert">${esc(view.message || "The sign-in failed.")}</div>`);
-      add('<div class="pc-meta">You sign in to Claude in your browser, copy the code it shows and paste it here. ZO-AI keeps the long sign-in it gets back, encrypted, only for your account, and never shows it. You can log out any time. Anthropic\'s own terms for Claude apply to how you use your subscription.</div>');
+      add('<div class="pc-meta">You sign in to Claude in your browser, copy the code it shows and paste it here. Zohara Chat keeps the long sign-in it gets back, encrypted, only for your account, and never shows it. You can log out any time. Anthropic\'s own terms for Claude apply to how you use your subscription.</div>');
       const go = btn(st === "failed" ? "Try again" : "Start", "primary", start); go.style.marginTop = "12px"; body.appendChild(go);
     } else if (st === "starting") add('<div class="inline"><span class="spin"></span> Starting the sign-in…</div>');
     else if (st === "link") {
@@ -2534,7 +2534,7 @@ async function showActivity() {
     // 4. Background services
     b.appendChild(head("Background services"));
     b.appendChild(cardOf(
-      row("ZO-AI Service", "Listening for the phone, the web app and the command line", null),
+      row("Zohara Chat Service", "Listening for the phone, the web app and the command line", null),
       row("Memory agent", "Active — summarizes and extracts memories between chats", null),
       row("Sync loop", "On — keeps chats and presets backed up to your account", null),
       row("Desktop link", onDesktop() ? "Connected to " + devName(curDev()) : "Standby — link a computer in Settings > My computers", null)
@@ -2545,7 +2545,7 @@ async function showActivity() {
 }
 
 /* ---------- settings: a list of pages, each with a Back button ---------- */
-const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How ZO-AI talks to you."], ["memory", "Memory", "What ZO-AI remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."], ["apps", "Connected apps", "Tools ZO-AI can use (MCP servers)."], ["machines", "Machines", "Computers ZO-AI can reach over SSH."], ["sync", "Desktop sync", "Share chats and memory with the desktop app."], ["computers", "My computers", "Computers you can run ZO-AI on from this page."], ["notifications", "Install and notifications", "Install ZO-AI as an app, and get told when an answer is ready."], ["account", "Account", "Your data, signed-in devices, export and delete."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
+const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How Zohara Chat talks to you."], ["memory", "Memory", "What Zohara Chat remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what Zohara Chat may do on its own."], ["apps", "Connected apps", "Tools Zohara Chat can use (MCP servers)."], ["machines", "Machines", "Computers Zohara Chat can reach over SSH."], ["sync", "Desktop sync", "Share chats and memory with the desktop app."], ["computers", "My computers", "Computers you can run Zohara Chat on from this page."], ["notifications", "Install and notifications", "Install Zohara Chat as an app, and get told when an answer is ready."], ["account", "Account", "Your data, signed-in devices, export and delete."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
 const pages = () => PAGES.filter(p => !(restricted() && ADMIN_PAGES.includes(p[0])));
 function row(title, sub, control) { const r = document.createElement("div"); r.className = "settings-row"; r.innerHTML = `<div class="col"><div class="pc-name2"></div>${sub ? '<div class="pc-meta2"></div>' : ""}</div>`; r.querySelector(".pc-name2").textContent = title; if (sub) r.querySelector(".pc-meta2").textContent = sub; if (control) r.appendChild(control); return r; }
 function cardOf(...rows) { const c = document.createElement("div"); c.className = "settings-card"; rows.forEach(r => c.appendChild(r)); return c; }
@@ -2611,25 +2611,25 @@ async function pagePersonality(b) {
   const st = await op("personalities"); b.innerHTML = "";
   const mk = (id, name, sub, on, del) => { const c = document.createElement("div"); c.style.cssText = "display:flex;gap:6px"; const u = btn(on ? "In use" : "Use", on ? "" : "primary", async () => { await op("personality_use", { id }); pagePersonality(b); }); u.disabled = on; c.appendChild(u);
     if (del) c.appendChild(btn("Delete", "danger", async () => { await op("personality_remove", { id }); pagePersonality(b); })); return row(name, sub, c); };
-  const rows = [mk("", "Plain", "ZO-AI's own manner: clear and to the point.", !st.active, false), ...st.items.map(p => mk(p.id, p.name + (p.generated ? " · written by the AI" : ""), p.prompt, st.active === p.id, !p.builtin))];
+  const rows = [mk("", "Plain", "Zohara Chat's own manner: clear and to the point.", !st.active, false), ...st.items.map(p => mk(p.id, p.name + (p.generated ? " · written by the AI" : ""), p.prompt, st.active === p.id, !p.builtin))];
   const own = btn("Write my own…", "", () => { const w = document.createElement("div"); w.innerHTML = '<div class="field-label">Name</div><input class="field-input" id="n"><div class="field-label">How should it sound? (4 to 7 sentences)</div><textarea class="field-input" id="p" rows="5"></textarea>';
     const sh = sheet("Write a personality", w, [btn("Cancel", "", () => sh.close()), btn("Save", "primary", async () => { try { await op("personality_add", { name: w.querySelector("#n").value, prompt: w.querySelector("#p").value }); sh.close(); pagePersonality(b); } catch (e) { toast(e.message); } })]); });
   const gen = btn("Describe one…", "primary", () => { const w = document.createElement("div"); w.innerHTML = '<div class="field-label">What should it be like?</div><textarea class="field-input" id="d" rows="4" placeholder="A patient teacher who explains with small everyday examples"></textarea><div class="field-hint" id="gm"></div>';
     const go = btn("Write it", "primary", async () => { go.disabled = true; w.querySelector("#gm").textContent = "Working on it…"; try { await op("personality_generate", { description: w.querySelector("#d").value }); sh.close(); pagePersonality(b); } catch (e) { w.querySelector("#gm").textContent = e.message; go.disabled = false; } });
     const sh = sheet("Make a personality", w, [btn("Cancel", "", () => sh.close()), go]); });
   const both = document.createElement("div"); both.style.cssText = "display:flex;gap:6px"; both.append(own, gen);
-  b.appendChild(head("Personality")); b.appendChild(cardOf(...rows, row("Add a personality", "The AI can write one from a description (it uses the model you chose). A personality changes the voice only, never the rules or what ZO-AI may do.", both)));
+  b.appendChild(head("Personality")); b.appendChild(cardOf(...rows, row("Add a personality", "The AI can write one from a description (it uses the model you chose). A personality changes the voice only, never the rules or what Zohara Chat may do.", both)));
 }
 async function pageMemory(b) {
   const m = await op("memory"); b.innerHTML = "";
   const sw = document.createElement("input"); sw.type = "checkbox"; sw.className = "switch"; sw.checked = m.enabled; sw.onchange = () => op("memory_enable", { on: sw.checked });
   const notes = m.items.filter(i => i.kind !== "episode").length;
   const talk = btn("Chat about memory…", "primary", () => memoryChat(b));
-  const card = cardOf(row("Remember things between chats", `${notes} notes about you and ${m.items.length - notes} chat summaries, shared with the computer and the phone. After every ${m.every} messages of yours, ZO-AI reads the chat in the background and keeps what is worth remembering. Never passwords or keys.`, sw),
-    row("Edit by talking", 'Tell ZO-AI what to change, in your own words: "join my preferences into one note", "forget the old laptop", "my name is spelled Zohaib". This chat only edits the notes.', talk));
+  const card = cardOf(row("Remember things between chats", `${notes} notes about you and ${m.items.length - notes} chat summaries, shared with the computer and the phone. After every ${m.every} messages of yours, Zohara Chat reads the chat in the background and keeps what is worth remembering. Never passwords or keys.`, sw),
+    row("Edit by talking", 'Tell Zohara Chat what to change, in your own words: "join my preferences into one note", "forget the old laptop", "my name is spelled Zohaib". This chat only edits the notes.', talk));
   b.appendChild(head("Memory")); b.appendChild(card);
   const items = [...m.items].sort((x, y) => (y.pinned - x.pinned) || (y.updated - x.updated));
-  const textSheet = (title, ok, text, run) => { const w = document.createElement("div"); w.innerHTML = '<div class="field-label">What should ZO-AI remember?</div><textarea class="field-input" rows="4" placeholder="I prefer short answers"></textarea>'; const ta = w.querySelector("textarea"); ta.value = text;
+  const textSheet = (title, ok, text, run) => { const w = document.createElement("div"); w.innerHTML = '<div class="field-label">What should Zohara Chat remember?</div><textarea class="field-input" rows="4" placeholder="I prefer short answers"></textarea>'; const ta = w.querySelector("textarea"); ta.value = text;
     const sh = sheet(title, w, [btn("Cancel", "", () => sh.close()), btn(ok, "primary", async () => { try { await run(ta.value); sh.close(); pageMemory(b); } catch (er) { toast(er.message); } })]); };
   [["person", "About you"], ["preference", "Preferences"], ["project", "Projects"], ["fact", "Facts"], ["episode", "Chat summaries"]].forEach(([k, label]) => { const mine = items.filter(i => i.kind === k).slice(0, 80); if (!mine.length) return;
     const h = document.createElement("div"); h.className = "mem-group"; h.textContent = label; card.appendChild(h);
@@ -2643,10 +2643,10 @@ async function pageMemory(b) {
   const add = btn("Add a note…", "", () => textSheet("Add a note", "Add", "", t => op("memory_add", { text: t })));
   const forget = btn("Forget everything", "danger", () => confirmBox("Forget everything?", "All notes and chat summaries are removed, on every device. Saved chats stay.", "Forget", async () => { await op("memory_clear"); pageMemory(b); }));
   const both = document.createElement("div"); both.style.cssText = "display:flex;gap:6px"; both.append(add, forget);
-  card.appendChild(row("Your notes", 'Pin a note to make sure the AI always knows it. Delete one that is wrong. You can also just tell ZO-AI: "remember that ..." or "forget that ...".', both));
+  card.appendChild(row("Your notes", 'Pin a note to make sure the AI always knows it. Delete one that is wrong. You can also just tell Zohara Chat: "remember that ..." or "forget that ...".', both));
 }
 function memoryChat(b) {
-  const w = document.createElement("div"); w.innerHTML = '<div id="ml" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px"><div class="pc-meta">Say what to change. ZO-AI edits the notes and tells you what it did.</div></div><input class="field-input" id="mi" placeholder="For example: join all my preferences into one note">';
+  const w = document.createElement("div"); w.innerHTML = '<div id="ml" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px"><div class="pc-meta">Say what to change. Zohara Chat edits the notes and tells you what it did.</div></div><input class="field-input" id="mi" placeholder="For example: join all my preferences into one note">';
   const send = btn("Send", "primary", null); const sh = sheet("Chat about memory", w, [btn("Done", "", () => { sh.close(); pageMemory(b); }), send], true);
   const go = async () => { const i = w.querySelector("#mi"), t = i.value.trim(); if (!t || send.disabled) return; i.value = ""; const ml = w.querySelector("#ml");
     const you = document.createElement("div"); you.className = "msg-user"; you.style.alignSelf = "flex-end"; you.textContent = t; const re = document.createElement("div"); re.className = "pc-meta"; re.textContent = "Working on it…"; ml.append(you, re); send.disabled = true;
@@ -2660,12 +2660,12 @@ async function pageGeneral(b) {
   b.appendChild(cardOf(row("Theme", "Light or dark, or the same as the rest of the system.", th)));
   b.appendChild(head("Permissions"));
   const pm = document.createElement("select"); pm.style.width = "140px"; modes().forEach(v => pm.insertAdjacentHTML("beforeend", `<option ${m.mode === v ? "selected" : ""}>${v}</option>`)); pm.onchange = async () => { await op("mode", { set: pm.value }); mode = pm.value; };
-  b.appendChild(cardOf(row("Permission mode", (restricted() ? "Manual asks before every step. Auto lets looking around run and asks before changes." : "Manual asks before every change and command. Auto lets looking around run and asks before changes. Bypass never asks. The same rule applies to every app connected to ZO-AI."), pm)));
+  b.appendChild(cardOf(row("Permission mode", (restricted() ? "Manual asks before every step. Auto lets looking around run and asks before changes." : "Manual asks before every change and command. Auto lets looking around run and asks before changes. Bypass never asks. The same rule applies to every app connected to Zohara Chat."), pm)));
   b.appendChild(head("Voice"));
   const vl = document.createElement("select"); vl.style.width = "200px"; VOICE_LANGS.forEach(([v, t]) => vl.insertAdjacentHTML("beforeend", `<option value="${v}" ${voiceGet("lang") === v ? "selected" : ""}>${t}</option>`)); vl.onchange = () => voiceSet("lang", vl.value);
   const sw = (k, off) => { const x = document.createElement("input"); x.type = "checkbox"; x.className = "switch"; x.checked = !off && voiceGet(k) === "1"; x.disabled = !!off; x.onchange = () => { voiceSet(k, x.checked ? "1" : ""); if (k === "read" && !x.checked) voiceSpeakStop(); }; return x; };
   b.appendChild(cardOf(row("Voice language", "The language you speak to the microphone, and the voice that reads answers. Hindi and Urdu can be mixed with English words.", vl), row("Send automatically when I stop talking", voiceCtor() ? "Off: you check the text and press Send." : "Needs Chrome, Edge or Safari.", sw("auto", !voiceCtor())), row("Read answers aloud", voiceCanSpeak() ? "Reads each new answer. Code is never read." : "This browser cannot read aloud.", sw("read", !voiceCanSpeak()))));
-  const vh = document.createElement("div"); vh.className = "field-hint"; vh.textContent = "In Chrome and Edge your voice goes to the browser maker's speech service for recognition, not to ZO-AI's server. ZO-AI only receives the text you send."; b.appendChild(vh);
+  const vh = document.createElement("div"); vh.className = "field-hint"; vh.textContent = "In Chrome and Edge your voice goes to the browser maker's speech service for recognition, not to Zohara Chat's server. Zohara Chat only receives the text you send."; b.appendChild(vh);
 }
 async function pageApps(b) {
   if (restricted()) { b.innerHTML = `<div class="msg-error">Connected apps are not available on this account.</div>`; return; }
@@ -2683,12 +2683,12 @@ async function pageApps(b) {
     const go = btn("Import", "primary", async () => { go.disabled = true; try { const x = await op("mcp_import", { config: t.value }); dlg.close(); toast(x.message || "Imported"); redo(); } catch (e) { w.querySelector("#pe").className = "field-hint bad"; w.querySelector("#pe").textContent = e.message; go.disabled = false; } });
     const dlg = sheet("Paste a config", w, [btn("Cancel", "", () => dlg.close()), go]); t.focus(); });
   const acts = document.createElement("div"); acts.className = "acts"; acts.append(add, paste);
-  b.appendChild(head("MCP servers ZO-AI can use"));
+  b.appendChild(head("MCP servers Zohara Chat can use"));
   const rows = r.servers.map(s => {
     const c = document.createElement("div"); c.className = "acts";
     const sw = document.createElement("input"); sw.type = "checkbox"; sw.className = "switch"; sw.checked = s.enabled; sw.setAttribute("aria-label", "Enable " + s.name);
     sw.onchange = async () => { try { await op("mcp_toggle", { name: s.name, enabled: sw.checked }); toast(s.name + (sw.checked ? " on" : " off")); } catch (e) { sw.checked = !sw.checked; toast(e.message); } };
-    const rm = btn("Remove", "danger", () => confirmBox("Remove " + s.name + "?", "ZO-AI stops using this server. Its saved token is deleted.", "Remove", async () => { try { await op("mcp_remove", { name: s.name }); redo(); } catch (e) { toast(e.message); } }));
+    const rm = btn("Remove", "danger", () => confirmBox("Remove " + s.name + "?", "Zohara Chat stops using this server. Its saved token is deleted.", "Remove", async () => { try { await op("mcp_remove", { name: s.name }); redo(); } catch (e) { toast(e.message); } }));
     c.append(sw, rm);
     return row(s.name, (s.address || s.command || "") + (!s.address && s.command ? " · runs on the desktop" : ""), c);
   });
@@ -2703,11 +2703,11 @@ async function pageMachines(b) {
   const rows = r.machines.map(m => {
     const c = document.createElement("div"); c.style.cssText = "display:flex;gap:6px";
     const t = btn("Test", "", async () => { t.disabled = true; t.textContent = "Testing…"; try { toast((await op("machine_test", { name: m.name })).message); } catch (e) { toast(e.message); } t.disabled = false; t.textContent = "Test"; });
-    const d = btn("Remove", "danger", () => confirmBox("Remove " + m.name + "?", "ZO-AI forgets this machine and its saved key.", "Remove", async () => { try { await op("machine_remove", { name: m.name }); } catch (e) { toast(e.message); } pageMachines(b); }));
+    const d = btn("Remove", "danger", () => confirmBox("Remove " + m.name + "?", "Zohara Chat forgets this machine and its saved key.", "Remove", async () => { try { await op("machine_remove", { name: m.name }); } catch (e) { toast(e.message); } pageMachines(b); }));
     c.append(t, d);
     return row(m.name, `${m.user ? m.user + "@" : ""}${m.host}:${m.port}${m.has_key ? " · key saved" : " · no key"}${m.note ? " · " + m.note : ""}`, c);
   });
-  b.appendChild(cardOf(...rows, row("Add a machine", "ZO-AI connects with SSH to run commands there. The private key is stored on the server and never shown again. Use a key made for ZO-AI.", add)));
+  b.appendChild(cardOf(...rows, row("Add a machine", "Zohara Chat connects with SSH to run commands there. The private key is stored on the server and never shown again. Use a key made for Zohara Chat.", add)));
 }
 function machineSheet(b) {
   const w = document.createElement("div");
@@ -2756,7 +2756,7 @@ async function pageAccount(b) {
     return row(nm, kind + " · last used " + (d.last_used ? ago(secs(d.last_used)) : "never") + (d.created ? " · signed in " + when(secs(d.created)) : ""), so); });
   b.appendChild(cardOf(...devs, row(devs.length ? "Sign in on another device" : "No signed-in devices", "Sign in on the desktop app to sync. Nothing is synced until you do. This browser is not listed; you sign out of it with the button at the top.")));
   b.appendChild(head("Your data"));
-  const ex = btn("Export my data", "", async () => { ex.disabled = true; try { const j = await acctOp("export"); delete j.ok; const u = URL.createObjectURL(new Blob([JSON.stringify(j, null, 2)], { type: "application/json" })); const a = document.createElement("a"); a.href = u; a.download = "zo-ai-export-" + new Date().toISOString().slice(0, 10) + ".json"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); toast("Export downloaded"); } catch (e) { toast(e.message); } ex.disabled = false; });
+  const ex = btn("Export my data", "", async () => { ex.disabled = true; try { const j = await acctOp("export"); delete j.ok; const u = URL.createObjectURL(new Blob([JSON.stringify(j, null, 2)], { type: "application/json" })); const a = document.createElement("a"); a.href = u; a.download = "zohara-chat-export-" + new Date().toISOString().slice(0, 10) + ".json"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); toast("Export downloaded"); } catch (e) { toast(e.message); } ex.disabled = false; });
   const del = btn("Delete my account and all data…", "danger", () => deleteSheet());
   b.appendChild(cardOf(row("Export my data", "A JSON file with your chats, memory and personalities. API keys are never included.", ex), row("Delete my account and all data", "Removes every chat, memory, file, device and your saved API keys from the server. This cannot be undone.", del)));
 }
@@ -2776,11 +2776,11 @@ async function pageData(b) {
   b.appendChild(head("Data"));
   b.appendChild(cardOf(row("Saved chats, projects and tasks", r.chats.length + " saved chats, kept on the server.", open), row("Delete all chats", "Removes the saved conversations here, and on every computer that syncs with this server.", del)));
 }
-async function pageAbout(b) { const s = await op("status"); b.innerHTML = ""; b.appendChild(head("About")); b.appendChild(cardOf(row("ZO-AI", "Version " + (s.version || "") + " · the AI built into Zohara OS, on the web"))); }
+async function pageAbout(b) { const s = await op("status"); b.innerHTML = ""; b.appendChild(head("About")); b.appendChild(cardOf(row("Zohara Chat", "Version " + (s.version || "") + " · the AI built into Zohara OS, on the web"))); }
 
 /* ---- notifications, installable app, background push ---- */
 /* What this does: the app can be installed (manifest + service worker /sw.js); it can tell the person that an answer is ready or that
-   ZO-AI waits for an approval while the tab is in the background (a notification, a "(1)" in the tab title, a dot on the icon); and with
+   Zohara Chat waits for an approval while the tab is in the background (a notification, a "(1)" in the tab title, a dot on the icon); and with
    "keep running" the server finishes an answer after the tab was closed and sends a push (Web Push) that opens the chat. All of it is
    off until the person says so, remembered in this browser only (localStorage "zo-notify"), and a no-op where the browser lacks it. */
 const NOTE_KEY = "zo-notify";
@@ -2826,12 +2826,12 @@ addEventListener("appinstalled", () => { deferredInstall = null; });
 const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
-/* --- the tab: "(1) ZO-AI" and a dot on the icon while an answer waits unseen --- */
+/* --- the tab: "(1) Zohara Chat" and a dot on the icon while an answer waits unseen --- */
 function faviconSvg(dot) {
   return "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><mask id="g"><rect width="120" height="120" fill="#fff"/><circle cx="94" cy="26" r="16" fill="#000"/></mask></defs><rect width="120" height="120" rx="26" fill="#0B0E14"/><g transform="translate(12,12) scale(.8)"><circle cx="60" cy="60" r="48" fill="none" stroke="#5FD4D4" stroke-width="8" mask="url(#g)"/><path d="M60 30Q60 60 90 60Q60 60 60 90Q60 60 30 60Q60 60 60 30Z" fill="#7EE0E0"/><path d="M94 14Q94 26 106 26Q94 26 94 38Q94 26 82 26Q94 26 94 14Z" fill="#F2B84B"/></g>' + (dot ? '<circle cx="96" cy="96" r="22" fill="#E5736A" stroke="#0B0E14" stroke-width="6"/>' : "") + "</svg>");
 }
 function setUnseen(n) {
-  noteUnseen = n; document.title = n ? "(" + n + ") ZO-AI" : "ZO-AI";
+  noteUnseen = n; document.title = n ? "(" + n + ") Zohara Chat" : "Zohara Chat";
   const l = $("favicon"); if (l) { l.type = n ? "image/svg+xml" : "image/png"; l.removeAttribute("sizes"); l.href = n ? faviconSvg(true) : "/icons/icon-192.png"; }
 }
 function noteSeen() {
@@ -2856,21 +2856,21 @@ function noteAnswer(chat, title, answered) {
   const key = chat + ":" + (++noteSeq); if (noted.has(key)) return;
   noted.add(key); if (noted.size > 50) noted.delete(noted.values().next().value);
   const named = c.title && title && title !== "New chat";
-  showNote(named ? title : "ZO-AI", named ? "ZO-AI: your answer is ready" : "Your answer is ready", "zo-chat-" + chat, chat);
+  showNote(named ? title : "Zohara Chat", named ? "Zohara Chat: your answer is ready" : "Your answer is ready", "zo-chat-" + chat, chat);
 }
-/* ZO-AI needs the person: a yes or a no (an approval), or an answer (a question card). Same switch, same wording rules: generic text, the
+/* Zohara Chat needs the person: a yes or a no (an approval), or an answer (a question card). Same switch, same wording rules: generic text, the
    question itself only when the person chose to show chat titles. The tag is per chat, so a second one replaces the first. Tapping the
    notification opens that chat, where the card waits (the Allow / Deny and answer buttons are in the page, never in the notification). */
 function noteNeedsYou(ev, kind) {
   if (document.visibilityState === "visible") return;
   const c = noteCfg(); if (!c.approval || notePerm() !== "granted") return;
   setUnseen(noteUnseen + 1);
-  const detail = kind === "question" ? (c.title && ev && ev.questions && ev.questions[0] ? String(ev.questions[0].question).slice(0, 120) : "ZO-AI is asking you a question.") : "A step is waiting for your yes or no.";
-  showNote("ZO-AI needs you", detail, "zo-needs-" + (chatId || ""), chatId);
+  const detail = kind === "question" ? (c.title && ev && ev.questions && ev.questions[0] ? String(ev.questions[0].question).slice(0, 120) : "Zohara Chat is asking you a question.") : "A step is waiting for your yes or no.";
+  showNote("Zohara Chat needs you", detail, "zo-needs-" + (chatId || ""), chatId);
 }
 /* an approval that this page can answer (a restricted account has none on the server; on My computer it can) */
 function noteApproval(ev) { if (restricted() && !onDesktop()) return; noteNeedsYou(ev, "approval"); }
-/* ZO-AI asks a question (zohara_ask_user) */
+/* Zohara Chat asks a question (zohara_ask_user) */
 function noteQuestion(ev) { noteNeedsYou(ev, "question"); }
 /* the person tapped a notification (or opened /?chat=...): show that chat */
 function openFromNote(chat) {
@@ -2940,13 +2940,13 @@ async function pageNotifications(b) {
     const c = noteCfg(), perm = notePerm();
     /* install */
     b.appendChild(head("Install"));
-    let ctl = null, sub = "Use ZO-AI in its own window, from your home screen or app menu, and open it faster.";
-    if (isNative()) sub = "You are already using the ZO-AI app.";
-    else if (isStandalone()) sub = "ZO-AI is installed: you are using the app.";
+    let ctl = null, sub = "Use Zohara Chat in its own window, from your home screen or app menu, and open it faster.";
+    if (isNative()) sub = "You are already using the Zohara Chat app.";
+    else if (isStandalone()) sub = "Zohara Chat is installed: you are using the app.";
     else if (deferredInstall) ctl = btn("Install app", "primary", async () => { const p = deferredInstall; deferredInstall = null; try { await p.prompt(); await p.userChoice; } catch {} paintPage(); });
     else if (isIOS()) sub = "On iPhone and iPad: tap the Share button, then Add to Home Screen. Notifications work for the installed app (iOS 16.4 or newer).";
-    else sub = "Your browser did not offer to install ZO-AI right now. Look for Install app in its menu or in the address bar (Chrome, Edge), or Add to Home screen on a phone.";
-    b.appendChild(cardOf(row("Install ZO-AI as an app", sub, ctl)));
+    else sub = "Your browser did not offer to install Zohara Chat right now. Look for Install app in its menu or in the address bar (Chrome, Edge), or Add to Home screen on a phone.";
+    b.appendChild(cardOf(row("Install Zohara Chat as an app", sub, ctl)));
     /* notifications */
     b.appendChild(head("Notifications"));
     if (!noteSupported()) { b.appendChild(cardOf(row("Not available", "This browser does not support notifications. The tab title still shows (1) when an answer is waiting."))); return; }
@@ -2957,25 +2957,25 @@ async function pageNotifications(b) {
         paintPage();
       });
       ask.disabled = perm === "denied";
-      b.appendChild(cardOf(row("Tell me when an answer is ready", perm === "denied" ? "Notifications are blocked for this site. Allow them in your browser's site settings (the lock icon next to the address), then come back here." : "ZO-AI shows a short notice when an answer finishes while this tab is in the background. Your browser will ask for permission first. Nothing is sent anywhere for this: the notice is made here, in your browser.", ask)));
+      b.appendChild(cardOf(row("Tell me when an answer is ready", perm === "denied" ? "Notifications are blocked for this site. Allow them in your browser's site settings (the lock icon next to the address), then come back here." : "Zohara Chat shows a short notice when an answer finishes while this tab is in the background. Your browser will ask for permission first. Nothing is sent anywhere for this: the notice is made here, in your browser.", ask)));
       return;
     }
     const upd = (k, v) => { const x = noteCfg(); x[k] = v; noteSave(x); };
     const rows = [switchRow("Answer finished while this tab is in the background", "A notice and a (1) in the tab title. Nothing is shown while you are looking at the tab.", c.bg, v => upd("bg", v))];
-    rows.push(switchRow("ZO-AI needs me", "A notice when ZO-AI asks you a question, or waits for your yes or no, and the tab is in the background.", c.approval, v => upd("approval", v)));
+    rows.push(switchRow("Zohara Chat needs me", "A notice when Zohara Chat asks you a question, or waits for your yes or no, and the tab is in the background.", c.approval, v => upd("approval", v)));
     rows.push(switchRow("Show the chat title in notifications", "Off: the notice only says that an answer is ready. On: it also shows the chat's title (on your lock screen too).", c.title, async v => { upd("title", v); if (noteCfg().push) { try { await pushOn(); } catch {} } }));
     rows.push(switchRow("Sound", "Use your system's notification sound (some systems have none).", c.sound, v => upd("sound", v)));
     b.appendChild(cardOf(...rows));
     const test = btn("Send a test notification", "", async () => {
       test.disabled = true;
-      const ok = await showNote("ZO-AI", "This is a test notification. It works.", "zo-test", "");
+      const ok = await showNote("Zohara Chat", "This is a test notification. It works.", "zo-test", "");
       toast(ok ? "Test notification sent" : "The browser did not show it"); setTimeout(() => { test.disabled = false; }, 1500);
     });
     { const tc = cardOf(row("Test", "Shows a notification now, even though you are looking at this tab.", test)); tc.style.marginTop = "12px"; b.appendChild(tc); }
     /* closed browser */
     if (pushSupported()) {
       b.appendChild(head("When the browser is closed"));
-      const sw = switchRow("Also notify me when this browser is closed", "ZO-AI keeps writing the answer on the server after you close the tab (a few minutes at most), saves the chat and sends a push through your browser's push service (Google, Mozilla or Apple). The push only says that an answer is ready.", c.push, async (v, el) => {
+      const sw = switchRow("Also notify me when this browser is closed", "Zohara Chat keeps writing the answer on the server after you close the tab (a few minutes at most), saves the chat and sends a push through your browser's push service (Google, Mozilla or Apple). The push only says that an answer is ready.", c.push, async (v, el) => {
         el.disabled = true;
         try { if (v) { await pushOn(); toast("Background notifications are on"); } else { await pushOff(); toast("Background notifications are off"); } }
         catch (e) { el.checked = !v; toast(e.message); }
@@ -3180,7 +3180,7 @@ function showDevice() {
   const bindOut = () => { const o = $("dout"); if (o) o.onclick = () => NOAUTH ? location.reload() : signOut(auth); };
   const fmt = v => { const c = v.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 8); return c.length > 4 ? c.slice(0, 4) + "-" + c.slice(4) : c; };
   function entry(msg) {
-    box.innerHTML = `<div class="field-label"><label for="dcode">Code shown on your device</label></div><input class="field-input dcode" id="dcode" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text" placeholder="ABCD-EFGH" value="${esc(code)}"><div class="field-hint">Open ZO-AI on your computer, or run <b>zo login</b> in a terminal. It shows a code like ABCD-EFGH. Type it here.</div><div class="lnote bad" id="dmsg" role="alert" style="margin-top:10px">${esc(msg || "")}</div><button class="page-btn primary" id="dlook" type="button" style="margin-top:6px">Look up</button>${out()}`;
+    box.innerHTML = `<div class="field-label"><label for="dcode">Code shown on your device</label></div><input class="field-input dcode" id="dcode" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text" placeholder="ABCD-EFGH" value="${esc(code)}"><div class="field-hint">Open Zohara Chat on your computer, or run <b>zo login</b> in a terminal. It shows a code like ABCD-EFGH. Type it here.</div><div class="lnote bad" id="dmsg" role="alert" style="margin-top:10px">${esc(msg || "")}</div><button class="page-btn primary" id="dlook" type="button" style="margin-top:6px">Look up</button>${out()}`;
     const inp = $("dcode"), go = $("dlook");
     const upd = () => { go.disabled = inp.value.replace(/[^A-Za-z0-9]/g, "").length < 8; };
     inp.oninput = () => { inp.value = fmt(inp.value); upd(); }; inp.onkeydown = e => { if (e.key === "Enter" && !go.disabled) go.click(); }; upd(); inp.focus(); bindOut();
@@ -3205,7 +3205,7 @@ function showDevice() {
     $("dok").onclick = () => decide(true); $("ddeny").onclick = () => decide(false); $("dagain").onclick = () => { code = ""; entry(); };
   }
   function done(ok) {
-    box.innerHTML = `<div style="text-align:center;padding:12px 0 4px"><div class="hero-title" style="font-size:22px;justify-content:center;margin-bottom:8px">${ok ? "Approved" : "Denied"}</div><div class="pc-meta">${ok ? "You can go back to the app. It signs in within a few seconds. You can close this page." : "Nothing was signed in. You can close this page."}</div></div><button class="page-btn" id="dopen" type="button" style="margin-top:14px">Open ZO-AI here</button>`;
+    box.innerHTML = `<div style="text-align:center;padding:12px 0 4px"><div class="hero-title" style="font-size:22px;justify-content:center;margin-bottom:8px">${ok ? "Approved" : "Denied"}</div><div class="pc-meta">${ok ? "You can go back to the app. It signs in within a few seconds. You can close this page." : "Nothing was signed in. You can close this page."}</div></div><button class="page-btn" id="dopen" type="button" style="margin-top:14px">Open Zohara Chat here</button>`;
     $("dopen").onclick = () => { history.replaceState(null, "", "/"); $("device").classList.add("hide"); start(curUser, true); };
   }
   entry();
@@ -3281,8 +3281,8 @@ const nativeMic = (() => {
       const av = await SR.available(); if (av && av.available === false) { toast("Speech recognition is not available on this phone."); return true; }
       let p = await SR.checkPermissions();
       if (p.speechRecognition !== "granted") {
-        if (p.speechRecognition === "denied") { toast("The microphone is blocked. Allow it for ZO-AI in the Android app settings."); return true; }
-        if (!confirm("ZO-AI uses the microphone only while you dictate a message, to turn your voice into text. Allow it?")) return true;
+        if (p.speechRecognition === "denied") { toast("The microphone is blocked. Allow it for Zohara Chat in the Android app settings."); return true; }
+        if (!confirm("Zohara Chat uses the microphone only while you dictate a message, to turn your voice into text. Allow it?")) return true;
         p = await SR.requestPermissions();
         if (p.speechRecognition !== "granted") { toast("Without the microphone permission voice input cannot work."); return true; }
       }
@@ -3361,7 +3361,7 @@ async function nativePush(u) {
     let p = await PN.checkPermissions();
     if (p.receive === "prompt" || p.receive === "prompt-with-rationale") { if (lsGet("zo_push_asked")) return; lsSet("zo_push_asked", "1"); p = await PN.requestPermissions(); }
     if (p.receive !== "granted") return;
-    try { await PN.createChannel({ id: "answers", name: "Answers", description: "ZO-AI has finished an answer", importance: 4 }); } catch {}
+    try { await PN.createChannel({ id: "answers", name: "Answers", description: "Zohara Chat has finished an answer", importance: 4 }); } catch {}
     await PN.register();
   } catch {}
 }

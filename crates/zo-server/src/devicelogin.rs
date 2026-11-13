@@ -398,7 +398,7 @@ impl DeviceLogin {
 /// `<this>/device`. Anything with a path, a query, a fragment, a user name, a scheme other than https, or odd characters is refused,
 /// so the address a device shows to a person cannot be bent to point somewhere else.
 pub fn parse_public_base(s: &str) -> Result<String, String> {
-    let bad = |why: &str| Err(format!("{why} (it must look like https://zo-ai.example.com: https, a host name, no path)"));
+    let bad = |why: &str| Err(format!("{why} (it must look like https://zohara-chat.example.com: https, a host name, no path)"));
     let s = s.trim();
     let Some(rest) = s.strip_prefix("https://") else { return bad("the public address must start with https://") };
     let rest = rest.strip_suffix('/').unwrap_or(rest);

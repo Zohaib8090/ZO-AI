@@ -1,5 +1,5 @@
 //! Tenants: one person's own corner of a shared server. The context is per thread: `scope` runs code as a tenant, `spawn` starts a
-//! thread that keeps the tenant of the thread that started it. Everything that reads or writes ZO-AI's files asks `audit::config_dir`
+//! thread that keeps the tenant of the thread that started it. Everything that reads or writes Zohara Chat's files asks `audit::config_dir`
 //! / `audit::data_dir`, which answer with the tenant's own folders.
 //!
 //! With `ZO_MULTI_TENANT=1` the default folders are never used: code that runs without a tenant gets an unusable path (reads find
@@ -460,7 +460,7 @@ mod tests {
         // clearing works, and an environment key is never used for a tenant
         scope(&a, || crate::ai::keys::clear("anthropic"));
         assert_eq!(scope(&a, || crate::ai::keys::get("anthropic")), None);
-        std::env::set_var("ZOAI_KEY_OPENAI", "sk-from-the-environment");
+        std::env::set_var("ZOHARA_CHAT_KEY_OPENAI", "sk-from-the-environment");
         let from_env = scope(&a, || crate::ai::keys::get("openai"));
         let on_multi = std::thread::spawn(|| {
             test_multi(true);
@@ -468,7 +468,7 @@ mod tests {
         })
         .join()
         .unwrap();
-        std::env::remove_var("ZOAI_KEY_OPENAI");
+        std::env::remove_var("ZOHARA_CHAT_KEY_OPENAI");
         assert_eq!((from_env, on_multi), (None, None));
     }
 

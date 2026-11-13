@@ -1,4 +1,4 @@
-//! Keeps one person's ZO-AI files and their Firestore documents the same. The server's disk is lost on every redeploy and a person's
+//! Keeps one person's Zohara Chat files and their Firestore documents the same. The server's disk is lost on every redeploy and a person's
 //! files are taken off the disk when they have been idle for a while, so a person's data is fetched from Firestore the first time they
 //! are seen, and after that every change on disk is sent there within a few seconds.
 //!

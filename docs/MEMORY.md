@@ -1,7 +1,7 @@
-# ZO-AI memory
+# Zohara Chat memory
 
-ZO-AI remembers the person across chats, on the computer and on the phone. It is one memory: the app window, the phone service
-(`zohara-linkd` → ZO-AI socket) and the MCP tools all read and write `~/.local/share/zo-ai/memory.json`.
+Zohara Chat remembers the person across chats, on the computer and on the phone. It is one memory: the app window, the phone service
+(`zohara-linkd` → Zohara Chat socket) and the MCP tools all read and write `~/.local/share/zohara-chat/memory.json`.
 
 ## What is kept
 * **Notes** (`person`, `preference`, `project`, `fact`): one short sentence each, about the person.

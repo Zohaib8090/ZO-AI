@@ -1,4 +1,4 @@
-//! Artifacts: what ZO-AI has made for you. Files it wrote, screenshots it took, and code from its replies.
+//! Artifacts: what Zohara Chat has made for you. Files it wrote, screenshots it took, and code from its replies.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

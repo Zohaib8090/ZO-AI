@@ -1,4 +1,4 @@
-//! The desktop link: the web page runs ZO-AI on the person's OWN computer. The desktop app (signed in, device credential of kind
+//! The desktop link: the web page runs Zohara Chat on the person's OWN computer. The desktop app (signed in, device credential of kind
 //! `desktop`) keeps an outbound long-poll open to the server (`/api/link/poll`); the web page sends its message to the server
 //! (`/api/send` with `"target": "desktop"`), the server hands it to the waiting desktop as a job, the desktop runs it with its own
 //! tools and posts the events back (`/api/link/events`), and the server relays them to the web page as the usual NDJSON stream.
@@ -68,7 +68,7 @@ pub fn is_control(op: &str) -> bool {
 }
 pub const MAX_PATH_CHARS: usize = 1024;
 
-pub const OFFLINE_MESSAGE: &str = "Your computer is not reachable. Start ZO-AI on your computer (it can run in the tray) and turn on Settings > Account and sync > Control this computer from the web.";
+pub const OFFLINE_MESSAGE: &str = "Your computer is not reachable. Start Zohara Chat on your computer (it can run in the tray) and turn on Settings > Account and sync > Control this computer from the web.";
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -1008,7 +1008,7 @@ pub fn reply_http(app: &App, who: &Who, stream: u64, v: &Value) -> (u16, Value) 
     match app.link.reply(&who.tenant, stream, v) {
         Replied::Sent => (200, json!({"ok": true})),
         Replied::NotFound => (404, json!({"ok": false})),
-        Replied::ApprovalsLocal => (409, err_body("approvals_on_computer", "This approval is answered on your computer. Turn on web approvals in ZO-AI's settings there to answer it here.")),
+        Replied::ApprovalsLocal => (409, err_body("approvals_on_computer", "This approval is answered on your computer. Turn on web approvals in Zohara Chat's settings there to answer it here.")),
         Replied::Bad(m) => (400, err_body("bad_reply", m)),
     }
 }

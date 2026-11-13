@@ -1,4 +1,4 @@
-//! ZO-AI as an MCP client: other MCP servers (a GitHub server, a database server, …) added in Settings. Their tools join the ones
+//! Zohara Chat as an MCP client: other MCP servers (a GitHub server, a database server, …) added in Settings. Their tools join the ones
 //! the chat AI can use, and every call asks first (they are other people's programs), unless the mode is Bypass.
 
 use crate::approval::Approver;
@@ -25,7 +25,7 @@ pub struct ServerConfig {
     /// Extra headers sent to a remote server on every request (`Authorization: Bearer …`, `X-API-Key: …`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
-    /// For a remote server that has no automatic sign-in registration: the client id (and secret) you registered for ZO-AI there.
+    /// For a remote server that has no automatic sign-in registration: the client id (and secret) you registered for Zohara Chat there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -360,7 +360,7 @@ impl Connection {
         let r = self.request("initialize", json!({
             "protocolVersion": "2025-06-18",
             "capabilities": {},
-            "clientInfo": { "name": "zo-ai", "version": env!("CARGO_PKG_VERSION") },
+            "clientInfo": { "name": "zohara-chat", "version": env!("CARGO_PKG_VERSION") },
         }), Duration::from_secs(20))?;
         self.instructions = r["instructions"].as_str().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
         self.caps = r["capabilities"].clone();
@@ -614,7 +614,7 @@ impl External {
             let text = format!("{}\nfrom the MCP server \"{server}\"", mcp::approval_text(&name, args)?);
             if !approver.approve(public_name, &text) {
                 audit::log(public_name, args, "denied");
-                return Err("The person did not approve this (or ZO-AI is not running to ask). Nothing was done.".into());
+                return Err("The person did not approve this (or Zohara Chat is not running to ask). Nothing was done.".into());
             }
         }
         let conn = self.conns.iter_mut().find(|c| c.server == server).ok_or("The server is not running.")?;

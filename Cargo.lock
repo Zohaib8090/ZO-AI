@@ -2020,19 +2020,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
-name = "zo-ai"
-version = "0.1.0"
-dependencies = [
- "glib",
- "gtk4",
- "libadwaita",
- "serde",
- "serde_json",
- "webkit6",
- "zo-core",
-]
-
-[[package]]
 name = "zo-cli"
 version = "0.1.0"
 dependencies = [
@@ -2080,5 +2067,18 @@ dependencies = [
  "sha2",
  "tiny_http",
  "ureq",
+ "zo-core",
+]
+
+[[package]]
+name = "zohara-chat"
+version = "0.1.0"
+dependencies = [
+ "glib",
+ "gtk4",
+ "libadwaita",
+ "serde",
+ "serde_json",
+ "webkit6",
  "zo-core",
 ]

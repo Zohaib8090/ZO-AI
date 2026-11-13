@@ -217,7 +217,7 @@ pub fn browser_login(
 }
 
 /// Sign in with e-mail and password: asks for both (the password is not shown), signs in at Firebase, then trades that for
-/// this device's credential. `fb` and `server` are the addresses of Firebase REST and of the ZO-AI server.
+/// this device's credential. `fb` and `server` are the addresses of Firebase REST and of the Zohara Chat server.
 pub fn email_login(fb: &str, server: &str, name: &str, email: &str, password: &str) -> Result<core::Login, Fail> {
     let s = core::sign_in_password_at(fb, email, password)?;
     if s.email_verified == Some(false) {
@@ -603,7 +603,7 @@ mod tests {
         }
     }
 
-    // ---- a mock of Firebase REST and the ZO-AI server ---------------------------------------------------------------------
+    // ---- a mock of Firebase REST and the Zohara Chat server ---------------------------------------------------------------------
 
     #[derive(Default)]
     struct Mock {
@@ -812,8 +812,8 @@ mod tests {
         let d = sandbox("e2e");
         std::env::set_var("XDG_CONFIG_HOME", d.join("config"));
         std::env::set_var("XDG_DATA_HOME", d.join("data"));
-        std::env::set_var("ZO_AI_KEYS_FILE", d.join("keys.json"));
-        std::env::remove_var("ZOAI_KEY_SYNC_TOKEN");
+        std::env::set_var("ZOHARA_CHAT_KEYS_FILE", d.join("keys.json"));
+        std::env::remove_var("ZOHARA_CHAT_KEY_SYNC_TOKEN");
         std::env::set_var("ZO_SERVER_URL", &addr);
         assert_eq!(cmd_whoami(), 1);
         assert_eq!(cmd_logout(), 0);
@@ -840,7 +840,7 @@ mod tests {
         // a revoked credential gives the plain 401 message
         let dead_target = Target::Remote { url: addr.clone(), token: Some("zd_revoked_0123456789abcdef".into()) };
         assert_eq!(dead_target.op(&json!({"op": "status"})).unwrap_err(), NOT_SIGNED_IN);
-        for k in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZO_AI_KEYS_FILE", "ZO_SERVER_URL"] {
+        for k in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZOHARA_CHAT_KEYS_FILE", "ZO_SERVER_URL"] {
             std::env::remove_var(k);
         }
         let _ = std::fs::remove_dir_all(&d);

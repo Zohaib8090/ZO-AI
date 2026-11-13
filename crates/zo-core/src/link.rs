@@ -1,7 +1,7 @@
 //! The desktop link: lets the person's own web session run on THIS computer ("My computer" in the web app). See docs/LINK.md.
 //!
 //! Off by default. When the person turns on "Control this computer from the web" (and is signed in), a background thread keeps ONE
-//! outbound long poll to the ZO-AI server (`POST /api/link/poll`, authenticated with the device credential). The server hands out
+//! outbound long poll to the Zohara Chat server (`POST /api/link/poll`, authenticated with the device credential). The server hands out
 //! jobs; this computer never listens on a network port. Nothing at all goes over the network while the switch is off or nobody is
 //! signed in.
 //!
@@ -45,7 +45,7 @@ const APPROVAL_WAIT: Duration = Duration::from_secs(180);
 pub const OPS: &[&str] = &["status", "providers", "profiles", "profile_use", "models", "select", "mode"];
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// settings (~/.config/zo-ai/link.json)
+// settings (~/.config/zohara-chat/link.json)
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
@@ -386,7 +386,7 @@ pub fn default_endpoint() -> Endpoint {
 }
 
 pub fn default_connect() -> Connect {
-    Arc::new(|| UnixStream::connect(crate::service::socket_path()))
+    Arc::new(|| crate::service::connect())
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -520,7 +520,7 @@ fn run_send(sh: Arc<Shared>, base: String, cred: String, id: String, ctl: Arc<Ct
     let conn = match (sh.connect)() {
         Ok(c) => c,
         Err(_) => {
-            let mut b = vec![json!({"event": "error", "error": "ZO-AI on this computer did not answer. Restart it."})];
+            let mut b = vec![json!({"event": "error", "error": "Zohara Chat on this computer did not answer. Restart it."})];
             let _ = flush(&base, &cred, &id, &mut b, true);
             return;
         }
@@ -665,7 +665,7 @@ fn run_op(sh: &Shared, base: &str, cred: &str, id: &str, op: &str, args: &[(Stri
     match op_request(op, args, saved) {
         Err(e) => events.push(json!({"event": "error", "error": e})),
         Ok(req) => match (sh.connect)() {
-            Err(_) => events.push(json!({"event": "error", "error": "ZO-AI on this computer did not answer. Restart it."})),
+            Err(_) => events.push(json!({"event": "error", "error": "Zohara Chat on this computer did not answer. Restart it."})),
             Ok(conn) => {
                 let _ = conn.set_read_timeout(Some(Duration::from_secs(60)));
                 let mut w = match conn.try_clone() {
@@ -681,7 +681,7 @@ fn run_op(sh: &Shared, base: &str, cred: &str, id: &str, op: &str, args: &[(Stri
                         Err(_) => events.push(json!({"event": "error", "error": "The answer was not understood."})),
                     }
                 } else {
-                    events.push(json!({"event": "error", "error": "ZO-AI on this computer did not answer."}));
+                    events.push(json!({"event": "error", "error": "Zohara Chat on this computer did not answer."}));
                 }
             }
         },
@@ -1292,7 +1292,7 @@ mod tests {
         assert_eq!([1, 2, 3, 6, 9].map(backoff_secs), [2, 4, 8, 60, 60]);
     }
 
-    // ---- a small HTTP server that plays the ZO-AI server
+    // ---- a small HTTP server that plays the Zohara Chat server
 
     type Handler = Arc<dyn Fn(&str, &Value, &str) -> (u16, Value) + Send + Sync>;
 
@@ -1883,7 +1883,7 @@ mod tests {
         update_config(|c| c.name = "x".repeat(200)).unwrap();
         assert_eq!(config().name.len(), 60, "a long name is cut");
         assert!(update_config(|c| c.name = "\u{1}".into()).is_err());
-        let text = std::fs::read_to_string(dir.join("zo-ai/link.json")).unwrap();
+        let text = std::fs::read_to_string(dir.join("zohara-chat/link.json")).unwrap();
         assert!(!text.contains("sk-ant"), "no token in the settings file");
         let _ = std::fs::remove_dir_all(&dir);
     }

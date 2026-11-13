@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Zohara Chat (background)
+Comment=Keeps Zohara Chat ready so the shortcut opens instantly and approvals can be asked
+Exec=zohara-chat --background
+Icon=zohara-chat
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

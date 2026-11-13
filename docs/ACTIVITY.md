@@ -1,6 +1,6 @@
 # Activity: what is running now
 
-ZO-AI keeps one list of everything that is running right now, and shows it in four places: the **tray icon**, the **Activity page**
+Zohara Chat keeps one list of everything that is running right now, and shows it in four places: the **tray icon**, the **Activity page**
 of the desktop app, the **web app** (sidebar footer menu) and the service operation `activity` (used by the phone and the web).
 Each place can also **stop** things that can be stopped.
 
@@ -10,7 +10,7 @@ Each place can also **stop** things that can be stopped.
 |---|---|---|---|
 | `answer` | a chat answer being written (desktop, phone, web, CLI) | yes (the same Stop as the chat's Stop button) | service `send`, desktop `chat.rs` |
 | `claude_code` | an answer by the Claude Code provider | yes | service `send`, desktop `chat.rs` |
-| `scheduled` | a scheduled task that is running | yes | `zo-ai/src/scheduler.rs` |
+| `scheduled` | a scheduled task that is running | yes | `zohara-chat/src/scheduler.rs` |
 | `memory_job` | the memory agent updating or editing memory | yes (where the job has a cancel flag) | `ai/memory_agent.rs` |
 | `command` | a long shell command or an SSH command started by the model; the title is the command, cut to one line | yes: the process is killed | `tools/system.rs`, `tools/ssh.rs` |
 | `terminal` | an open terminal | yes: Stop closes it | read from `term::list` when the list is asked for |
@@ -64,22 +64,22 @@ have `answer`, `memory_job` and `client` items (they have no commands, terminals
 
 ## Desktop tray
 
-The tray icon is a StatusNotifierItem (what KDE Plasma uses) with the ZO-AI mark. This part is implemented in `crates/zo-ai`
+The tray icon is a StatusNotifierItem (what KDE Plasma uses) with the Zohara Chat mark. This part is implemented in `crates/zohara-chat`
 (`tray.rs`); the description is the agreed design:
 
-* Menu: **Open ZO-AI**; the **Running now** list (each item as one line such as "Chat: title, 2 min", with a Stop action, or "Nothing is
-  running"); **Activity...** (opens the Activity page); **Quit ZO-AI**. Left click shows or hides the window. The tooltip shows how many
+* Menu: **Open Zohara Chat**; the **Running now** list (each item as one line such as "Chat: title, 2 min", with a Stop action, or "Nothing is
+  running"); **Activity...** (opens the Activity page); **Quit Zohara Chat**. Left click shows or hides the window. The tooltip shows how many
   things are running, and the icon asks for attention while an approval is waiting.
 * **Quit** while answers or commands are running first raises the window and asks "Quit anyway?" instead of killing them silently.
 * If there is no StatusNotifierWatcher on the session bus (no tray host), the tray does nothing and the app behaves as before; it
   looks again every 30 seconds, quietly.
-* In `--background` mode the tray is the only visible part; Open ZO-AI creates the window.
+* In `--background` mode the tray is the only visible part; Open Zohara Chat creates the window.
 
 ### Settings
 
 * **Keep running in the tray when the window is closed**: on by default when a tray host exists. Without one, closing the window quits,
   so the app is never left running invisibly with no tray.
-* **Start with the computer**: writes or removes `~/.config/autostart/zo-ai-background.desktop`.
+* **Start with the computer**: writes or removes `~/.config/autostart/zohara-chat-background.desktop`.
 
 ## Activity page (desktop)
 
@@ -87,7 +87,7 @@ Sidebar item **Activity** (after Scheduled):
 
 * **Running now**: each item with its running time (updating every second) and Stop / Open chat. "Nothing is running" when empty.
 * **Connected**: phone and web/CLI clients, MCP servers, sync (signed-in e-mail, Sync now), open terminals.
-* **Background services**: the ZO-AI service socket, the scheduler, the memory agent, the sync loop.
+* **Background services**: the Zohara Chat service socket, the scheduler, the memory agent, the sync loop.
 
 The page refreshes every 2 seconds, only while it is visible.
 

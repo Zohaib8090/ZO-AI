@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=ZO-AI (background)
-Comment=Keeps ZO-AI ready so the shortcut opens instantly and approvals can be asked
-Exec=zo-ai --background
-Icon=zo-ai
-Terminal=false
-NoDisplay=true
-X-GNOME-Autostart-enabled=true

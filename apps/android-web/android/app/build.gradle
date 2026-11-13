@@ -62,5 +62,5 @@ apply from: 'capacitor.build.gradle'
 if (file('google-services.json').exists()) {
     apply plugin: 'com.google.gms.google-services'
 } else {
-    logger.lifecycle('ZO-AI: app/google-services.json not found, google-services plugin not applied (see docs/ANDROID.md).')
+    logger.lifecycle('Zohara Chat: app/google-services.json not found, google-services plugin not applied (see docs/ANDROID.md).')
 }

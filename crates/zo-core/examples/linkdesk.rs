@@ -1,5 +1,5 @@
 //! A stand-in for the desktop app's side of the desktop link, for the end-to-end test in zo-server (never installed).
-//! It starts the real ZO-AI service on a socket in $XDG_RUNTIME_DIR and runs the real link loop (`zo_core::link::run_loop`) against a server.
+//! It starts the real Zohara Chat service on a socket in $XDG_RUNTIME_DIR and runs the real link loop (`zo_core::link::run_loop`) against a server.
 //! A sandbox is needed: the caller sets HOME, XDG_DATA_HOME, XDG_CONFIG_HOME and XDG_RUNTIME_DIR.
 //!
 //!   LINK_BASE     the server (http://127.0.0.1:port)

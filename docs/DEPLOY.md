@@ -1,4 +1,4 @@
-# Putting the ZO-AI server on Render (owner steps)
+# Putting the Zohara Chat server on Render (owner steps)
 
 Written 2026-11-12, updated for the public multi-user service the same day: see `PUBLIC.md` (design, threat model, limits, cost, checklist). Anyone may now sign in with Google; only the addresses in `ZO_ADMIN_EMAILS` are admins, everybody else is restricted. What was checked, and what was not, is listed at the end.
 
@@ -89,9 +89,9 @@ If you would rather not keep it awake, do nothing: it sleeps and wakes with the 
 
 ## Claude Code on the server (admin only)
 
-Only admins (`ZO_ADMIN_EMAILS`) can use Claude Code mode unless the operator sets `ZO_CLAUDE_CODE_USERS=all` (see TERMINAL-AND-CLAUDE-LOGIN.md: a person then signs in to Claude with their OWN account on the page and uses it with ZO-AI's safe tools only; Anthropic's terms do not allow third-party products to offer Claude subscription logins, so leave it on `admins` unless you accept that). The owner's own `claude setup-token` can be done from the web page (Settings > Model > Claude Code > Log in). The cloud terminal (admins only) can be switched off with `ZO_TERMINAL=off`.
+Only admins (`ZO_ADMIN_EMAILS`) can use Claude Code mode unless the operator sets `ZO_CLAUDE_CODE_USERS=all` (see TERMINAL-AND-CLAUDE-LOGIN.md: a person then signs in to Claude with their OWN account on the page and uses it with Zohara Chat's safe tools only; Anthropic's terms do not allow third-party products to offer Claude subscription logins, so leave it on `admins` unless you accept that). The owner's own `claude setup-token` can be done from the web page (Settings > Model > Claude Code > Log in). The cloud terminal (admins only) can be switched off with `ZO_TERMINAL=off`.
 
-ZO-AI's Claude Code mode runs the real `claude` program (found on the PATH, `/usr/local/bin`) and connects it to `zo-mcp`.
+Zohara Chat's Claude Code mode runs the real `claude` program (found on the PATH, `/usr/local/bin`) and connects it to `zo-mcp`.
 On your computer you sign in with a browser; a server has none, so it needs a token from outside.
 
 1. On **your own computer**, where Claude Code is installed and you are signed in: run `claude setup-token`. It opens the browser,
@@ -104,14 +104,14 @@ On your computer you sign in with a browser; a server has none, so it needs a to
 4. After a year the token stops working (error "login expired" or 401): run `claude setup-token` again and replace the value.
 
 Other ways: `ANTHROPIC_API_KEY` (a Console API key, pay per use) also works with `claude` and is the route Anthropic documents for
-programs and servers; for ZO-AI you can simply choose the Anthropic provider and enter the key in Settings, which needs no Claude Code at all.
+programs and servers; for Zohara Chat you can simply choose the Anthropic provider and enter the key in Settings, which needs no Claude Code at all.
 Claude Code keeps its login and sessions in `~/.claude` and `~/.claude.json` (here `/home/zo`); with the token variable it needs no login file.
 
 **Terms, honestly.** Anthropic's page (code.claude.com/docs/en/legal-and-compliance, read 2026-11-12) says subscription (OAuth) login is for
 ordinary use of Claude Code by the person who bought the plan; developers building products must use API keys; nobody may offer
 claude.ai login to other people or route their requests through a subscription, and developers may not collect or store Claude.ai
 credentials. Using your own token for your own use, in the unmodified `claude` program, on your own server, is what that page leaves
-room for, and ZO-AI never reads or stores the token (Render's environment holds it). It does not say anything specific about an
+room for, and Zohara Chat never reads or stores the token (Render's environment holds it). It does not say anything specific about an
 always-on server, so Anthropic could still treat heavy automated use differently. Do not share the address or the token with other people. If you
 want to be certain, use an API key.
 

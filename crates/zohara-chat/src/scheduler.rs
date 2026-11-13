@@ -95,7 +95,7 @@ pub fn check(done: Rc<dyn Fn()>) {
     glib::timeout_add_local(Duration::from_millis(500), move || match rx.try_recv() {
         Ok(title) => {
             if let Some(app) = gtk::gio::Application::default() {
-                let n = gtk::gio::Notification::new("ZO-AI finished a scheduled task");
+                let n = gtk::gio::Notification::new("Zohara Chat finished a scheduled task");
                 n.set_body(Some(&title));
                 app.send_notification(None, &n);
             }

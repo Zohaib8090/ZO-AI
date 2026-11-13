@@ -1,5 +1,5 @@
 //! zo-mcp: the Zohara OS tools as a stdio MCP server. Point any MCP client at this binary.
-//! Risky tools ask in the ZO-AI app (see zo-core::approval); with the app closed they are refused.
+//! Risky tools ask in the Zohara Chat app (see zo-core::approval); with the app closed they are refused.
 
 use std::io::{stdin, stdout};
 use zo_core::{approval::AppApprover, mcp};

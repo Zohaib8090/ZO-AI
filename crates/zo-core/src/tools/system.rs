@@ -100,7 +100,7 @@ pub fn view_image(path: &str) -> Result<String, String> {
     if !std::path::Path::new(&full).is_file() {
         return Err(format!("There is no file at {path}."));
     }
-    crate::ai::wire::ImageRef::from_path(&full).map(|_| full).ok_or_else(|| "That is not a picture ZO-AI can show (png, jpg, webp or gif, up to about 4 MB).".to_string())
+    crate::ai::wire::ImageRef::from_path(&full).map(|_| full).ok_or_else(|| "That is not a picture Zohara Chat can show (png, jpg, webp or gif, up to about 4 MB).".to_string())
 }
 
 #[cfg(test)]

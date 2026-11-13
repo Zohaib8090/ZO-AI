@@ -5,9 +5,9 @@
 //!   syncctl rmchat ID          delete a chat (leaves a tombstone)
 //!   syncctl forget ID          forget a note
 //!   syncctl list               what is stored here
-//!   syncctl sync URL           one sync round with ZOAI_KEY_SYNC_TOKEN as the access token
+//!   syncctl sync URL           one sync round with ZOHARA_CHAT_KEY_SYNC_TOKEN as the access token
 //!
-//! The desktop's sign-in, as the integration test drives it (ZO_SERVER_URL says which server; ZO_AI_KEYS_FILE is the key store):
+//! The desktop's sign-in, as the integration test drives it (ZO_SERVER_URL says which server; ZOHARA_CHAT_KEYS_FILE is the key store):
 //!   syncctl login KIND NAME    the browser device flow: prints "CODE <user code>", waits for the approval, saves the sign-in
 //!   syncctl syncnow            one round with the saved sign-in (what the background loop does)
 //!   syncctl signout            tells the server to revoke this device and forgets the sign-in

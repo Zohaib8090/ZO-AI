@@ -1,4 +1,4 @@
-//! The Settings page: the model and its key, the permission mode, how other apps connect to ZO-AI, and the saved data.
+//! The Settings page: the model and its key, the permission mode, how other apps connect to Zohara Chat, and the saved data.
 
 use crate::{chat, chats, hbox, lbl, secondary, set_nav, vbox, Ui};
 use adw::prelude::*;
@@ -105,12 +105,12 @@ pub fn show(ui: &Rc<Ui>) {
     let page = PAGE.with(|p| p.borrow().clone());
     let pages: [(&str, &str, &str); 9] = [
         ("model", "Model and profiles", "Which AI answers, its key, and saved presets."),
-        ("personality", "Personality", "How ZO-AI talks to you."),
-        ("memory", "Memory", "What ZO-AI remembers about you between chats."),
-        ("general", "Appearance and permissions", "Light or dark, and what ZO-AI may do on its own."),
-        ("apps", "Connected apps", "Other programs that use ZO-AI, and tools ZO-AI can use."),
+        ("personality", "Personality", "How Zohara Chat talks to you."),
+        ("memory", "Memory", "What Zohara Chat remembers about you between chats."),
+        ("general", "Appearance and permissions", "Light or dark, and what Zohara Chat may do on its own."),
+        ("apps", "Connected apps", "Other programs that use Zohara Chat, and tools Zohara Chat can use."),
         ("sync", "Account and sync", "Optional: sign in to keep chats, memory and personalities in step with the web version."),
-        ("machines", "Machines", "Other computers ZO-AI can work on over SSH."),
+        ("machines", "Machines", "Other computers Zohara Chat can work on over SSH."),
         ("data", "Data", "Saved chats."),
         ("about", "About", "Version."),
     ];
@@ -363,7 +363,7 @@ pub fn show(ui: &Rc<Ui>) {
     });
     card.append(&row(
         "Permission mode",
-        "Manual asks before every change and command. Auto lets looking around run and asks before changes. Bypass never asks. The same rule applies to every app connected to ZO-AI.",
+        "Manual asks before every change and command. Auto lets looking around run and asks before changes. Bypass never asks. The same rule applies to every app connected to Zohara Chat.",
         Some(&dd),
     ));
     content.append(&sec);
@@ -378,9 +378,9 @@ pub fn show(ui: &Rc<Ui>) {
         gtk::glib::Propagation::Proceed
     });
     let sub = if present {
-        "Closing the window leaves ZO-AI running (chats, tasks, the phone link) with its icon in the panel, where you can open it, see what is running and quit."
+        "Closing the window leaves Zohara Chat running (chats, tasks, the phone link) with its icon in the panel, where you can open it, see what is running and quit."
     } else {
-        "No panel that shows tray icons was found, so closing the window quits ZO-AI (it asks first when something is still running). This takes effect when a tray appears."
+        "No panel that shows tray icons was found, so closing the window quits Zohara Chat (it asks first when something is still running). This takes effect when a tray appears."
     };
     card.append(&row("Keep running in the tray when the window is closed", sub, Some(&keep)));
     let auto = gtk::Switch::new();
@@ -402,7 +402,7 @@ pub fn show(ui: &Rc<Ui>) {
             gtk::glib::Propagation::Proceed
         });
     }
-    card.append(&row("Start with the computer", "ZO-AI starts without a window when you sign in, so the tray icon, the shortcut and the phone link are ready.", Some(&auto)));
+    card.append(&row("Start with the computer", "Zohara Chat starts without a window when you sign in, so the tray icon, the shortcut and the phone link are ready.", Some(&auto)));
     card.append(&auto_note);
     content.append(&sec);
     }
@@ -414,7 +414,7 @@ pub fn show(ui: &Rc<Ui>) {
     let copy = secondary("Copy");
     let c2 = cmd.clone();
     copy.connect_clicked(move |b| b.clipboard().set_text(&c2));
-    card.append(&row("Let Claude Code control this computer", "Any app that speaks MCP can use ZO-AI's tools (files, shell, screenshots, schedules, projects). Run this once:", Some(&copy)));
+    card.append(&row("Let Claude Code control this computer", "Any app that speaks MCP can use Zohara Chat's tools (files, shell, screenshots, schedules, projects). Run this once:", Some(&copy)));
     let code = lbl(&cmd, "settings-code");
     code.set_selectable(true);
     code.set_wrap(true);
@@ -424,8 +424,8 @@ pub fn show(ui: &Rc<Ui>) {
     card.append(&code);
     content.append(&sec);
 
-    // ---- MCP servers ZO-AI can use ----
-    let (sec, card) = section("MCP servers ZO-AI can use");
+    // ---- MCP servers Zohara Chat can use ----
+    let (sec, card) = section("MCP servers Zohara Chat can use");
     let servers = mcp_client::load_servers();
     let add = secondary("Add server");
     let ui2 = ui.clone();
@@ -472,7 +472,7 @@ pub fn show(ui: &Rc<Ui>) {
         let (ui2, name) = (ui.clone(), s.name.clone());
         del.connect_clicked(move |_| {
             let (ui3, name3) = (ui2.clone(), name.clone());
-            crate::confirm_delete(&ui2, &format!("Remove \"{name}\"?"), "ZO-AI stops using this server and forgets its sign-in.", move || {
+            crate::confirm_delete(&ui2, &format!("Remove \"{name}\"?"), "Zohara Chat stops using this server and forgets its sign-in.", move || {
                 let mut all = mcp_client::load_servers();
                 all.retain(|x| x.name != name3);
                 mcp_client::save_servers(&all);
@@ -493,8 +493,8 @@ pub fn show(ui: &Rc<Ui>) {
         let ui2 = ui.clone();
         add.connect_clicked(move |_| add_machine_sheet(&ui2));
         card.append(&row(
-            "Let ZO-AI work on another computer",
-            "A cloud VM or a server you can reach with SSH. ZO-AI can run commands there and read and write files, asking you first unless the mode is Bypass. The private key is kept in the system keyring.",
+            "Let Zohara Chat work on another computer",
+            "A cloud VM or a server you can reach with SSH. Zohara Chat can run commands there and read and write files, asking you first unless the mode is Bypass. The private key is kept in the system keyring.",
             Some(&add),
         ));
         for m in zo_core::store::machines::load() {
@@ -547,7 +547,7 @@ pub fn show(ui: &Rc<Ui>) {
             let (ui2, name) = (ui.clone(), m.name.clone());
             del.connect_clicked(move |_| {
                 let (ui3, name3) = (ui2.clone(), name.clone());
-                crate::confirm_delete(&ui2, &format!("Remove \"{name}\"?"), "ZO-AI forgets this machine and its private key. Nothing changes on the machine itself.", move || {
+                crate::confirm_delete(&ui2, &format!("Remove \"{name}\"?"), "Zohara Chat forgets this machine and its private key. Nothing changes on the machine itself.", move || {
                     let _ = zo_core::store::machines::remove(&name3);
                     show(&ui3);
                 });
@@ -558,7 +558,7 @@ pub fn show(ui: &Rc<Ui>) {
         content.append(&sec);
     }
 
-    // ---- personality: how ZO-AI talks ----
+    // ---- personality: how Zohara Chat talks ----
     if page == "personality" {
         use zo_core::store::personality as pers;
         let (sec, card) = section("Personality");
@@ -579,7 +579,7 @@ pub fn show(ui: &Rc<Ui>) {
             });
         }
         plain.append(&plain_btn);
-        card.append(&row("Plain", "ZO-AI's own manner: clear and to the point.", Some(&plain)));
+        card.append(&row("Plain", "Zohara Chat's own manner: clear and to the point.", Some(&plain)));
         let builtin_ids: Vec<String> = pers::builtin().into_iter().map(|b| b.id).collect();
         for p in pers::all() {
             let active = st.active == p.id;
@@ -635,11 +635,11 @@ pub fn show(ui: &Rc<Ui>) {
         let both = hbox(6);
         both.append(&own);
         both.append(&make);
-        card.append(&row("Add a personality", "The AI can write one from a description (it uses the model you chose). A personality changes the voice only, never the rules or what ZO-AI may do.", Some(&both)));
+        card.append(&row("Add a personality", "The AI can write one from a description (it uses the model you chose). A personality changes the voice only, never the rules or what Zohara Chat may do.", Some(&both)));
         content.append(&sec);
     }
 
-    // ---- memory: what ZO-AI remembers about you ----
+    // ---- memory: what Zohara Chat remembers about you ----
     if page == "memory" {
         use zo_core::store::memory as mem;
         let (sec, card) = section("Memory");
@@ -654,7 +654,7 @@ pub fn show(ui: &Rc<Ui>) {
         let chats_n = st.items.len() - notes;
         card.append(&row(
             "Remember things between chats",
-            &format!("{notes} notes about you and {chats_n} chat summaries, shared with the phone. After every {} messages of yours, ZO-AI reads the chat in the background and keeps what is worth remembering. Never passwords or keys.", st.every),
+            &format!("{notes} notes about you and {chats_n} chat summaries, shared with the phone. After every {} messages of yours, Zohara Chat reads the chat in the background and keeps what is worth remembering. Never passwords or keys.", st.every),
             Some(&sw),
         ));
         let talk = crate::primary("Chat about memory…");
@@ -662,7 +662,7 @@ pub fn show(ui: &Rc<Ui>) {
             let ui2 = ui.clone();
             talk.connect_clicked(move |_| memory_chat_sheet(&ui2));
         }
-        card.append(&row("Edit by talking", "Tell ZO-AI what to change, in your own words: \"join my preferences into one note\", \"forget the old laptop\", \"my name is spelled Zohaib\". This chat only edits the notes.", Some(&talk)));
+        card.append(&row("Edit by talking", "Tell Zohara Chat what to change, in your own words: \"join my preferences into one note\", \"forget the old laptop\", \"my name is spelled Zohaib\". This chat only edits the notes.", Some(&talk)));
         let mut items = st.items.clone();
         items.sort_by(|a, b| (b.pinned, b.updated).cmp(&(a.pinned, a.updated)));
         let groups = [("person", "About you"), ("preference", "Preferences"), ("project", "Projects"), ("fact", "Facts"), ("episode", "Chat summaries")];
@@ -685,7 +685,7 @@ pub fn show(ui: &Rc<Ui>) {
                     edit.connect_clicked(move |_| {
                         let ui3 = ui2.clone();
                         let id = id.clone();
-                        text_sheet(&ui2, "Edit note", &text, "What should ZO-AI remember?", "I prefer short answers", "Save", false, move |t| {
+                        text_sheet(&ui2, "Edit note", &text, "What should Zohara Chat remember?", "I prefer short answers", "Save", false, move |t| {
                             if mem::update_text(&id, &t) { Ok("Saved".to_string()) } else { Err("That note is too short.".to_string()) }
                         }, move || show(&ui3));
                     });
@@ -721,7 +721,7 @@ pub fn show(ui: &Rc<Ui>) {
             let ui2 = ui.clone();
             add.connect_clicked(move |_| {
                 let ui3 = ui2.clone();
-                text_sheet(&ui2, "Add a note", "", "What should ZO-AI remember?", "I prefer short answers", "Add", false, |t| {
+                text_sheet(&ui2, "Add a note", "", "What should Zohara Chat remember?", "I prefer short answers", "Add", false, |t| {
                     mem::remember(&t, "fact", "").map(|_| "Remembered".to_string()).ok_or_else(|| "That note is too short.".to_string())
                 }, move || show(&ui3));
             });
@@ -741,7 +741,7 @@ pub fn show(ui: &Rc<Ui>) {
         let both = hbox(6);
         both.append(&add);
         both.append(&forget);
-        card.append(&row("Your notes", "Pin a note to make sure the AI always knows it. Delete one that is wrong. You can also just tell ZO-AI: \"remember that ...\" or \"forget that ...\".", Some(&both)));
+        card.append(&row("Your notes", "Pin a note to make sure the AI always knows it. Delete one that is wrong. You can also just tell Zohara Chat: \"remember that ...\" or \"forget that ...\".", Some(&both)));
         content.append(&sec);
     }
 
@@ -788,7 +788,7 @@ pub fn show(ui: &Rc<Ui>) {
     // ---- about ----
     if page == "about" {
     let (sec, card) = section("About");
-    card.append(&row("ZO-AI", &format!("Version {} · the AI built into Zohara OS", env!("CARGO_PKG_VERSION")), no_control()));
+    card.append(&row("Zohara Chat", &format!("Version {} · the AI built into Zohara OS", env!("CARGO_PKG_VERSION")), no_control()));
     let _ = agent::SYSTEM_PROMPT;
     content.append(&sec);
     }
@@ -990,7 +990,7 @@ fn account_page(ui: &Rc<Ui>, content: &gtk::Box) {
     url.set_placeholder_text(Some(login::DEFAULT_SERVER_URL));
     url.set_text(&cfg.url);
     url.set_hexpand(true);
-    inner.append(&wrapped("Only for people who run their own ZO-AI server. Leave it empty to use the ZO-AI server. Sign out before changing it."));
+    inner.append(&wrapped("Only for people who run their own Zohara Chat server. Leave it empty to use the Zohara Chat server. Sign out before changing it."));
     inner.append(&crate::field("Server address", &url));
     let save = secondary("Save address");
     save.set_halign(gtk::Align::Start);
@@ -1025,7 +1025,7 @@ fn signed_out_cards(ui: &Rc<Ui>, content: &gtk::Box, notice: &str) {
     use zo_core::login;
     let (sec, card) = section("Account");
     let box_ = padded_box();
-    box_.append(&wrapped("Sign in to keep your chats, memory and personalities in step with the web version and your other computers. Optional: ZO-AI works fully without it. Nothing is sent anywhere until you sign in."));
+    box_.append(&wrapped("Sign in to keep your chats, memory and personalities in step with the web version and your other computers. Optional: Zohara Chat works fully without it. Nothing is sent anywhere until you sign in."));
     let google = crate::primary("Continue with Google");
     google.set_halign(gtk::Align::Start);
     {
@@ -1381,7 +1381,7 @@ fn add_server_sheet(ui: &Rc<Ui>) {
     let advanced = vbox(10);
     advanced.append(&crate::field("Environment variables, one per line (NAME=value)", &env));
     advanced.append(&crate::field("Headers for a remote server, one per line (Name: value)", &headers));
-    advanced.append(&lbl("Sign-in. Most servers register ZO-AI by themselves. If one does not, register ZO-AI there with the redirect address http://127.0.0.1:PORT/callback (use the port below) and enter the client id.", "field-hint"));
+    advanced.append(&lbl("Sign-in. Most servers register Zohara Chat by themselves. If one does not, register Zohara Chat there with the redirect address http://127.0.0.1:PORT/callback (use the port below) and enter the client id.", "field-hint"));
     advanced.append(&crate::field("Client id", &client_id));
     advanced.append(&crate::field("Client secret (if it has one)", &client_secret));
     advanced.append(&crate::field("Local port for the sign-in", &port));
@@ -1670,7 +1670,7 @@ pub fn saved_chats_sheet(ui: &Rc<Ui>) {
         body.append(&bar);
         body.append(&lbl(&chat.title, "pc-name"));
         for e in &chat.entries {
-            let who = if e.kind == "msg-user" { "You" } else if e.kind == "msg-error" { "Error" } else { "ZO-AI" };
+            let who = if e.kind == "msg-user" { "You" } else if e.kind == "msg-error" { "Error" } else { "Zohara Chat" };
             let t = lbl(who, "pc-meta");
             t.set_xalign(0.0);
             body.append(&t);
@@ -1697,7 +1697,7 @@ fn memory_chat_sheet(ui: &Rc<Ui>) {
     let (win, body, foot) = crate::sheet(ui, "Chat about memory", 560);
     let log = vbox(8);
     body.append(&log);
-    let hint = lbl("Say what to change. ZO-AI edits the notes and tells you what it did.", "field-hint");
+    let hint = lbl("Say what to change. Zohara Chat edits the notes and tells you what it did.", "field-hint");
     hint.set_wrap(true);
     hint.set_xalign(0.0);
     log.append(&hint);
@@ -1893,7 +1893,7 @@ fn link_sections(ui: &Rc<Ui>, content: &gtk::Box) {
     on.set_active(cfg.enabled);
     card.append(&row(
         "Let my web sessions run on this computer",
-        "When this is on, ZO-AI keeps one connection to the server, so the web app can offer \"My computer\" and use your tools, files and models here. The app has to be running (it can sit in the tray). When it is off, nothing is contacted for this.",
+        "When this is on, Zohara Chat keeps one connection to the server, so the web app can offer \"My computer\" and use your tools, files and models here. The app has to be running (it can sit in the tray). When it is off, nothing is contacted for this.",
         Some(&on),
     ));
     let warn = lbl("Anyone who can sign in to your account on the web can run tools on this computer. Keep Ask-first on.", "pc-name");
@@ -1997,7 +1997,7 @@ fn link_sections(ui: &Rc<Ui>, content: &gtk::Box) {
     let (sec, card) = section("Use my Claude subscription on the web (owner only)");
     card.append(&row(
         "",
-        "Claude Code can run on the ZO-AI server with your own Claude subscription, so you can use it from the web even when this computer is off. What is sent: one long-lived sign-in token made by \"claude setup-token\" (valid about a year). The server keeps it encrypted, only your account can use it, and you can remove it here at any time. Only the owner account of the server can do this; everybody else uses Claude Code on their own computer through the switch above.",
+        "Claude Code can run on the Zohara Chat server with your own Claude subscription, so you can use it from the web even when this computer is off. What is sent: one long-lived sign-in token made by \"claude setup-token\" (valid about a year). The server keeps it encrypted, only your account can use it, and you can remove it here at any time. Only the owner account of the server can do this; everybody else uses Claude Code on their own computer through the switch above.",
         no_control(),
     ));
     let secret: Rc<std::cell::RefCell<Option<link::Secret>>> = Rc::new(std::cell::RefCell::new(None));

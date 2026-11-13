@@ -1,4 +1,4 @@
-//! What ZO-AI keeps on disk: projects, saved chats and scheduled tasks. The app, the chat AI and the MCP server all read and
+//! What Zohara Chat keeps on disk: projects, saved chats and scheduled tasks. The app, the chat AI and the MCP server all read and
 //! write the same files, so what one makes the others see.
 
 pub mod artifacts;

@@ -1,4 +1,4 @@
-//! ZO-AI core. Everything that touches the operating system lives here, so the app and the
+//! Zohara Chat core. Everything that touches the operating system lives here, so the app and the
 //! MCP server share one set of tools, one permission policy and one audit log.
 
 pub mod activity;
@@ -10,6 +10,7 @@ pub mod audit;
 pub mod claude_login;
 pub mod control;
 pub mod exec;
+pub mod legacy;
 pub mod link;
 pub mod login;
 pub mod mcp;

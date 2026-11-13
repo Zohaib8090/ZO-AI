@@ -63,7 +63,7 @@ fn main() {
             } else if said.contains("write") && last["role"] != "tool" {
                 serde_json::json!({ "choices": [{ "message": { "content": "I will save a note.", "tool_calls": [{
                     "id": "call_w", "type": "function",
-                    "function": { "name": "zohara_fs_write", "arguments": "{\"path\":\"~/zo-note.md\",\"content\":\"# A note\\nwritten by ZO-AI\\n\"}" } }] } }] })
+                    "function": { "name": "zohara_fs_write", "arguments": "{\"path\":\"~/zo-note.md\",\"content\":\"# A note\\nwritten by Zohara Chat\\n\"}" } }] } }] })
             } else             if said.contains("schedule") && last["role"] != "tool" {
                 serde_json::json!({ "choices": [{ "message": { "content": "I will schedule that for you.", "tool_calls": [{
                     "id": "call_s", "type": "function",

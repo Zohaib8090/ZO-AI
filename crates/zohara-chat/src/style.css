@@ -1,4 +1,4 @@
-/* ZO-AI: neutral dark palette and layout in the style of Claude. #191919 background · #ECECEC text · #5FD4D4 accent */
+/* Zohara Chat: neutral dark palette and layout in the style of Claude. #191919 background · #ECECEC text · #5FD4D4 accent */
 
 window.background,
 .zo-root {
@@ -789,7 +789,7 @@ window.quick { border-radius: 20px; border: none; background: transparent; }
 textview.code-view, textview.code-view text { background-color: #171717; color: #E4E4E4; font-size: 13px; }
 textview.code-view { padding: 10px; }
 
-/* the collapsed box of tool runs: teal while ZO-AI is working, grey once it is done */
+/* the collapsed box of tool runs: teal while Zohara Chat is working, grey once it is done */
 .tool-group { margin: 2px 0 4px 0; }
 .tool-head { padding: 4px 8px; border-radius: 9px; min-height: 0; color: #8C8C8C; background: transparent; box-shadow: none; }
 .tool-head:hover { background-color: alpha(white, 0.05); color: #D0D0D0; }

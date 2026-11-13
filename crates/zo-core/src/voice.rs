@@ -61,7 +61,7 @@ impl Recording {
         }
         let mut child = Command::new("parecord")
             .args(["--raw", "--rate=16000", "--channels=1", "--format=s16le", "--latency-msec=30",
-                "--client-name=Zohara AI", "--stream-name=Voice to text"])
+                "--client-name=Zohara Chat", "--stream-name=Voice to text"])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
@@ -93,7 +93,7 @@ impl Recording {
         if samples.len() < RATE {
             return Err("Nothing was recorded (whisper needs at least a second).".into());
         }
-        let dir = std::env::temp_dir().join(format!("zo-ai-voice-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("zohara-chat-voice-{}", std::process::id()));
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let wav = dir.join("speech.wav");
         let result = write_wav(&wav, &samples).map_err(|e| e.to_string()).and_then(|_| transcribe(&wav));

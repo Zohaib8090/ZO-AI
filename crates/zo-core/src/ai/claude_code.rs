@@ -1,6 +1,6 @@
-//! Claude Code mode: ZO-AI runs the real `claude` program that the person installed and signed in to themselves,
-//! and connects it to `zo-mcp`, so Claude does the thinking with its own login and ZO-AI only supplies the
-//! computer controls and the approvals. ZO-AI never reads, copies or stores any Claude credential.
+//! Claude Code mode: Zohara Chat runs the real `claude` program that the person installed and signed in to themselves,
+//! and connects it to `zo-mcp`, so Claude does the thinking with its own login and Zohara Chat only supplies the
+//! computer controls and the approvals. Zohara Chat never reads, copies or stores any Claude credential.
 
 use super::agent::{Event, SYSTEM_PROMPT};
 use serde_json::{json, Value};
@@ -10,13 +10,13 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Where `claude` is: `ZOAI_CLAUDE_BIN`, the PATH, or `~/.local/bin`.
+/// Where `claude` is: `ZOHARA_CHAT_CLAUDE_BIN`, the PATH, or `~/.local/bin`.
 pub fn binary() -> Option<PathBuf> {
     // Claude Code is a program on the server: only for a person the operator allows (see `allowed_here`)
     if crate::tenant::is_restricted() && !allowed_here() {
         return None;
     }
-    if let Some(p) = std::env::var_os("ZOAI_CLAUDE_BIN") {
+    if let Some(p) = crate::legacy::env_os("ZOHARA_CHAT_CLAUDE_BIN", "ZOAI_CLAUDE_BIN") {
         return Some(PathBuf::from(p));
     }
     let on_path = std::env::var_os("PATH").and_then(|paths| std::env::split_paths(&paths).map(|d| d.join("claude")).find(|p| p.is_file()));
@@ -24,7 +24,7 @@ pub fn binary() -> Option<PathBuf> {
 }
 
 /// The operator's switch `ZO_CLAUDE_CODE_USERS`: `admins` (the default; anything else than `all` means this) or `all` (every signed-in person
-/// may sign in to Claude Code with their own subscription and use it on the server, with ZO-AI's few safe tools only).
+/// may sign in to Claude Code with their own subscription and use it on the server, with Zohara Chat's few safe tools only).
 pub fn users_all() -> bool {
     #[cfg(test)]
     if let Some(v) = TEST_USERS.with(|c| c.get()) {
@@ -313,7 +313,7 @@ fn run_once(mode: Option<crate::policy::Mode>, model: &str, effort: Option<&str>
     let config = json!({ "mcpServers": { "zohara": { "command": mcp_binary(), "env": env } } }).to_string();
     let (mut cmd, token) = command(bin)?;
     cmd.args(["-p", prompt, "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--strict-mcp-config", "--mcp-config", &config,
-        // Claude's own file and shell tools are off: everything goes through ZO-AI's tools, so ZO-AI's permission modes apply
+        // Claude's own file and shell tools are off: everything goes through Zohara Chat's tools, so Zohara Chat's permission modes apply
         "--tools", "", "--allowedTools", "mcp__zohara__*", "--append-system-prompt", &system]);
     if !model.is_empty() {
         cmd.args(["--model", model]);
@@ -472,7 +472,7 @@ mod tests {
             echo '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"hi\"}}]}}}}'\n", args_log.display())).unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::env::set_var("ZOAI_CLAUDE_BIN", &script);
+        std::env::set_var("ZOHARA_CHAT_CLAUDE_BIN", &script);
 
         let (mut session, mut texts) = (None, Vec::new());
         run("sonnet", None, &mut session, "one", "", &Arc::new(AtomicBool::new(false)), &mut |e| if let Event::Text(t) = e { texts.push(t) }).unwrap();
@@ -484,7 +484,7 @@ mod tests {
         assert!(!calls[0].contains("--resume") && calls[1].contains("--resume fake-1"));
         assert!(!calls[0].contains("--effort") && calls[1].contains("--effort high"));
         assert!(calls[0].contains("--tools") && calls[0].contains("--allowedTools mcp__zohara__*") && calls[0].contains("--model sonnet"));
-        std::env::remove_var("ZOAI_CLAUDE_BIN");
+        std::env::remove_var("ZOHARA_CHAT_CLAUDE_BIN");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -538,14 +538,14 @@ mod server_tests {
         test_multi(true);
         std::env::set_var("FIREBASE_SERVICE_ACCOUNT", FIREBASE);
         std::env::set_var("CLAUDE_CODE_OAUTH_TOKEN", GLOBAL);
-        std::env::set_var("ZOAI_KEY_OPENAI", "sk-openai-key-of-the-server");
+        std::env::set_var("ZOHARA_CHAT_KEY_OPENAI", "sk-openai-key-of-the-server");
         let dir = std::env::temp_dir().join(format!("zo-fake-claude-srv-{}-{}", std::process::id(), std::thread::current().name().unwrap_or("t").replace("::", "_")));
         let _ = std::fs::remove_dir_all(&dir);
         (g, dir)
     }
 
     fn cleanup(dir: &std::path::Path) {
-        for k in ["FIREBASE_SERVICE_ACCOUNT", "CLAUDE_CODE_OAUTH_TOKEN", "ZOAI_KEY_OPENAI", "ZOAI_CLAUDE_BIN"] {
+        for k in ["FIREBASE_SERVICE_ACCOUNT", "CLAUDE_CODE_OAUTH_TOKEN", "ZOHARA_CHAT_KEY_OPENAI", "ZOHARA_CHAT_CLAUDE_BIN"] {
             std::env::remove_var(k);
         }
         test_multi(false);
@@ -560,7 +560,7 @@ mod server_tests {
     fn on_a_server_claude_gets_a_minimal_environment_with_only_this_tenants_token_a_private_home_and_no_built_in_tools() {
         let (_g, dir) = setup();
         let (a, b) = (fresh(false), fresh(false));
-        std::env::set_var("ZOAI_CLAUDE_BIN", fake(&dir, OK));
+        std::env::set_var("ZOHARA_CHAT_CLAUDE_BIN", fake(&dir, OK));
         scope(&b, || store_token(TOKEN_B).unwrap());
         scope(&a, || store_token(TOKEN_A).unwrap());
         assert_eq!(scope(&a, ask).unwrap(), "ok");
@@ -581,7 +581,7 @@ mod server_tests {
         assert_eq!(std::fs::metadata(&home).unwrap().permissions().mode() & 0o777, 0o700);
         // it works in the tenant's data folder
         assert_eq!(std::fs::canonicalize(std::fs::read_to_string(dir.join("pwd")).unwrap().trim()).unwrap(), std::fs::canonicalize(&a.data).unwrap());
-        // Claude's own tools are off, ZO-AI's tools only
+        // Claude's own tools are off, Zohara Chat's tools only
         let args: Vec<String> = std::fs::read_to_string(dir.join("args")).unwrap().lines().map(str::to_string).collect();
         let i = args.iter().position(|x| x == "--tools").expect("--tools is passed");
         assert_eq!(args[i + 1], "", "the list of built-in tools is empty");
@@ -598,7 +598,7 @@ mod server_tests {
     fn without_an_own_token_an_admin_uses_the_servers_fallback_only_if_there_is_one_and_a_restricted_tenant_never_gets_claude() {
         let (_g, dir) = setup();
         let (admin, restricted) = (fresh(false), fresh(true));
-        std::env::set_var("ZOAI_CLAUDE_BIN", fake(&dir, OK));
+        std::env::set_var("ZOHARA_CHAT_CLAUDE_BIN", fake(&dir, OK));
         // nothing at all
         assert_eq!(scope(&admin, ask).unwrap_err(), NO_TOKEN);
         assert!(!scope(&admin, usable_here));
@@ -627,10 +627,10 @@ mod server_tests {
         let (_g, dir) = setup();
         let a = fresh(false);
         scope(&a, || store_token(TOKEN_A).unwrap());
-        std::env::set_var("ZOAI_CLAUDE_BIN", fake(&dir, "echo '{\"type\":\"result\",\"is_error\":true,\"result\":\"API Error: 401 authentication_error invalid\"}'"));
+        std::env::set_var("ZOHARA_CHAT_CLAUDE_BIN", fake(&dir, "echo '{\"type\":\"result\",\"is_error\":true,\"result\":\"API Error: 401 authentication_error invalid\"}'"));
         assert_eq!(scope(&a, ask).unwrap_err(), TOKEN_REJECTED);
         // an error that quotes the token: cut out; other errors pass through
-        std::env::set_var("ZOAI_CLAUDE_BIN", fake(&dir, &format!("echo 'boom with {TOKEN_A} inside' >&2; exit 3")));
+        std::env::set_var("ZOHARA_CHAT_CLAUDE_BIN", fake(&dir, &format!("echo 'boom with {TOKEN_A} inside' >&2; exit 3")));
         let e = scope(&a, ask).unwrap_err();
         assert!(!e.contains(TOKEN_A) && e.contains("stopped with an error"), "{e}");
         assert_eq!(present_error("The model is overloaded".into(), Some(TOKEN_A)), "The model is overloaded");

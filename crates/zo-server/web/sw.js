@@ -1,4 +1,4 @@
-/* ZO-AI service worker. Two jobs: keep the app shell (the page and its icons) so the installed app opens at once, and show
+/* Zohara Chat service worker. Two jobs: keep the app shell (the page and its icons) so the installed app opens at once, and show
    notifications (also when a push arrives while the browser is closed). It never touches /api/: answers, chats and keys are
    not cached, ever. The server replaces __VERSION__ with a hash of the page, so a new page means a new worker and the
    "Update available" toast; the new worker waits until the person presses Reload. */
@@ -42,7 +42,7 @@ self.addEventListener("fetch", e => {
 });
 
 /* a push from the server (only sent when the person's browser was not connected): generic text, the chat's number and, if the
-   person allowed it, the chat's title. Nothing is shown when a ZO-AI window has the focus. */
+   person allowed it, the chat's title. Nothing is shown when a Zohara Chat window has the focus. */
 self.addEventListener("push", e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch {}
@@ -51,8 +51,8 @@ self.addEventListener("push", e => {
     if (wins.some(w => w.focused)) return;
     const chat = typeof d.chat === "string" ? d.chat : "";
     const title = typeof d.title === "string" && d.title ? d.title : "";
-    await self.registration.showNotification(title || "ZO-AI", {
-      body: title ? "ZO-AI: your answer is ready" : "Your answer is ready",
+    await self.registration.showNotification(title || "Zohara Chat", {
+      body: title ? "Zohara Chat: your answer is ready" : "Your answer is ready",
       tag: "zo-chat-" + chat, icon: "/icons/icon-192.png", data: { chat },
     });
   })());

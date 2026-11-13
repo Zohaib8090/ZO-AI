@@ -25,7 +25,7 @@ impl Listener {
     pub(crate) fn accept(&self) -> std::io::Result<(Connection, Option<SocketAddr>)> {
         match self {
             Self::Tcp(l) => l.accept().map(|(conn, addr)| {
-                // ZO-AI patch: a client that goes quiet for this long is dropped (slow-loris), instead of holding a thread forever.
+                // Zohara Chat patch: a client that goes quiet for this long is dropped (slow-loris), instead of holding a thread forever.
                 // Only reads are limited; answers (a streamed reply can take minutes) are written without a limit.
                 let _ = conn.set_read_timeout(Some(std::time::Duration::from_secs(20)));
                 (Connection::from(conn), Some(addr))

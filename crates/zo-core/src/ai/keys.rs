@@ -1,5 +1,5 @@
 //! API keys live in the system keyring (KDE Wallet / any Secret Service) through `secret-tool`, never in a plain file.
-//! `ZOAI_KEY_<PROVIDER>` in the environment wins, for scripts and tests.
+//! `ZOHARA_CHAT_KEY_<PROVIDER>` in the environment wins, for scripts and tests.
 //!
 //! A tenant (see `tenant`) has no keyring and no environment keys: its keys are in `<config>/keys.enc`, encrypted with AES-256-GCM
 //! (key = sha256("zo-keys" || ZO_SERVER_SECRET || tenant id); the file is a 12 byte nonce followed by the ciphertext). There is no
@@ -15,6 +15,11 @@ use std::process::{Command, Stdio};
 pub const ENC_FILE: &str = "keys.enc";
 
 fn env_name(id: &str) -> String {
+    format!("ZOHARA_CHAT_KEY_{}", id.to_uppercase().replace('-', "_"))
+}
+
+/// The name before the rename; still read when the new one is not set.
+fn old_env_name(id: &str) -> String {
     format!("ZOAI_KEY_{}", id.to_uppercase().replace('-', "_"))
 }
 
@@ -94,10 +99,10 @@ fn enc_save(p: &std::path::Path, id: &str, m: &KeyMap) -> Result<(), String> {
     std::fs::rename(&tmp, p).map_err(|e| e.to_string())
 }
 
-/// On a server there is no keyring: with `ZO_AI_KEYS_FILE` set, keys are kept in that file instead (the server keeps it private
+/// On a server there is no keyring: with `ZOHARA_CHAT_KEYS_FILE` set, keys are kept in that file instead (the server keeps it private
 /// and stores it encrypted).
 fn file() -> Option<std::path::PathBuf> {
-    std::env::var_os("ZO_AI_KEYS_FILE").filter(|p| !p.is_empty()).map(std::path::PathBuf::from)
+    crate::legacy::env_os("ZOHARA_CHAT_KEYS_FILE", "ZO_AI_KEYS_FILE").map(std::path::PathBuf::from)
 }
 
 fn file_load(p: &std::path::Path) -> serde_json::Map<String, serde_json::Value> {
@@ -172,18 +177,48 @@ pub fn get(id: &str) -> Option<String> {
         let (p, tid) = t?;
         return enc_load(&p, &tid).ok()?.get(id).and_then(|v| v.as_str()).filter(|k| !k.is_empty()).map(str::to_string);
     }
-    if let Ok(k) = std::env::var(env_name(id)) {
-        if !k.trim().is_empty() {
-            return Some(k.trim().to_string());
+    for name in [env_name(id), old_env_name(id)] {
+        if let Ok(k) = std::env::var(name) {
+            if !k.trim().is_empty() {
+                return Some(k.trim().to_string());
+            }
         }
     }
     if let Some(p) = file() {
         return file_load(&p).get(id).and_then(|v| v.as_str()).filter(|k| !k.is_empty()).map(str::to_string);
     }
-    let child = Command::new(secret_tool()).args(["lookup", "service", "zo-ai", "provider", id]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    if let Some(key) = keyring_lookup("zohara-chat", id) {
+        return Some(key);
+    }
+    // a key stored before the rename sits under the old service name: use it and copy it to the new one (the old entry stays)
+    let key = keyring_lookup("zo-ai", id)?;
+    let _ = keyring_store("zohara-chat", id, &key);
+    Some(key)
+}
+
+fn keyring_lookup(service: &str, id: &str) -> Option<String> {
+    let child = Command::new(secret_tool()).args(["lookup", "service", service, "provider", id]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
     let out = finish(child, KEYRING_WAIT).ok()?;
     let key = String::from_utf8(out.stdout).ok()?.trim().to_string();
     (out.status.success() && !key.is_empty()).then_some(key)
+}
+
+fn keyring_store(service: &str, id: &str, key: &str) -> Result<(), String> {
+    let label = format!("Zohara Chat key for {id}");
+    let mut child = Command::new(secret_tool())
+        .args(["store", "--label", &label, "service", service, "provider", id])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| "The keyring tool (secret-tool, from libsecret) is not installed, so the key cannot be stored safely.".to_string())?;
+    child.stdin.take().ok_or("no stdin")?.write_all(key.trim().as_bytes()).map_err(|e| e.to_string())?;
+    let out = finish(child, KEYRING_WAIT)?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!("The keyring refused the key: {}", String::from_utf8_lossy(&out.stderr).trim()))
+    }
 }
 
 fn set_inner(id: &str, key: &str) -> Result<(), String> {
@@ -198,21 +233,7 @@ fn set_inner(id: &str, key: &str) -> Result<(), String> {
         m.insert(id.to_string(), serde_json::Value::String(key.trim().to_string()));
         return file_save(&p, &m);
     }
-    let label = format!("ZO-AI key for {id}");
-    let mut child = Command::new(secret_tool())
-        .args(["store", "--label", &label, "service", "zo-ai", "provider", id])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|_| "The keyring tool (secret-tool, from libsecret) is not installed, so the key cannot be stored safely.".to_string())?;
-    child.stdin.take().ok_or("no stdin")?.write_all(key.trim().as_bytes()).map_err(|e| e.to_string())?;
-    let out = finish(child, KEYRING_WAIT)?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(format!("The keyring refused the key: {}", String::from_utf8_lossy(&out.stderr).trim()))
-    }
+    keyring_store("zohara-chat", id, key)
 }
 
 fn clear_inner(id: &str) {
@@ -231,7 +252,107 @@ fn clear_inner(id: &str) {
         let _ = file_save(&p, &m);
         return;
     }
-    if let Ok(child) = Command::new(secret_tool()).args(["clear", "service", "zo-ai", "provider", id]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-        let _ = finish(child, KEYRING_WAIT);
+    // forgetting a key forgets it under the old service name too, or it would come back from there
+    for service in ["zohara-chat", "zo-ai"] {
+        if let Ok(child) = Command::new(secret_tool()).args(["clear", "service", service, "provider", id]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+            let _ = finish(child, KEYRING_WAIT);
+        }
+    }
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A fake `secret-tool` that keeps entries as files named <service>__<provider> in $FAKE_KEYRING.
+    fn fake_tool(dir: &std::path::Path) -> std::path::PathBuf {
+        let p = dir.join("secret-tool");
+        std::fs::write(
+            &p,
+            r#"#!/bin/sh
+cmd="$1"; shift
+[ "$cmd" = "--version" ] && exit 0
+[ "$cmd" = "store" ] && shift 2
+service="$2"; provider="$4"
+f="$FAKE_KEYRING/${service}__${provider}"
+case "$cmd" in
+  lookup) [ -f "$f" ] && cat "$f" || exit 1 ;;
+  store) cat > "$f" ;;
+  clear) rm -f "$f" ;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    }
+
+    fn sandbox(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let d = std::env::temp_dir().join(format!("zo-keys-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let ring = d.join("ring");
+        std::fs::create_dir_all(&ring).unwrap();
+        std::env::set_var("ZO_TEST_SECRET_TOOL", fake_tool(&d));
+        std::env::set_var("FAKE_KEYRING", &ring);
+        std::env::remove_var("ZOHARA_CHAT_KEYS_FILE");
+        std::env::remove_var("ZO_AI_KEYS_FILE");
+        (d, ring)
+    }
+
+    fn done(d: &std::path::Path) {
+        std::env::remove_var("ZO_TEST_SECRET_TOOL");
+        std::env::remove_var("FAKE_KEYRING");
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    /// A key stored before the rename (service "zo-ai") is found, copied to the new service once, and left in the old one.
+    #[test]
+    fn a_key_in_the_old_keyring_service_is_copied_to_the_new_one() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (d, ring) = sandbox("migrate");
+        std::env::remove_var("ZOHARA_CHAT_KEY_RENAMETEST");
+        std::env::remove_var("ZOAI_KEY_RENAMETEST");
+        std::fs::write(ring.join("zo-ai__renametest"), "sk-old").unwrap();
+        assert_eq!(get("renametest").as_deref(), Some("sk-old"));
+        assert_eq!(std::fs::read_to_string(ring.join("zohara-chat__renametest")).unwrap(), "sk-old", "copied to the new service");
+        assert!(ring.join("zo-ai__renametest").exists(), "the old entry is kept");
+        // after the copy the new entry is the one that counts
+        std::fs::write(ring.join("zohara-chat__renametest"), "sk-new").unwrap();
+        assert_eq!(get("renametest").as_deref(), Some("sk-new"));
+        // new keys go to the new service only
+        set_inner("renametest", "sk-set").unwrap();
+        assert_eq!(std::fs::read_to_string(ring.join("zohara-chat__renametest")).unwrap(), "sk-set");
+        assert_eq!(std::fs::read_to_string(ring.join("zo-ai__renametest")).unwrap(), "sk-old");
+        // forgetting removes both, or the old one would bring the key back
+        clear_inner("renametest");
+        assert!(get("renametest").is_none());
+        assert!(!ring.join("zo-ai__renametest").exists() && !ring.join("zohara-chat__renametest").exists());
+        done(&d);
+    }
+
+    #[test]
+    fn the_old_environment_names_still_work_and_the_new_one_wins() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("ZOHARA_CHAT_KEY_RENAMEENV");
+        std::env::remove_var("ZOAI_KEY_RENAMEENV");
+        std::env::set_var("ZOAI_KEY_RENAMEENV", "sk-old-env");
+        assert_eq!(get("renameenv").as_deref(), Some("sk-old-env"));
+        std::env::set_var("ZOHARA_CHAT_KEY_RENAMEENV", "sk-new-env");
+        assert_eq!(get("renameenv").as_deref(), Some("sk-new-env"));
+        std::env::remove_var("ZOHARA_CHAT_KEY_RENAMEENV");
+        std::env::remove_var("ZOAI_KEY_RENAMEENV");
+    }
+
+    #[test]
+    fn the_old_keys_file_variable_still_works() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("ZOHARA_CHAT_KEYS_FILE");
+        std::env::set_var("ZO_AI_KEYS_FILE", "/tmp/old-name-keys.json");
+        assert_eq!(file().as_deref(), Some(std::path::Path::new("/tmp/old-name-keys.json")));
+        std::env::set_var("ZOHARA_CHAT_KEYS_FILE", "/tmp/new-name-keys.json");
+        assert_eq!(file().as_deref(), Some(std::path::Path::new("/tmp/new-name-keys.json")));
+        std::env::remove_var("ZOHARA_CHAT_KEYS_FILE");
+        std::env::remove_var("ZO_AI_KEYS_FILE");
     }
 }

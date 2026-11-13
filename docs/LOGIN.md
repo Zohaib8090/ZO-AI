@@ -7,7 +7,7 @@ Code: `crates/zo-core/src/login.rs` (the client side), `crates/zo-server/src/log
 
 ## What the person sees
 
-* **Desktop app (ZO-AI)**: works fully **without any login**. Chats, memory, personalities, tools and the phone all work, and **nothing
+* **Desktop app (Zohara Chat)**: works fully **without any login**. Chats, memory, personalities, tools and the phone all work, and **nothing
   is sent to the sync server** until the person chooses to sign in (Settings > Web sync). Signing in is optional; it only turns on sync with
   the web. After signing in on the desktop and on the web, chats, memory and personalities match (`SYNC.md`).
 * **Web app**: needs a sign-in (Google or e-mail and password). A first-time e-mail account must click the link in the verification e-mail.
@@ -46,7 +46,7 @@ person starts again).
 For the desktop app and `zo`, when the person types e-mail and password into the app itself.
 
 1. The app calls Firebase (`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword`, or `accounts:signUp` for a new account),
-   with the project's public web API key. The password goes to Google only, never to the ZO-AI server.
+   with the project's public web API key. The password goes to Google only, never to the Zohara Chat server.
 2. New account: Firebase sends a verification e-mail (`accounts:sendOobCode`, `VERIFY_EMAIL`); the account works once the link was clicked.
    Forgot the password: `accounts:sendOobCode` with `PASSWORD_RESET` (Firebase sends the mail).
 3. The app sends the resulting Firebase ID token (short-lived, not kept) to `POST /api/auth/exchange {name, kind}` and gets
@@ -88,9 +88,9 @@ once, accepts there, and signs in again.
   give out working credentials. A credential belongs to one account's tenant and cannot reach another person's data.
 * **On the device** the credential is in the system keyring / key store (id `sync-token` for the desktop app, `cli-token` for `zo`: each program has its own
   credential, so signing out of one never signs out the other, and the app's narrower `sync` credential is never used where `zo` needs a `full` one). Where there is
-  no keyring (no `secret-tool`, a server shell) the credential is kept in `~/.config/zo-ai/credentials.json`, mode 0600, instead; a keyring that does not answer within
+  no keyring (no `secret-tool`, a server shell) the credential is kept in `~/.config/zohara-chat/credentials.json`, mode 0600, instead; a keyring that does not answer within
   8 seconds is given up on. If it cannot be stored at all, the new credential is revoked on the server again, so no orphan device is left.
-  Older setups (a pasted token with syncing on but no account) are switched off when the app starts: nothing is sent for them. `~/.config/zo-ai/sync.json`
+  Older setups (a pasted token with syncing on but no account) are switched off when the app starts: nothing is sent for them. `~/.config/zohara-chat/sync.json`
   holds only the server address (if chosen by hand), the on/off switch and the account's e-mail address.
 * **Device-code phishing** (an attacker starts a request on their own device and tricks a victim into approving it, which would give the
   attacker's device the victim's account). Defences:
@@ -119,7 +119,7 @@ once, accepts there, and signs in again.
 | Hash of each device credential, device name, kind, created, last used | Firestore `users/<tenant>/meta/devices` and the hash index |
 | A waiting device request (hash of the device code, the user code, name, kind, address, time) | the server's memory, at most 10 minutes |
 | The credential | the device's key store only (id `sync-token`) |
-| Account e-mail, server address, on/off switch | `~/.config/zo-ai/sync.json` on the device |
+| Account e-mail, server address, on/off switch | `~/.config/zohara-chat/sync.json` on the device |
 | Chats, memory, personalities | on the device always; on the server and Firestore only after the person signed in |
 
 ## Signing out, and a lost device

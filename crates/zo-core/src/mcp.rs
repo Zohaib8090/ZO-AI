@@ -7,8 +7,8 @@ use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::sync::{Mutex, OnceLock};
 
-/// The MCP servers added in Settings, offered through this server too, so a client that only knows this one (Claude Code, started by ZO-AI)
-/// also gets their tools, and every call of theirs asks first just as in the chat. Only when `ZO_MCP_EXTERNAL=1` (ZO-AI sets it).
+/// The MCP servers added in Settings, offered through this server too, so a client that only knows this one (Claude Code, started by Zohara Chat)
+/// also gets their tools, and every call of theirs asks first just as in the chat. Only when `ZO_MCP_EXTERNAL=1` (Zohara Chat sets it).
 fn external() -> Option<&'static Mutex<crate::mcp_client::External>> {
     if crate::tenant::is_restricted() {
         return None;
@@ -93,7 +93,7 @@ pub fn execute(name: &str, args: &Value, mode: Mode, approver: &dyn Approver) ->
         let text = approval_text(name, args)?;
         if !approver.approve(name, &text) {
             audit::log(name, args, "denied");
-            return Err("The person did not approve this (or ZO-AI is not running to ask). Nothing was done.".into());
+            return Err("The person did not approve this (or Zohara Chat is not running to ask). Nothing was done.".into());
         }
     }
     let result = tools::call(name, args);
@@ -115,7 +115,7 @@ pub fn handle(msg: &Value, mode: Mode, approver: &dyn Approver) -> Option<Value>
     let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
     Some(match method {
         "initialize" => {
-            let mut instructions = "Controls Zohara OS: files, shell, screenshots, processes, snapshots, Android. Risky tools ask the person first in the ZO-AI app.".to_string();
+            let mut instructions = "Controls Zohara OS: files, shell, screenshots, processes, snapshots, Android. Risky tools ask the person first in the Zohara Chat app.".to_string();
             if let Some(ext) = external() {
                 let ext = ext.lock().unwrap_or_else(|p| p.into_inner());
                 for (server, text) in ext.instructions() {

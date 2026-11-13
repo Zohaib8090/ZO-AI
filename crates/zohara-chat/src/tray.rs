@@ -5,7 +5,7 @@
 //! or later, or again after the panel restarts) the icon registers itself; when there is none, nothing happens and nothing is
 //! retried.
 //!
-//! The menu: Open ZO-AI, what is running now (a submenu with Stop for everything that can be stopped), Activity..., Web control (on/off), Quit.
+//! The menu: Open Zohara Chat, what is running now (a submenu with Stop for everything that can be stopped), Activity..., Web control (on/off), Quit.
 //! A left click on the icon shows or hides the window. The tooltip says how many things are running, and the icon asks for
 //! attention while an approval is waiting.
 
@@ -209,7 +209,7 @@ pub fn set_keep(on: bool) {
     let _ = std::fs::write(p, serde_json::json!({"keep": on}).to_string());
 }
 
-/// Closing the window keeps ZO-AI running: only when there is a tray icon to get it back from (never an invisible app), and the
+/// Closing the window keeps Zohara Chat running: only when there is a tray icon to get it back from (never an invisible app), and the
 /// person has not turned it off (default: on).
 pub fn keep_running() -> bool {
     present() && keep_setting().unwrap_or(true)
@@ -219,35 +219,55 @@ fn autostart_path() -> std::path::PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"));
-    base.join("autostart").join("zo-ai-background.desktop")
+    base.join("autostart").join("zohara-chat-background.desktop")
+}
+
+/// The person's own autostart entry from before the rename (`zo-ai-background.desktop`) becomes the new one, once: an entry that was
+/// switched off stays off. The old entry is not deleted but switched off (`Hidden=true`), or it would still start the app at login
+/// after the person turned the new one off.
+fn migrate_autostart() {
+    let new = autostart_path();
+    let old = new.with_file_name("zo-ai-background.desktop");
+    let Ok(old_text) = std::fs::read_to_string(&old) else { return };
+    if new.exists() {
+        return;
+    }
+    let was_off = old_text.lines().any(|l| l.trim().eq_ignore_ascii_case("Hidden=true"));
+    let template = include_str!("../data/zohara-chat-background.desktop");
+    let text = if was_off { format!("{}\nHidden=true\n", template.trim_end()) } else { template.to_string() };
+    if std::fs::write(&new, text).is_ok() && !was_off {
+        let _ = std::fs::write(&old, format!("{}\nHidden=true\n", old_text.trim_end()));
+    }
 }
 
 /// The autostart entry the package installs for every user, when there is one.
 fn system_autostart() -> Option<std::path::PathBuf> {
     let dirs = std::env::var("XDG_CONFIG_DIRS").unwrap_or_default();
     let dirs = if dirs.is_empty() { "/etc/xdg".to_string() } else { dirs };
-    dirs.split(':').filter(|d| !d.is_empty()).map(|d| std::path::Path::new(d).join("autostart").join("zo-ai-background.desktop")).find(|p| p.is_file())
+    dirs.split(':').filter(|d| !d.is_empty()).map(|d| std::path::Path::new(d).join("autostart").join("zohara-chat-background.desktop")).find(|p| p.is_file())
 }
 
 /// On when the person's own entry exists and is not switched off, or (without one) the package's entry for all users exists.
 pub fn autostart_enabled() -> bool {
+    migrate_autostart();
     match std::fs::read_to_string(autostart_path()) {
         Ok(t) => !t.lines().any(|l| l.trim().eq_ignore_ascii_case("Hidden=true")),
         Err(_) => system_autostart().is_some(),
     }
 }
 
-/// "Start with the computer": the autostart entry that starts ZO-AI without a window. Off writes an entry with `Hidden=true` when
+/// "Start with the computer": the autostart entry that starts Zohara Chat without a window. Off writes an entry with `Hidden=true` when
 /// the package's entry for all users exists (the only way to override it); otherwise the entry is removed.
 pub fn set_autostart(on: bool) -> Result<(), String> {
+    migrate_autostart();
     let p = autostart_path();
     if on {
         std::fs::create_dir_all(p.parent().unwrap_or(&p)).map_err(|e| e.to_string())?;
-        return std::fs::write(&p, include_str!("../data/zo-ai-background.desktop")).map_err(|e| e.to_string());
+        return std::fs::write(&p, include_str!("../data/zohara-chat-background.desktop")).map_err(|e| e.to_string());
     }
     if system_autostart().is_some() {
         std::fs::create_dir_all(p.parent().unwrap_or(&p)).map_err(|e| e.to_string())?;
-        let off = format!("{}Hidden=true\n", include_str!("../data/zo-ai-background.desktop").trim_end().to_string() + "\n");
+        let off = format!("{}Hidden=true\n", include_str!("../data/zohara-chat-background.desktop").trim_end().to_string() + "\n");
         return std::fs::write(&p, off).map_err(|e| e.to_string());
     }
     match std::fs::remove_file(&p) {
@@ -315,7 +335,7 @@ fn menu_label(s: &str) -> String {
 
 fn build(st: &mut State, items: &[activity::Item], waiting: bool) -> Node {
     let now = activity::now_ms();
-    let mut kids = vec![Node::item(ID_TITLE, "ZO-AI", false), Node::item(ID_OPEN, "Open ZO-AI", true), Node::sep(ID_SEP1)];
+    let mut kids = vec![Node::item(ID_TITLE, "Zohara Chat", false), Node::item(ID_OPEN, "Open Zohara Chat", true), Node::sep(ID_SEP1)];
     kids.push(Node::item(ID_RUNNING, "Running now", false));
     if items.is_empty() {
         kids.push(Node::item(ID_NOTHING, "Nothing is running", false));
@@ -346,7 +366,7 @@ fn build(st: &mut State, items: &[activity::Item], waiting: bool) -> Node {
         kids.push(Node::item(ID_WEB, "Web control: off (sign in first)", false));
     }
     kids.push(Node::sep(ID_SEP3));
-    kids.push(Node::item(ID_QUIT, "Quit ZO-AI", true));
+    kids.push(Node::item(ID_QUIT, "Quit Zohara Chat", true));
     Node { id: ID_ROOT, label: String::new(), sep: false, enabled: true, kids }
 }
 
@@ -440,7 +460,7 @@ fn refresh(force: bool) -> bool {
         let status = if waiting { "NeedsAttention" } else { "Active" };
         let status_changed = status != st.status;
         st.status = status;
-        let tip = if items.is_empty() { ("ZO-AI".to_string(), "Nothing is running".to_string()) } else { ("ZO-AI".to_string(), format!("{} running", items.len())) };
+        let tip = if items.is_empty() { ("Zohara Chat".to_string(), "Nothing is running".to_string()) } else { ("Zohara Chat".to_string(), format!("{} running", items.len())) };
         let tip_changed = tip != st.tooltip;
         st.tooltip = tip;
         (changed, st.conn.clone().filter(|_| st.registered), st.rev, status_changed.then_some(status), tip_changed)
@@ -468,13 +488,13 @@ fn collect_ids(n: &Node, f: &mut dyn FnMut(i32)) {
 
 // ---------------------------------------------------------------- the icon
 
-/// The mark as an ARGB pixmap, for panels that cannot find the "zo-ai" icon in the theme.
+/// The mark as an ARGB pixmap, for panels that cannot find the "zohara-chat" icon in the theme.
 fn pixmap() -> Variant {
     let cached = ST.with(|s| s.borrow().pixmap.clone());
     if let Some(p) = cached {
         return p;
     }
-    let bytes = glib::Bytes::from_static(include_bytes!("../data/zo-ai-mark.png"));
+    let bytes = glib::Bytes::from_static(include_bytes!("../data/zohara-chat-mark.png"));
     let made = gtk::gdk::Texture::from_bytes(&bytes).ok().map(|t| {
         let (w, h) = (t.width(), t.height());
         let mut d = gtk::gdk::TextureDownloader::new(&t);
@@ -499,17 +519,17 @@ fn empty_pixmap() -> Variant {
 fn item_property(name: &str) -> Variant {
     match name {
         "Category" => "ApplicationStatus".to_variant(),
-        "Id" => "zo-ai".to_variant(),
-        "Title" => "ZO-AI".to_variant(),
+        "Id" => "zohara-chat".to_variant(),
+        "Title" => "Zohara Chat".to_variant(),
         "Status" => ST.with(|s| s.borrow().status).to_variant(),
         "WindowId" => 0u32.to_variant(),
-        "IconName" | "AttentionIconName" => "zo-ai".to_variant(),
+        "IconName" | "AttentionIconName" => "zohara-chat".to_variant(),
         "IconPixmap" | "AttentionIconPixmap" => pixmap(),
         "OverlayIconName" | "AttentionMovieName" => "".to_variant(),
         "OverlayIconPixmap" => empty_pixmap(),
         "ToolTip" => {
             let (t, d) = ST.with(|s| s.borrow().tooltip.clone());
-            Variant::tuple_from_iter(["zo-ai".to_variant(), empty_pixmap(), t.to_variant(), d.to_variant()])
+            Variant::tuple_from_iter(["zohara-chat".to_variant(), empty_pixmap(), t.to_variant(), d.to_variant()])
         }
         "ItemIsMenu" => false.to_variant(),
         "Menu" => glib::variant::ObjectPath::try_from(MENU_PATH).unwrap().to_variant(),
@@ -536,7 +556,7 @@ fn on_event(id: i32, event: &str) {
         ID_WEB => {
             let on = zo_core::link::config().enabled;
             if let Err(e) = zo_core::link::set_enabled(!on) {
-                eprintln!("zo-ai: tray: web control: {e}");
+                eprintln!("zohara-chat: tray: web control: {e}");
             }
             glib::timeout_add_local_once(std::time::Duration::from_millis(200), || {
                 refresh(false);
@@ -546,7 +566,7 @@ fn on_event(id: i32, event: &str) {
             let target = ST.with(|s| s.borrow().stops.get(&id).copied());
             if let Some(a) = target {
                 let ok = activity::stop(a);
-                eprintln!("zo-ai: tray: stop {a}: {}", if ok { "asked" } else { "nothing to stop" });
+                eprintln!("zohara-chat: tray: stop {a}: {}", if ok { "asked" } else { "nothing to stop" });
                 glib::timeout_add_local_once(std::time::Duration::from_millis(400), || {
                     refresh(false);
                 });
@@ -673,12 +693,12 @@ fn try_register() {
                 });
                 check_host();
                 refresh(true);
-                eprintln!("zo-ai: tray icon registered");
+                eprintln!("zohara-chat: tray icon registered");
             }
             // tried again by the 30 second look (quietly: one line, no storm)
             Err(e) => {
                 ST.with(|s| s.borrow_mut().registering = false);
-                eprintln!("zo-ai: tray: the panel did not take the icon: {e}");
+                eprintln!("zohara-chat: tray: the panel did not take the icon: {e}");
             }
         },
     );
@@ -791,4 +811,41 @@ pub fn start() {
             glib::ControlFlow::Continue
         });
     });
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+
+    fn conf(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("zc-autostart-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("autostart")).unwrap();
+        d
+    }
+
+    // one test: it changes XDG_CONFIG_HOME, which every test in this process shares
+    #[test]
+    fn the_old_autostart_entry_becomes_the_new_one_once() {
+        let d = conf("a");
+        std::env::set_var("XDG_CONFIG_HOME", &d);
+        let (old, new) = (d.join("autostart/zo-ai-background.desktop"), d.join("autostart/zohara-chat-background.desktop"));
+        // enabled before: the new entry is written, the old one is switched off so it does not start the app a second time
+        std::fs::write(&old, "[Desktop Entry]\nType=Application\nExec=zo-ai --background\n").unwrap();
+        migrate_autostart();
+        let n = std::fs::read_to_string(&new).unwrap();
+        assert!(n.contains("Exec=zohara-chat --background") && !n.contains("Hidden=true"));
+        assert!(std::fs::read_to_string(&old).unwrap().contains("Hidden=true"), "the old entry is kept, switched off");
+        // run again after the person changed the new one: it is left alone
+        std::fs::write(&new, "mine").unwrap();
+        migrate_autostart();
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "mine");
+        // switched off before: stays off
+        let _ = std::fs::remove_file(&new);
+        std::fs::write(&old, "[Desktop Entry]\nExec=zo-ai --background\nHidden=true\n").unwrap();
+        migrate_autostart();
+        assert!(std::fs::read_to_string(&new).unwrap().contains("Hidden=true"));
+        std::env::remove_var("XDG_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

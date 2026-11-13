@@ -1,4 +1,4 @@
-//! ZO-AI — the OS-level AI module for Zohara OS.
+//! Zohara Chat — the OS-level AI module for Zohara OS.
 //!
 //! Rust port of the approved HTML design: sidebar, chat, project list,
 //! project workspace with instructions / context / memory / schedules.
@@ -34,7 +34,7 @@ use std::time::Duration;
 
 use model::{Attachment, Project, Schedule, Store};
 
-const APP_ID: &str = "org.zohara.ZoAi";
+const APP_ID: &str = "org.zohara.Chat";
 pub(crate) const CSS: &str = include_str!("style.css");
 
 // ---------------------------------------------------------------- widgets
@@ -56,9 +56,9 @@ fn lbl(text: &str, class: &str) -> gtk::Label {
     l
 }
 
-/// The ZO-AI mark without its tile, built into the program so it shows even before the icon is installed.
+/// The Zohara Chat mark without its tile, built into the program so it shows even before the icon is installed.
 pub(crate) fn mark(size: i32) -> gtk::Image {
-    let bytes = glib::Bytes::from_static(include_bytes!("../data/zo-ai-mark.png"));
+    let bytes = glib::Bytes::from_static(include_bytes!("../data/zohara-chat-mark.png"));
     let img = match gtk::gdk::Texture::from_bytes(&bytes) {
         Ok(t) => gtk::Image::from_paintable(Some(&t)),
         Err(_) => gtk::Image::new(),
@@ -287,7 +287,7 @@ fn open_chat(ui: &Rc<Ui>, chat: chats::Chat) {
     ui.top_title.set_text(&chat.title);
 }
 
-/// The Artifacts page: files ZO-AI wrote, screenshots it took, and code from its replies.
+/// The Artifacts page: files Zohara Chat wrote, screenshots it took, and code from its replies.
 fn refresh_artifacts(ui: &Rc<Ui>) {
     while let Some(c) = ui.artifacts_list.first_child() {
         ui.artifacts_list.remove(&c);
@@ -299,7 +299,7 @@ fn refresh_artifacts(ui: &Rc<Ui>) {
         empty.set_margin_top(40);
         let t = lbl("Nothing made yet", "empty-title");
         t.set_halign(gtk::Align::Center);
-        let d = lbl("Files ZO-AI writes, screenshots it takes and code it shows you are kept here.", "empty-text");
+        let d = lbl("Files Zohara Chat writes, screenshots it takes and code it shows you are kept here.", "empty-text");
         d.set_halign(gtk::Align::Center);
         d.set_wrap(true);
         d.set_justify(gtk::Justification::Center);
@@ -417,7 +417,7 @@ fn refresh_scheduled(ui: &Rc<Ui>) {
         empty.set_margin_top(40);
         let t = lbl("Nothing is scheduled", "empty-title");
         t.set_halign(gtk::Align::Center);
-        let d = lbl("Ask ZO-AI in a chat to do something later (for example \"every morning at 8, check my disk space\"), or press New task.", "empty-text");
+        let d = lbl("Ask Zohara Chat in a chat to do something later (for example \"every morning at 8, check my disk space\"), or press New task.", "empty-text");
         d.set_halign(gtk::Align::Center);
         d.set_wrap(true);
         d.set_justify(gtk::Justification::Center);
@@ -498,7 +498,7 @@ fn open_new_task(ui: &Rc<Ui>, project: Option<String>) {
     let what = gtk::Entry::new();
     what.set_placeholder_text(Some("e.g. check my disk space and tell me if it is above 90%"));
     what.add_css_class("field-input");
-    body.append(&field("What should ZO-AI do?", &what));
+    body.append(&field("What should Zohara Chat do?", &what));
     let when = gtk::Entry::new();
     when.set_placeholder_text(Some("tomorrow 9am, in 2 hours, 2026-11-05 18:30"));
     when.add_css_class("field-input");
@@ -775,7 +775,7 @@ fn refresh_projects(ui: &Rc<Ui>) {
         let t = lbl("No projects yet", "empty-title");
         t.set_halign(gtk::Align::Center);
         let d = lbl(
-            "Projects keep one long-running thing together — its files, notes and context — so ZO-AI keeps working inside it.",
+            "Projects keep one long-running thing together — its files, notes and context — so Zohara Chat keeps working inside it.",
             "empty-text",
         );
         d.set_halign(gtk::Align::Center);
@@ -886,7 +886,7 @@ fn open_project(ui: &Rc<Ui>, id: &str) {
     ui.pv_title.set_text(&project.name);
     ui.pv_prompt.set_placeholder(&format!("New session in {}", project.name));
     ui.pv_hint.set_text(if project.goal.trim().is_empty() {
-        "ZO-AI remembers the same knowledge every time you talk to it in this project."
+        "Zohara Chat remembers the same knowledge every time you talk to it in this project."
     } else {
         &project.goal
     });
@@ -1084,7 +1084,7 @@ fn open_instructions(ui: &Rc<Ui>) {
         .min_content_height(150)
         .build();
 
-    body.append(&field("How should ZO-AI work in this project?", &scroll));
+    body.append(&field("How should Zohara Chat work in this project?", &scroll));
     body.append(&hint);
 
     let cancel = secondary("Cancel");
@@ -1139,7 +1139,7 @@ fn open_context(ui: &Rc<Ui>) {
     body.append(&add);
 
     let hint = lbl(
-        "Documents, zips, code, images. Everything in context is available to ZO-AI in every session of this project.",
+        "Documents, zips, code, images. Everything in context is available to Zohara Chat in every session of this project.",
         "field-hint",
     );
     hint.set_wrap(true);
@@ -1282,7 +1282,7 @@ fn open_memory(ui: &Rc<Ui>) {
     let (win, body, foot) = sheet(ui, "Memory", 620);
 
     let hint = lbl(
-        "Project memory is loaded into this project's working tree on every session, so ZO-AI already knows it before you type a word.",
+        "Project memory is loaded into this project's working tree on every session, so Zohara Chat already knows it before you type a word.",
         "field-hint",
     );
     hint.set_wrap(true);
@@ -1297,7 +1297,7 @@ fn open_memory(ui: &Rc<Ui>) {
 
     if entries.is_empty() {
         let e = lbl(
-            "No project memory yet. ZO-AI writes here as it learns what matters in this project.",
+            "No project memory yet. Zohara Chat writes here as it learns what matters in this project.",
             "sheet-empty",
         );
         e.set_halign(gtk::Align::Center);
@@ -1343,7 +1343,7 @@ fn open_scheduled(ui: &Rc<Ui>) {
     let what = gtk::Entry::new();
     what.set_placeholder_text(Some("e.g. summarise new commits and post them here"));
     what.add_css_class("field-input");
-    body.append(&field("What should ZO-AI do?", &what));
+    body.append(&field("What should Zohara Chat do?", &what));
 
     let when = gtk::Entry::new();
     when.set_placeholder_text(Some("2026-11-05 18:00"));
@@ -1368,7 +1368,7 @@ fn open_scheduled(ui: &Rc<Ui>) {
     body.append(&row2);
 
     let hint = lbl(
-        "You can also just ask ZO-AI in this project — “schedule this every Monday” — and it lands here.",
+        "You can also just ask Zohara Chat in this project — “schedule this every Monday” — and it lands here.",
         "field-hint",
     );
     hint.set_wrap(true);
@@ -1684,7 +1684,7 @@ fn confirm_quit() {
         1 => "1 thing is still running or open (a chat, a task, a command or a terminal). Quit anyway?".to_string(),
         n => format!("{n} things are still running or open (chats, tasks, commands, terminals). Quit anyway?"),
     };
-    let dialog = adw::AlertDialog::new(Some("Quit ZO-AI?"), Some(&body));
+    let dialog = adw::AlertDialog::new(Some("Quit Zohara Chat?"), Some(&body));
     dialog.add_responses(&[("cancel", "Keep running"), ("quit", "Quit anyway")]);
     dialog.set_response_appearance("quit", adw::ResponseAppearance::Destructive);
     dialog.set_default_response(Some("cancel"));
@@ -1698,7 +1698,7 @@ fn confirm_quit() {
     dialog.present(parent.as_ref());
 }
 
-/// Ends ZO-AI cleanly: saves what the window holds, closes the terminals, removes the sockets it made, exits.
+/// Ends Zohara Chat cleanly: saves what the window holds, closes the terminals, removes the sockets it made, exits.
 pub(crate) fn quit_now() {
     FORCE_QUIT.with(|f| f.set(true));
     if let Some(ui) = UI.with(|u| u.borrow().as_ref().and_then(|w| w.upgrade())) {
@@ -1715,7 +1715,7 @@ pub(crate) fn quit_now() {
     if OWNS_APPROVALS.load(std::sync::atomic::Ordering::SeqCst) {
         let _ = std::fs::remove_file(zo_core::approval::socket_path());
     }
-    eprintln!("zo-ai: quit");
+    eprintln!("zohara-chat: quit");
     match gtk::gio::Application::default() {
         Some(app) => app.quit(),
         None => std::process::exit(0),
@@ -1731,7 +1731,7 @@ fn build_ui(app: &adw::Application) {
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title("ZO-AI")
+        .title("Zohara Chat")
         .default_width(1240)
         .default_height(820)
         .build();
@@ -1755,7 +1755,7 @@ fn build_ui(app: &adw::Application) {
     let brand = hbox(10);
     brand.set_margin_start(8);
     brand.append(&mark(26));
-    let wordmark = lbl("ZO-AI", "wordmark");
+    let wordmark = lbl("Zohara Chat", "wordmark");
     wordmark.set_hexpand(true);
     brand.append(&wordmark);
     // while the sidebar is open, the button that closes it lives here; the top bar's copy only shows when it is closed
@@ -1893,7 +1893,7 @@ fn build_ui(app: &adw::Application) {
     pills.append(&model_btn);
     pills.append(&perm_btn);
     composer_wrap.append(&pills);
-    let note = lbl("ZO-AI can make mistakes. Check what it did.", "foot-note");
+    let note = lbl("Zohara Chat can make mistakes. Check what it did.", "foot-note");
     note.set_halign(gtk::Align::Center);
     note.set_margin_top(6);
     composer_wrap.append(&note);
@@ -2074,7 +2074,7 @@ fn build_ui(app: &adw::Application) {
     bubble.add_css_class("pv-hint");
     hint_box.append(&bubble);
     let pv_hint = lbl(
-        "ZO-AI remembers the same knowledge every time you talk to it in this project.",
+        "Zohara Chat remembers the same knowledge every time you talk to it in this project.",
         "pv-hint",
     );
     pv_hint.set_halign(gtk::Align::Center);
@@ -2515,8 +2515,8 @@ fn build_ui(app: &adw::Application) {
         window.add_controller(keys);
     }
 
-    // for testing the closed-sidebar layout: ZO_AI_SIDEBAR=closed zo-ai
-    if std::env::var("ZO_AI_SIDEBAR").as_deref() == Ok("closed") {
+    // for testing the closed-sidebar layout: ZOHARA_CHAT_SIDEBAR=closed zohara-chat
+    if zo_core::legacy::var("ZOHARA_CHAT_SIDEBAR", "ZO_AI_SIDEBAR").as_deref() == Ok("closed") {
         ui.pinned.set(false);
         reveal.set_transition_duration(0);
         space.set_transition_duration(0);
@@ -2707,7 +2707,7 @@ fn build_ui(app: &adw::Application) {
     {
         let ui2 = ui.clone();
         window.connect_close_request(move |_| {
-            // closing keeps ZO-AI running when there is a tray icon to get it back from; without one the close button quits
+            // closing keeps Zohara Chat running when there is a tray icon to get it back from; without one the close button quits
             // (asking first when something is still running), so the app is never left invisible with no way back
             if !tray::keep_running() && !FORCE_QUIT.with(Cell::get) {
                 if zo_core::activity::quit_count() > 0 {
@@ -2735,8 +2735,8 @@ fn build_ui(app: &adw::Application) {
         });
     }
 
-    // Optional start view, used for verification: ZO_AI_START_VIEW=projects|project|settings|add-server|models
-    match std::env::var("ZO_AI_START_VIEW").as_deref() {
+    // Optional start view, used for verification: ZOHARA_CHAT_START_VIEW=projects|project|settings|add-server|models
+    match zo_core::legacy::var("ZOHARA_CHAT_START_VIEW", "ZO_AI_START_VIEW").as_deref() {
         Ok("projects") => {
             ui.stack.set_visible_child_name("projects");
             set_nav(&ui, "projects");
@@ -2758,8 +2758,8 @@ fn build_ui(app: &adw::Application) {
         }
         _ => {}
     }
-    // for verification: ZO_AI_OPEN_CHAT=<chat id> opens that saved chat
-    if let Ok(id) = std::env::var("ZO_AI_OPEN_CHAT") {
+    // for verification: ZOHARA_CHAT_OPEN_CHAT=<chat id> opens that saved chat
+    if let Ok(id) = zo_core::legacy::var("ZOHARA_CHAT_OPEN_CHAT", "ZO_AI_OPEN_CHAT") {
         if let Some(c) = chats::load().into_iter().find(|c| c.id == id) {
             open_chat(&ui, c);
         }
@@ -2768,18 +2768,18 @@ fn build_ui(app: &adw::Application) {
     MAIN.with(|m| *m.borrow_mut() = Some((window.clone(), stack.clone(), prompt.clone())));
     UI.with(|u| *u.borrow_mut() = Some(Rc::downgrade(&ui)));
     activity_page::watch(&ui);
-    if std::env::var("ZO_AI_START_VIEW").as_deref() == Ok("activity") {
+    if zo_core::legacy::var("ZOHARA_CHAT_START_VIEW", "ZO_AI_START_VIEW").as_deref() == Ok("activity") {
         activity_page::open(&ui);
     }
     window.present();
-    // for verification: ZO_AI_SHOW=context opens the Context panel
-    if std::env::var("ZO_AI_SHOW").as_deref() == Ok("context") {
+    // for verification: ZOHARA_CHAT_SHOW=context opens the Context panel
+    if zo_core::legacy::var("ZOHARA_CHAT_SHOW", "ZO_AI_SHOW").as_deref() == Ok("context") {
         let (ui2, b) = (ui.clone(), ctx_btn.clone());
         glib::timeout_add_local_once(Duration::from_millis(900), move || chat::show_context_popover(&ui2, &b));
     }
 
     // for verification: terminal / browser / pinned open the side panel, and the AI's tools are used on it
-    match std::env::var("ZO_AI_SHOW").as_deref() {
+    match zo_core::legacy::var("ZOHARA_CHAT_SHOW", "ZO_AI_SHOW").as_deref() {
         Ok("pinned") => {
             let ui2 = ui.clone();
             glib::timeout_add_local_once(Duration::from_millis(900), move || chat::pin_context(&ui2));
@@ -2811,8 +2811,8 @@ fn build_ui(app: &adw::Application) {
         _ => {}
     }
 
-    // Headless verification: ZO_AI_SELFTEST=1 prints the real widget tree and exits.
-    if std::env::var_os("ZO_AI_SELFTEST").is_some() {
+    // Headless verification: ZOHARA_CHAT_SELFTEST=1 prints the real widget tree and exits.
+    if zo_core::legacy::env_os("ZOHARA_CHAT_SELFTEST", "ZO_AI_SELFTEST").is_some() {
         let w = window.clone();
         let ui2 = ui.clone();
         glib::timeout_add_local_once(Duration::from_millis(700), move || {
@@ -2870,11 +2870,11 @@ fn walk_tree(widget: &gtk::Widget, depth: usize) {
 }
 
 fn main() -> glib::ExitCode {
-    let app = adw::Application::builder().application_id(std::env::var("ZO_AI_APP_ID").unwrap_or_else(|_| APP_ID.to_string()).as_str()).flags(gtk::gio::ApplicationFlags::HANDLES_COMMAND_LINE).build();
+    let app = adw::Application::builder().application_id(zo_core::legacy::var("ZOHARA_CHAT_APP_ID", "ZO_AI_APP_ID").unwrap_or_else(|_| APP_ID.to_string()).as_str()).flags(gtk::gio::ApplicationFlags::HANDLES_COMMAND_LINE).build();
     app.connect_startup(|app| {
         theme::init();
         ask::init(app);
-        gtk::Window::set_default_icon_name("zo-ai");
+        gtk::Window::set_default_icon_name("zohara-chat");
     });
     app.connect_activate(|_| show_main(""));
     app.connect_command_line(|app, cmd| {
@@ -2888,7 +2888,7 @@ fn main() -> glib::ExitCode {
             zo_core::term::enable_in_app();
             match zo_core::service::start() {
                 Ok(()) => OWNS_SERVICE.store(true, std::sync::atomic::Ordering::SeqCst),
-                Err(e) => eprintln!("zo-ai: the phone service did not start: {e}"),
+                Err(e) => eprintln!("zohara-chat: the phone service did not start: {e}"),
             }
             // the icon in the panel (when there is a panel that shows icons): open, what is running, quit
             tray::start();

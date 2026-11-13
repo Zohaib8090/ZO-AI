@@ -1,4 +1,4 @@
-//! The terminal tools: terminals shown in the ZO-AI window that the AI opens, types into and reads. See `crate::term`.
+//! The terminal tools: terminals shown in the Zohara Chat window that the AI opens, types into and reads. See `crate::term`.
 
 use super::text;
 use crate::term;
@@ -18,7 +18,7 @@ pub fn open(a: &Value) -> Result<String, String> {
     let name = a.get("name").and_then(Value::as_str).unwrap_or("");
     let cwd = a.get("cwd").and_then(Value::as_str).map(|d| super::expand(d).to_string_lossy().into_owned());
     let t = term::open(name, cwd.as_deref(), None, true)?;
-    Ok(format!("Opened terminal {} (\"{}\"). It is shown in the ZO-AI window. Use zohara_term_run with id {} to run commands in it.", t.id, t.name(), t.id))
+    Ok(format!("Opened terminal {} (\"{}\"). It is shown in the Zohara Chat window. Use zohara_term_run with id {} to run commands in it.", t.id, t.name(), t.id))
 }
 
 pub fn run(a: &Value) -> Result<String, String> {

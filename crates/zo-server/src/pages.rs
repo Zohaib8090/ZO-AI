@@ -168,7 +168,7 @@ pub fn markdown(md: &str) -> String {
 /// A whole page.
 pub fn page(title: &str, md: &str) -> String {
     format!(
-        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<style>\n:root{{color-scheme:light dark}}body{{font:16px/1.6 system-ui,sans-serif;max-width:46rem;margin:0 auto;padding:1.5rem 1rem 4rem}}\ntable{{border-collapse:collapse;width:100%;font-size:.92rem}}td,th{{border:1px solid #8884;padding:.4rem .6rem;text-align:left;vertical-align:top}}blockquote{{margin:1rem 0;padding:.1rem 1rem;border-left:4px solid #8886}}code{{background:#8882;padding:.05rem .3rem;border-radius:4px}}nav{{margin-bottom:1.5rem}}\n</style></head><body>\n<nav><a href=\"/\">ZO-AI</a> &middot; <a href=\"/privacy\">Privacy</a> &middot; <a href=\"/terms\">Terms</a></nav>\n{}</body></html>\n",
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<style>\n:root{{color-scheme:light dark}}body{{font:16px/1.6 system-ui,sans-serif;max-width:46rem;margin:0 auto;padding:1.5rem 1rem 4rem}}\ntable{{border-collapse:collapse;width:100%;font-size:.92rem}}td,th{{border:1px solid #8884;padding:.4rem .6rem;text-align:left;vertical-align:top}}blockquote{{margin:1rem 0;padding:.1rem 1rem;border-left:4px solid #8886}}code{{background:#8882;padding:.05rem .3rem;border-radius:4px}}nav{{margin-bottom:1.5rem}}\n</style></head><body>\n<nav><a href=\"/\">Zohara Chat</a> &middot; <a href=\"/privacy\">Privacy</a> &middot; <a href=\"/terms\">Terms</a></nav>\n{}</body></html>\n",
         esc(title),
         markdown(md)
     )

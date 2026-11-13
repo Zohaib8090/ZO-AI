@@ -3,7 +3,7 @@ name = "zo-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "ZO-AI in the cloud: the same brain behind a login, with its data kept in Firestore"
+description = "Zohara Chat in the cloud: the same brain behind a login, with its data kept in Firestore"
 
 [dependencies]
 zo-core = { path = "../zo-core" }

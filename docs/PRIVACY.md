@@ -1,8 +1,8 @@
-# ZO-AI web service: Privacy notice
+# Zohara Chat web service: Privacy notice
 
 > Last updated: {{version}}. Operator: Zohaib Baig, contact: {{contact}}.
 
-This notice covers the public ZO-AI server (the website, the sync from the ZO-AI desktop app, and the `zo` terminal client). It does
+This notice covers the public Zohara Chat server (the website, the sync from the Zohara Chat desktop app, and the `zo` terminal client). It does
 not cover the desktop app running alone on your own computer: that keeps everything on your computer.
 
 ## Who is responsible
@@ -17,11 +17,11 @@ Zohaib Baig ("the operator", {{contact}}) runs the service and decides what happ
 | A random per-user id derived from your account id (the raw id and e-mail are not used in file or database paths) | to name your data | the service |
 | Your chats, memory notes, personalities and small settings files | the service's purpose | Firestore, region Europe (eur3), under `users/<your id>` |
 | Your API key(s), encrypted | so the assistant can call the model provider you chose | Firestore (encrypted text) and the server's disk while you are active |
-| Your signed-in devices: a name (for example "ZO-AI desktop on <computer name>"), the kind, when it was created and last used, and only a hash of its sign-in credential (never the credential) | to let your desktop app or terminal sync, and so you can see and sign out devices (Account page > signed-in devices) | Firestore |
+| Your signed-in devices: a name (for example "Zohara Chat desktop on <computer name>"), the kind, when it was created and last used, and only a hash of its sign-in credential (never the credential) | to let your desktop app or terminal sync, and so you can see and sign out devices (Account page > signed-in devices) | Firestore |
 | A waiting sign-in request from your desktop app or terminal (device name, kind, the network address it came from, a short code, for at most 10 minutes) | so you can approve it in the browser | the server's memory only |
 | Technical logs without message text, keys or tokens (time, route, status) | to run the service and stop abuse | the hosting provider (Render) |
 
-**The desktop app sends nothing to this service until you sign in.** Without signing in, the ZO-AI desktop app keeps everything on your computer and works fully; signing in is optional and only turns on sync with the web version. The credential that keeps a signed-in device connected is stored in that device's key store, not in a file. The web version needs a sign-in.
+**The desktop app sends nothing to this service until you sign in.** Without signing in, the Zohara Chat desktop app keeps everything on your computer and works fully; signing in is optional and only turns on sync with the web version. The credential that keeps a signed-in device connected is stored in that device's key store, not in a file. The web version needs a sign-in.
 
 We do not use advertising, analytics or tracking cookies. The browser keeps your sign-in session in its storage because you asked to sign in; nothing else is stored there except your choice that you accepted the notice.
 
@@ -41,7 +41,7 @@ Nobody except you, in normal use: the service keeps every person's data separate
 
 ## Your API key
 
-You enter your own key. The service uses it only for your own requests. Create a key with a spending limit at your provider and revoke it there if you stop using ZO-AI. You are responsible for the charges on your key.
+You enter your own key. The service uses it only for your own requests. Create a key with a spending limit at your provider and revoke it there if you stop using Zohara Chat. You are responsible for the charges on your key.
 
 ## How long it is kept
 

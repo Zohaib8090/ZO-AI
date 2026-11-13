@@ -2,7 +2,7 @@
 //!
 //! * **On a computer** (the desktop app): `claude auth login` runs on a pseudo-terminal; the authorization link it prints becomes a
 //!   button, the code the person gets back is typed into the program, and when it ends `claude auth status` says who is signed in.
-//!   The program keeps the login itself, in the person's own home. ZO-AI stores nothing.
+//!   The program keeps the login itself, in the person's own home. Zohara Chat stores nothing.
 //! * **On a server** (`ZO_CLAUDE_CODE_USERS`: admins, or everybody): `claude setup-token` runs on a pseudo-terminal in a sandbox (an
 //!   empty environment, a private home, resource limits, five minutes at most, one per person and a few for the whole server). Its
 //!   screen is NEVER passed on: the page only gets a state and the authorization link (checked against the sign-in hosts of
@@ -622,7 +622,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         const TOKEN: &str = "sk-ant-oat01-ServerFlowToken0123456789abcdefghijkl";
         let bin = fake_claude(&dir, TOKEN);
-        std::env::set_var("ZOAI_CLAUDE_BIN", &bin);
+        std::env::set_var("ZOHARA_CHAT_CLAUDE_BIN", &bin);
         let t = crate::tenant::testkit::fresh(false);
         crate::tenant::scope(&t, || {
             let v = server_start().unwrap();
@@ -648,7 +648,7 @@ mod tests {
             server_logout().unwrap();
             assert_eq!(crate::ai::claude_code::token_source(), "none");
         });
-        std::env::remove_var("ZOAI_CLAUDE_BIN");
+        std::env::remove_var("ZOHARA_CHAT_CLAUDE_BIN");
     }
 
     #[test]
@@ -659,7 +659,7 @@ mod tests {
         let dir = kit.join("fakebin-bad");
         std::fs::create_dir_all(&dir).unwrap();
         let bin = fake_claude(&dir, "sk-ant-oat01-NeverPrintedToken0123456789abcdefgh");
-        std::env::set_var("ZOAI_CLAUDE_BIN", &bin);
+        std::env::set_var("ZOHARA_CHAT_CLAUDE_BIN", &bin);
         let restricted = crate::tenant::testkit::fresh(true);
         crate::tenant::scope(&restricted, || {
             assert!(server_start().is_err(), "admins only by default");
@@ -674,7 +674,7 @@ mod tests {
             assert!(!v.message.contains("sk-ant"), "{}", v.message);
             assert_eq!(crate::ai::claude_code::token_source(), "none");
         });
-        std::env::remove_var("ZOAI_CLAUDE_BIN");
+        std::env::remove_var("ZOHARA_CHAT_CLAUDE_BIN");
     }
 
     #[test]
@@ -685,7 +685,7 @@ mod tests {
         let dir = kit.join("fakebin-cancel");
         std::fs::create_dir_all(&dir).unwrap();
         let bin = fake_claude(&dir, "sk-ant-oat01-NeverPrintedToken0123456789abcdefgh");
-        std::env::set_var("ZOAI_CLAUDE_BIN", &bin);
+        std::env::set_var("ZOHARA_CHAT_CLAUDE_BIN", &bin);
         let t = crate::tenant::testkit::fresh(false);
         crate::tenant::scope(&t, || {
             server_start().unwrap();
@@ -698,7 +698,7 @@ mod tests {
             let alive = std::fs::read_to_string(format!("/proc/{pid}/stat")).map(|s| !s.contains(") Z")).unwrap_or(false);
             assert!(!alive, "the program is gone");
         });
-        std::env::remove_var("ZOAI_CLAUDE_BIN");
+        std::env::remove_var("ZOHARA_CHAT_CLAUDE_BIN");
     }
 
     /// Manual check against the real program (needs `claude` installed; signs nobody in): `cargo test -p zo-core real_claude -- --ignored`.

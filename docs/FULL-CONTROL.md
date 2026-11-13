@@ -24,7 +24,7 @@ From the web page or the native phone app, with "My computer" selected, the pers
 3. **Files**: browse folders, read text, download a file (size cap), upload a file to a chosen folder, create/rename/delete.
 4. **Screen**: take a screenshot of the desktop and view it; optional live view later (not now).
 5. **Apps and system**: list/launch/close applications, see CPU/memory/disks, power actions (lock, sleep; shutdown/reboot only with extra confirmation).
-6. **ZO-AI itself on the desktop**: open/rename/delete chats there, run schedules, the Activity list with Stop (activity op), projects, artifacts, memory, personalities, permission mode (never above Auto without local consent), model/profile choice, MCP servers (add/remove on the desktop), settings pages.
+6. **Zohara Chat itself on the desktop**: open/rename/delete chats there, run schedules, the Activity list with Stop (activity op), projects, artifacts, memory, personalities, permission mode (never above Auto without local consent), model/profile choice, MCP servers (add/remove on the desktop), settings pages.
 7. **Notifications**: desktop events (answer finished, approval needed, question asked, a scheduled task ran) reach the phone and the web as notifications (docs/INTERACTION.md).
 8. **Sync**: everything the person changes on any device appears on the others (existing sync kinds + live ops through the link); chats made on the desktop by a web session are saved on the desktop and synced to the server like any other chat.
 
@@ -40,8 +40,8 @@ From the web page or the native phone app, with "My computer" selected, the pers
   per operation with exact argument schemas, nothing is executed from free-form text except through the agent loop's own policy.
 * Every web-initiated action is written to the desktop's audit log and shown in the Activity page with Stop.
 * Mode cap: the permission mode for web jobs never exceeds Auto; Bypass only if allowed locally.
-* Files: a root allow-list (home folder by default), no access to ~/.ssh, ~/.gnupg, the ZO-AI config folder, keyring, /proc/*/environ, other users' homes; size caps; no symlink escapes (resolve and re-check).
-* Terminal: runs as the desktop user with the scrubbed environment (no ZO-AI secrets), one session per tab, idle timeout, output size cap, local approval to OPEN a terminal (then typed commands pass through the policy classifier: obviously destructive commands re-ask).
+* Files: a root allow-list (home folder by default), no access to ~/.ssh, ~/.gnupg, the Zohara Chat config folder, keyring, /proc/*/environ, other users' homes; size caps; no symlink escapes (resolve and re-check).
+* Terminal: runs as the desktop user with the scrubbed environment (no Zohara Chat secrets), one session per tab, idle timeout, output size cap, local approval to OPEN a terminal (then typed commands pass through the policy classifier: obviously destructive commands re-ask).
 * Rate limits and per-device single active job (existing), poll slot limits (existing).
 
 ## Protocol additions (to design in docs/LINK.md when built)

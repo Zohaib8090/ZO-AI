@@ -1,4 +1,4 @@
-//! Personalities: how ZO-AI talks. A personality is a short piece of instructions about tone and manner that is added to the
+//! Personalities: how Zohara Chat talks. A personality is a short piece of instructions about tone and manner that is added to the
 //! system prompt. It changes the voice, never the rules: honesty, permissions and the person's instructions stay as they are.
 //! The person can pick one, write one, or ask the AI to write one from a description (`ai::personality_gen`).
 //! One file (`personalities.json`) for the window and the phone.
@@ -21,7 +21,7 @@ pub struct Personality {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Store {
-    /// The one in use; empty means ZO-AI's own plain manner.
+    /// The one in use; empty means Zohara Chat's own plain manner.
     #[serde(default)]
     pub active: String,
     #[serde(default)]

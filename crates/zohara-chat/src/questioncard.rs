@@ -1,4 +1,4 @@
-//! The question card (docs/INTERACTION.md section 4): what ZO-AI shows when the model calls `zohara_ask_user`.
+//! The question card (docs/INTERACTION.md section 4): what Zohara Chat shows when the model calls `zohara_ask_user`.
 //! A header chip, the question, the options as radio rows (or check rows for a multi-select) with their descriptions, an
 //! "Other" row with a text field, Skip, and for several questions Back / Next with one Send at the end.
 //! Keys: 1 to 6 pick an option, Enter goes on, Esc skips. The card checks nothing itself beyond "something is chosen": the
@@ -67,7 +67,7 @@ pub fn build(questions: Vec<Question>, expired: Arc<AtomicBool>, done: impl Fn(Q
     card.add_css_class("q-card");
     card.set_focusable(true);
     // screen readers: say what this is
-    card.update_property(&[gtk::accessible::Property::Label("ZO-AI is asking you a question")]);
+    card.update_property(&[gtk::accessible::Property::Label("Zohara Chat is asking you a question")]);
     card.set_accessible_role(gtk::AccessibleRole::Group);
 
     let stack = gtk::Stack::new();
@@ -312,7 +312,7 @@ mod tests {
         of::<gtk::Button>(card).into_iter().find(|b| b.label().as_deref() == Some(label)).unwrap_or_else(|| panic!("no {label} button"))
     }
 
-    /// Run with a display: `xvfb-run -a cargo test -p zo-ai -- --ignored the_card`
+    /// Run with a display: `xvfb-run -a cargo test -p zohara-chat -- --ignored the_card`
     #[test]
     #[ignore = "needs a display (run under xvfb)"]
     fn the_card_collects_checks_and_ends_the_way_the_person_decides() {

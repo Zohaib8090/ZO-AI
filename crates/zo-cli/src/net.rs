@@ -43,7 +43,7 @@ impl Drop for Shut {
 
 pub fn local_hint(path: &std::path::Path) -> String {
     format!(
-        "ZO-AI is not running: nothing listens on {}.\nStart the ZO-AI app (it serves this socket), or sign in and talk to the ZO-AI server:\n  zo login                     (once; then zo works against the server when the app is not running)\n  zo --remote https://your-server \"question\"   (a server of your own; for scripts set ZO_DEVICE_TOKEN)",
+        "Zohara Chat is not running: nothing listens on {}.\nStart the Zohara Chat app (it serves this socket), or sign in and talk to the Zohara Chat server:\n  zo login                     (once; then zo works against the server when the app is not running)\n  zo --remote https://your-server \"question\"   (a server of your own; for scripts set ZO_DEVICE_TOKEN)",
         path.display()
     )
 }
@@ -100,7 +100,7 @@ impl Target {
                 conn.write_all(format!("{req}\n").as_bytes()).map_err(|e| e.to_string())?;
                 let mut line = String::new();
                 BufReader::new(conn).read_line(&mut line).map_err(|e| e.to_string())?;
-                check(serde_json::from_str(&line).map_err(|_| "ZO-AI gave no answer.".to_string())?)
+                check(serde_json::from_str(&line).map_err(|_| "Zohara Chat gave no answer.".to_string())?)
             }
             Target::Remote { url, token } => {
                 let resp = Self::post(url, "/api/op", token, req)?;

@@ -1,4 +1,4 @@
-//! Keeps the chats, memory notes and personalities of this computer and of the ZO-AI server the same (see docs/SYNC.md).
+//! Keeps the chats, memory notes and personalities of this computer and of the Zohara Chat server the same (see docs/SYNC.md).
 //!
 //! * The **planner** (`plan`) is pure: from what each side holds (item id -> last change, and tombstones: item id -> when it was
 //!   deleted) it says what to pull, push and delete. The newest change wins; a tombstone that is not older than the item deletes it.
@@ -728,7 +728,7 @@ pub fn apply_delete(kind: &str, id: &str, at: u64) -> Result<bool, String> {
 // ---------------------------------------------------------------------------------------------------------------------------
 // the client (this computer talking to the server)
 
-/// ~/.config/zo-ai/sync.json: where the server is and whether to sync.
+/// ~/.config/zohara-chat/sync.json: where the server is and whether to sync.
 #[derive(Clone, Debug, Default)]
 pub struct Config {
     /// A server address chosen by hand (empty = the default one, see `login::server_url`).
@@ -1344,7 +1344,7 @@ mod tests {
         std::env::set_var("XDG_DATA_HOME", dir.join("data"));
         std::env::set_var("XDG_CONFIG_HOME", dir.join("config"));
         // keys go to a plain file in the sandbox (no keyring), never to the real one
-        std::env::set_var("ZO_AI_KEYS_FILE", dir.join("keys.json"));
+        std::env::set_var("ZOHARA_CHAT_KEYS_FILE", dir.join("keys.json"));
         (g, dir)
     }
 

@@ -1,5 +1,5 @@
 // Generates launcher icons (legacy + adaptive foreground), the splash icon and the
-// notification glyph from crates/zo-ai/data/zo-ai.svg. Output is committed, so this
+// notification glyph from crates/zohara-chat/data/zohara-chat.svg. Output is committed, so this
 // only needs re-running when the logo changes:  npm run assets
 import sharp from 'sharp';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const res = join(here, '..', 'android', 'app', 'src', 'main', 'res');
-const src = readFileSync(join(here, '..', '..', '..', 'crates', 'zo-ai', 'data', 'zo-ai.svg'), 'utf8');
+const src = readFileSync(join(here, '..', '..', '..', 'crates', 'zohara-chat', 'data', 'zohara-chat.svg'), 'utf8');
 const BG = '#191919';
 
 // The mark alone (the 120x120 group of the source svg), transparent background.

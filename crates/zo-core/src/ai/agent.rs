@@ -19,7 +19,7 @@ thread_local! {
     static DEADLINE: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
 }
 
-/// What ZO-AI is told about itself: the full text, or for a restricted tenant the short one for the web.
+/// What Zohara Chat is told about itself: the full text, or for a restricted tenant the short one for the web.
 pub fn system_prompt() -> &'static str {
     static SERVER_ADMIN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     if crate::tenant::is_restricted() {
@@ -33,17 +33,17 @@ pub fn system_prompt() -> &'static str {
 
 /// For the owner (an admin) on the cloud server: the full prompt describes the desktop, so it is preceded by where the model really is.
 pub const SERVER_ADMIN_PREFIX: &str = "WHERE YOU RUN (read this first; it overrides the rest of this text)\n\
-You are running on a cloud server (a small Linux container in a data centre), reached through the ZO-AI web app. You are NOT on the person's laptop or phone and you cannot see or control them: there is no KDE Plasma session, no Dolphin, no Settings window, no Waydroid, no Android device over adb and no screenshot of their screen. \
+You are running on a cloud server (a small Linux container in a data centre), reached through the Zohara Chat web app. You are NOT on the person's laptop or phone and you cannot see or control them: there is no KDE Plasma session, no Dolphin, no Settings window, no Waydroid, no Android device over adb and no screenshot of their screen. \
 Your shell and file tools act on THIS SERVER only, and whatever you read from it (processes, files, packages, hostnames) describes the server, never the person's computer. \
-If they ask you to do or check something on their computer, say plainly that the web version cannot reach it from here; the ZO-AI desktop app can (it syncs the chats), and an SSH machine added in Settings > Machines can be reached with the zohara_ssh_* tools. \
+If they ask you to do or check something on their computer, say plainly that the web version cannot reach it from here; the Zohara Chat desktop app can (it syncs the chats), and an SSH machine added in Settings > Machines can be reached with the zohara_ssh_* tools. \
 Before you state a fact about a system, run a tool that shows it and report what the result says; never describe processes, windows or files you have not just listed. \
 The rest of this text describes the desktop version: wherever it mentions the desktop, screenshots, windows, input, adb, Waydroid or the in-app terminal and browser, those do not exist here.\n\n";
 
-pub const RESTRICTED_PROMPT: &str = "You are ZO-AI: the AI assistant of Zohara OS, here running on the web. \
-You are an AI model; whatever model is behind you (the person brings their own API key), here you are ZO-AI.\n\
+pub const RESTRICTED_PROMPT: &str = "You are Zohara Chat: the AI assistant of Zohara OS, here running on the web. \
+You are an AI model; whatever model is behind you (the person brings their own API key), here you are Zohara Chat.\n\
 \n\
 WHAT YOU CAN DO\n\
-You run on a server and have no access to the person's computer: you cannot read or change their files, run commands, take screenshots or control their system. If they ask for that, say that the web version cannot do it and that the ZO-AI desktop app on their own computer can (it keeps their chats in sync). \
+You run on a server and have no access to the person's computer: you cannot read or change their files, run commands, take screenshots or control their system. If they ask for that, say that the web version cannot do it and that the Zohara Chat desktop app on their own computer can (it keeps their chats in sync). \
 You can search the web with zohara_web_search, read a public web page with zohara_web_fetch, and keep a long-term memory of the person: the notes you are given at the start are from earlier chats. \
 When they ask you to remember or forget something, use zohara_memory_save and zohara_memory_forget; to look for something from before, use zohara_memory_search.\n\
 \n\
@@ -63,13 +63,13 @@ Never save passwords, keys or other secrets to memory, and never print secrets y
 If a request is unclear, ask one short question instead of guessing. \
 Answer in the language the person writes in, in plain, short sentences.";
 
-pub const SYSTEM_PROMPT: &str = "You are ZO-AI: the AI assistant and agent built into Zohara OS (Arch Linux with KDE Plasma, on Wayland). \
+pub const SYSTEM_PROMPT: &str = "You are Zohara Chat: the AI assistant and agent built into Zohara OS (Arch Linux with KDE Plasma, on Wayland). \
 You are an AI model working as an agent on this computer, for the person who is signed in. You are not a person, and you are not a website: you live on this machine and can act on it. \
-Whatever model is behind you (the person chooses it), here you are ZO-AI.\n\
+Whatever model is behind you (the person chooses it), here you are Zohara Chat.\n\
 \n\
 WHAT YOU CAN DO\n\
 Your tools let you read and change files, run shell commands in a terminal, take screenshots, list and stop processes, work with system snapshots, and control Android (adb) and Waydroid. \
-You can also manage ZO-AI itself: projects and their memory, scheduled tasks, saved chats, and the MCP servers that are added to you. \
+You can also manage Zohara Chat itself: projects and their memory, scheduled tasks, saved chats, and the MCP servers that are added to you. \
 This system uses pacman (and the AUR), Flatpak, and Zohara Settings and Zohara Store for updates and apps.\n\
 \n\
 OTHER COMPUTERS (SSH)\n\
@@ -88,7 +88,7 @@ A repository to run locally: clone it, read its README, install what it needs, t
 Never say a server is \"already running, nothing to install\" and stop there: if it is not yet in your tools, add it. After adding, its tools are yours from the next message; tell the person that.\n\
 \n\
 TERMINALS, BROWSER AND SUB-AGENTS (when you have these tools)\n\
-The ZO-AI window has a side panel with terminals and a full browser that the person can see and use too. \
+The Zohara Chat window has a side panel with terminals and a full browser that the person can see and use too. \
 Terminals (zohara_term_open, zohara_term_run, zohara_term_send, zohara_term_read, zohara_term_list, zohara_term_close): they are real shells. \
 Use them when the person asks you to open or use a terminal, and for things that keep running (a dev server, a watcher, an installer that asks questions): open one terminal per job, give it a name, and read it again later with zohara_term_read. \
 For a quick one-off command the shell tool is enough. Use zohara_term_send to answer a prompt or press a key (Ctrl+C stops a running program). \
@@ -352,7 +352,7 @@ pub fn run_with(cfg: &Config, history: &mut Vec<Turn>, user: &str, extra: Extra,
     } else {
         Turn::UserImages(user, pics)
     });
-    // ZO-AI's tools, and those of the MCP servers added in Settings (started for this turn only)
+    // Zohara Chat's tools, and those of the MCP servers added in Settings (started for this turn only)
     // a restricted account has no MCP servers: they are programs on the server
     let mut external = if restricted { mcp_client::External::start_with(&[]) } else { mcp_client::External::start() };
     let mut specs = wire::builtin_specs();
@@ -504,7 +504,7 @@ fn subagent(cfg: &Config, args: &Value, mode: Mode, approver: &dyn Approver, can
         base_url: cfg.base_url.clone(),
         model: cfg.model.clone(),
         key: cfg.key.clone(),
-        system: format!("{}\n\nYOU ARE A SUB-AGENT: another ZO-AI gave you one job and cannot see your steps. Do the job with your tools, then finish with a short, complete report of what you did and found (this report is all that comes back).", cfg.system),
+        system: format!("{}\n\nYOU ARE A SUB-AGENT: another Zohara Chat gave you one job and cannot see your steps. Do the job with your tools, then finish with a short, complete report of what you did and found (this report is all that comes back).", cfg.system),
         vision: cfg.vision,
     };
     let mut hist: Vec<Turn> = Vec::new();
@@ -528,7 +528,7 @@ fn transcript(turns: &[Turn]) -> String {
             Turn::User(s) | Turn::UserImages(s, _) | Turn::UserInline(s, _) => format!("PERSON: {s}"),
             Turn::Assistant { text, calls } => {
                 let tools = calls.iter().map(|c| format!("[used {} {}]", c.name, cut(&c.args.to_string(), 200))).collect::<Vec<_>>().join(" ");
-                format!("ZO-AI: {text} {tools}").trim().to_string()
+                format!("Zohara Chat: {text} {tools}").trim().to_string()
             }
             Turn::Results(rs) => rs.iter().map(|r| format!("[{} returned: {}]", r.name, cut(&r.content, 600))).collect::<Vec<_>>().join("\n"),
         })
@@ -749,7 +749,7 @@ mod tests {
         let seen = server.join().unwrap();
         // the model was asked to summarize the first two messages and their answers, and nothing else
         let asked = seen[0]["messages"].to_string();
-        assert!(asked.contains("PERSON: one") && asked.contains("ZO-AI: a2") && !asked.contains("three"), "{asked}");
+        assert!(asked.contains("PERSON: one") && asked.contains("Zohara Chat: a2") && !asked.contains("three"), "{asked}");
         assert!(matches!(&history[0], Turn::User(t) if t.contains("Summary of our earlier conversation") && t.contains("Spotify")));
         assert!(matches!(&history[1], Turn::Assistant { .. }));
         assert_eq!(history.len(), 6);
@@ -901,7 +901,7 @@ mod tests {
         let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (dir, server_cfg) = crate::mcp_client::fake_server();
         let conf = dir.join("config");
-        std::fs::create_dir_all(conf.join("zo-ai")).unwrap();
+        std::fs::create_dir_all(conf.join("zohara-chat")).unwrap();
         std::env::set_var("XDG_CONFIG_HOME", &conf);
         crate::mcp_client::save_servers(&[server_cfg]);
         let (url, server) = mock(vec![
