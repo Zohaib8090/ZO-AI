@@ -104,5 +104,12 @@ class ZoApiTest {
     assertEquals("answer", b["op"]!!.jsonPrimitive.content)
     assertTrue(b.toString().contains("other"))
     assertTrue(!b.toString().contains("\\u0007"))
+    // "You decide" is sent as decide:true and nothing else is set
+    server.enqueue(ok("""{"ok":true}"""))
+    api.replyAnswer(5, 9, listOf(QuestionAnswer(emptyList(), null, decide = true), QuestionAnswer(listOf("A"))))
+    val c = ZoJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject["answers"]!!.jsonArray
+    assertEquals("true", c[0].jsonObject["decide"]!!.jsonPrimitive.content)
+    assertEquals(0, c[0].jsonObject["selected"]!!.jsonArray.size)
+    assertTrue(c[1].jsonObject["decide"] == null)
   }
 }

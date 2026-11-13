@@ -484,7 +484,7 @@ Page list in the web and the desktop. Desktop (9): Model and profiles, Personali
 
 | ID | Feature | Desktop | Web | Phone | P | Mod | Done |
 |---|---|---|---|---|---|---|---|
-| SET-PRS-01 | Row "Plain" "Zohara Agent's own manner: clear and to the point." with Use / In use (`personality_use {id:""}`) | settings.rs personality | `pagePersonality:1852` | same | must | settings | [x] |
+| SET-PRS-01 | Row "No personality" (was "Plain") "Zohara Agent's own manner: clear and to the point." with Use / In use (`personality_use {id:""}`) | settings.rs personality | `pagePersonality:1852` | same | must | settings | [x] |
 | SET-PRS-02 | Built-in and own personalities: name (+ " · written by the AI" when generated), the prompt text as sub line, Use / In use; Delete only for non-builtin (`personality_remove`) | settings.rs | `pagePersonality:1854` | same | must | settings | [x] |
 | SET-PRS-03 | "Describe one…" sheet "Make a personality": "What should it be like?" (example "A patient teacher who explains with small everyday examples and never rushes me"), "Write it" -> `personality_generate {description}` (uses the model, counts as an answer for limits; "Working on it…"; errors shown in the sheet) | settings.rs:text_sheet | `pagePersonality:1859` | same | must | settings | [x] |
 | SET-PRS-04 | "Write my own…" sheet "Write a personality": Name (web) / text only (desktop names it from the first 3 words), "How should it sound? (4 to 7 sentences)"; `personality_add {name,prompt}` | settings.rs | `pagePersonality:1857` | same (web form with Name) | must | settings | [x] |

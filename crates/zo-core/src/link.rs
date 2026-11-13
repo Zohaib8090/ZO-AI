@@ -298,7 +298,7 @@ pub fn parse_job(v: &Value, now_ms: u64) -> Result<Job, (Option<String>, String)
 }
 
 /// The `answers` of an answer job rebuilt from checked fields only: at most 4 answers, each `{selected: [<=6 texts of <=100
-/// characters], other: <=4000 characters or null}`. (What the answers MEAN is checked by the service against its own question.)
+/// characters], other: <=4000 characters or null, decide: bool}`. (What the answers MEAN is checked by the service against its own question.)
 fn clean_answers(v: Option<&Value>) -> Option<Value> {
     let list = v?.as_array().filter(|l| !l.is_empty() && l.len() <= 4)?;
     let mut out = Vec::new();
@@ -313,7 +313,12 @@ fn clean_answers(v: Option<&Value>) -> Option<Value> {
             Some(Value::String(s)) if s.chars().count() <= 4000 => json!(s),
             _ => return None,
         };
-        out.push(json!({"selected": sel, "other": other}));
+        let decide = match a.get("decide") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(b)) => *b,
+            _ => return None,
+        };
+        out.push(json!({"selected": sel, "other": other, "decide": decide}));
     }
     Some(Value::Array(out))
 }
@@ -1755,13 +1760,15 @@ mod tests {
     #[test]
     fn an_answer_job_is_checked_and_rebuilt_from_known_fields() {
         let ok = parse_job(&json!({"id": "a1", "type": "answer_reply", "job_id": "j-1", "question_id": 4, "answers": [{"selected": ["x"], "other": "t", "evil": 1}], "tenant": {"id": "z"}}), 0).unwrap();
-        assert_eq!(ok.kind, Kind::AnswerReply { job_id: "j-1".into(), question: 4, reply: json!({"answers": [{"selected": ["x"], "other": "t"}]}) });
+        assert_eq!(ok.kind, Kind::AnswerReply { job_id: "j-1".into(), question: 4, reply: json!({"answers": [{"selected": ["x"], "other": "t", "decide": false}]}) });
+        let d = parse_job(&json!({"id": "a4", "type": "answer_reply", "job_id": "j-1", "question_id": 4, "answers": [{"decide": true}]}), 0).unwrap();
+        assert_eq!(d.kind, Kind::AnswerReply { job_id: "j-1".into(), question: 4, reply: json!({"answers": [{"selected": [], "other": null, "decide": true}]}) });
         let c = parse_job(&json!({"id": "a2", "type": "answer_reply", "job_id": "j-1", "question_id": "7", "cancelled": true}), 0).unwrap();
         assert_eq!(c.kind, Kind::AnswerReply { job_id: "j-1".into(), question: 7, reply: json!({"cancelled": true}) });
         let bad = |v: Value| parse_job(&v, 0).unwrap_err().1;
         let base = |extra: Value| { let mut b = json!({"id": "a3", "type": "answer_reply", "job_id": "j-1", "question_id": 1}); for (k, v) in extra.as_object().unwrap() { b[k] = v.clone(); } b };
         for extra in [json!({}), json!({"answers": []}), json!({"answers": "x"}), json!({"answers": [{"selected": [1]}]}), json!({"answers": [{"selected": ["a","b","c","d","e","f","g"]}]}),
-                      json!({"answers": [{"selected": ["x".repeat(101)]}]}), json!({"answers": [{"other": "y".repeat(4001)}]}), json!({"answers": [{"other": 5}]}),
+                      json!({"answers": [{"selected": ["x".repeat(101)]}]}), json!({"answers": [{"other": "y".repeat(4001)}]}), json!({"answers": [{"other": 5}]}), json!({"answers": [{"decide": "yes"}]}),
                       json!({"answers": [{}, {}, {}, {}, {}]}), json!({"job_id": "../x", "answers": [{"selected": ["a"]}]}), json!({"question_id": "abc", "answers": [{"selected": ["a"]}]})] {
             assert!(bad(base(extra.clone())).contains("not valid"), "{extra}");
         }

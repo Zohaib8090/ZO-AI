@@ -82,6 +82,11 @@ pub fn validate_answers(questions: &[Question], raw: &Value) -> Result<Vec<Quest
     }
     let mut out = Vec::new();
     for (q, a) in questions.iter().zip(list) {
+        let decide = match a.get("decide") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => return Err("The decide flag is not true or false.".into()),
+        };
         let mut selected: Vec<String> = Vec::new();
         match a.get("selected") {
             None | Some(Value::Null) => {}
@@ -104,16 +109,27 @@ pub fn validate_answers(questions: &[Question], raw: &Value) -> Result<Vec<Quest
             Some(Value::String(s)) => Some(clean(s, MAX_OTHER_CHARS)).filter(|s| !s.is_empty()),
             Some(_) => return Err("The other answer is not text.".into()),
         };
+        if decide {
+            // "You decide" stands alone: it cannot be mixed with a choice or free text
+            if !selected.is_empty() || other.is_some() {
+                return Err("'You decide' cannot be combined with a choice or text.".into());
+            }
+            out.push(QuestionAnswer { selected, other, decide: true });
+            continue;
+        }
         if !q.multi_select && selected.len() + usize::from(other.is_some()) > 1 {
             return Err("Only one answer is allowed for this question.".into());
         }
         if selected.is_empty() && other.is_none() {
             return Err("Every question needs an answer (or skip them all).".into());
         }
-        out.push(QuestionAnswer { selected, other });
+        out.push(QuestionAnswer { selected, other, decide: false });
     }
     Ok(out)
 }
+
+/// What the model is told when the person leaves a question to it ("You decide").
+pub const DECIDE_TEXT: &str = "The person asked you to decide: pick the best option and say which and why. Do not ask this question again; go on with your choice.";
 
 /// What the model is told: `Q: ...\nA: label, label [Other: text]` per question, or why there is no answer.
 pub fn format_result(questions: &[Question], r: &QuestionResult) -> String {
@@ -122,6 +138,9 @@ pub fn format_result(questions: &[Question], r: &QuestionResult) -> String {
             .iter()
             .zip(answers)
             .map(|(q, a)| {
+                if a.decide {
+                    return format!("Q: {}\nA: {DECIDE_TEXT}", q.question);
+                }
                 let mut s = format!("Q: {}\nA: {}", q.question, a.selected.join(", "));
                 if let Some(o) = a.other.as_deref().filter(|o| !o.is_empty()) {
                     s.push_str(&format!("{}[Other: {o}]", if a.selected.is_empty() { "" } else { " " }));
@@ -274,7 +293,7 @@ mod tests {
     #[test]
     fn the_model_gets_plain_text() {
         let qs = two_multi();
-        let a = QuestionResult::Answers(vec![QuestionAnswer { selected: vec!["x".into(), "y".into()], other: Some("and w".into()) }, QuestionAnswer { selected: vec![], other: Some("custom".into()) }]);
+        let a = QuestionResult::Answers(vec![QuestionAnswer { selected: vec!["x".into(), "y".into()], other: Some("and w".into()), decide: false }, QuestionAnswer { selected: vec![], other: Some("custom".into()), decide: false }]);
         assert_eq!(format_result(&qs, &a), "Q: A?\nA: x, y [Other: and w]\nQ: B?\nA: [Other: custom]");
         assert_eq!(format_result(&qs, &QuestionResult::Declined), "The person declined to answer.");
         assert_eq!(format_result(&qs, &QuestionResult::Unanswered), "The person did not answer.");
@@ -312,5 +331,36 @@ mod tests {
         let t = Instant::now();
         assert_eq!(wait(&rx, &AtomicBool::new(false), Duration::from_millis(300)), QuestionResult::Unanswered);
         assert!(t.elapsed() >= Duration::from_millis(300) && t.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn you_decide_is_a_third_kind_of_answer() {
+        let qs = two_multi();
+        // one question left to Zohara Agent, the other answered
+        let ok = validate_answers(&qs, &json!([{"decide": true}, {"selected": ["q"]}])).unwrap();
+        assert!(ok[0].decide && ok[0].selected.is_empty() && ok[0].other.is_none());
+        assert!(!ok[1].decide);
+        // all of them
+        assert!(validate_answers(&qs, &json!([{"decide": true}, {"decide": true, "selected": [], "other": null}])).unwrap().iter().all(|a| a.decide));
+        // decide false is an ordinary answer and still needs something chosen
+        assert!(validate_answers(&qs, &json!([{"decide": false}, {"selected": ["p"]}])).unwrap_err().contains("needs an answer"));
+        // it cannot be mixed with a choice or text, and must be a boolean
+        let no = |v: Value| validate_answers(&qs, &v).unwrap_err();
+        assert!(no(json!([{"decide": true, "selected": ["x"]}, {"selected": ["p"]}])).contains("cannot be combined"));
+        assert!(no(json!([{"decide": true, "other": "text"}, {"selected": ["p"]}])).contains("cannot be combined"));
+        assert!(no(json!([{"decide": "yes"}, {"selected": ["p"]}])).contains("true or false"));
+        // the model is told to decide itself, and not to ask again
+        let r = QuestionResult::Answers(ok);
+        let t = format_result(&qs, &r);
+        assert_eq!(t, format!("Q: A?\nA: {DECIDE_TEXT}\nQ: B?\nA: q"));
+        assert!(t.contains("The person asked you to decide: pick the best option and say which and why"));
+        // through the open-question table, as a client sends it
+        let p = Pending::default();
+        let rx = p.open(2, qs);
+        assert!(p.reply(&json!({"op": "answer", "id": 2, "answers": [{"decide": true}, {"selected": ["p"]}]})));
+        match rx.try_recv().unwrap() {
+            QuestionResult::Answers(a) => assert!(a[0].decide && !a[1].decide),
+            other => panic!("{other:?}"),
+        }
     }
 }

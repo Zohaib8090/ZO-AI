@@ -1,7 +1,7 @@
 //! The question card (docs/INTERACTION.md section 4): what Zohara Agent shows when the model calls `zohara_ask_user`.
 //! A header chip, the question, the options as radio rows (or check rows for a multi-select) with their descriptions, an
-//! "Other" row with a text field, Skip, and for several questions Back / Next with one Send at the end.
-//! Keys: 1 to 6 pick an option, Enter goes on, Esc skips. The card checks nothing itself beyond "something is chosen": the
+//! "Other" row with a text field, a "You decide" row (Zohara Agent picks the best option itself and says which), Skip, and for several questions Back / Next with one Send at the end.
+//! Keys: 1 to 6 pick an option, D leaves it to Zohara Agent (optional), Enter goes on, Esc skips. The card checks nothing itself beyond "something is chosen": the
 //! answer goes through `zo_core::question::validate_answers` before it is handed on.
 
 use crate::{hbox, lbl, vbox};
@@ -21,19 +21,24 @@ struct Page {
     options: Vec<gtk::CheckButton>,
     other: gtk::CheckButton,
     other_text: gtk::Entry,
+    /// "You decide": stands alone, so choosing it clears the rest and choosing anything else clears it.
+    decide: gtk::CheckButton,
 }
 
 impl Page {
     /// What is chosen on this page (labels in the order they were offered, and the text of Other when it is on).
     fn answer(&self, q: &Question) -> QuestionAnswer {
+        if self.decide.is_active() {
+            return QuestionAnswer { selected: Vec::new(), other: None, decide: true };
+        }
         let selected = q.options.iter().zip(&self.options).filter(|(_, b)| b.is_active()).map(|(o, _)| o.label.clone()).collect();
         let other = Some(self.other_text.text().to_string()).filter(|t| self.other.is_active() && !t.trim().is_empty());
-        QuestionAnswer { selected, other }
+        QuestionAnswer { selected, other, decide: false }
     }
 
     fn has_answer(&self, q: &Question) -> bool {
         let a = self.answer(q);
-        !a.selected.is_empty() || a.other.is_some()
+        a.decide || !a.selected.is_empty() || a.other.is_some()
     }
 }
 
@@ -45,6 +50,9 @@ pub fn summary(questions: &[Question], r: &QuestionResult) -> String {
                 .iter()
                 .zip(a)
                 .map(|(_, a)| {
+                    if a.decide {
+                        return "you left it to Zohara Agent".to_string();
+                    }
                     let mut v = a.selected.clone();
                     if let Some(o) = &a.other {
                         v.push(o.clone());
@@ -146,8 +154,45 @@ pub fn build(questions: Vec<Question>, expired: Arc<AtomicBool>, done: impl Fn(Q
                 }
             });
         }
+        // You decide: Zohara Agent answers this one itself (D)
+        let decide = gtk::CheckButton::new();
+        let drow = vbox(1);
+        let dl = lbl("D  You decide", "q-opt-label");
+        drow.append(&dl);
+        let dd = lbl("Zohara Agent picks the best option and tells you which and why.", "q-opt-desc");
+        dd.set_wrap(true);
+        drow.append(&dd);
+        decide.set_child(Some(&drow));
+        decide.add_css_class("q-opt");
+        page.append(&decide);
+        {
+            // one or the other: "You decide" clears the choices; any choice clears "You decide"
+            let guard = Rc::new(Cell::new(false));
+            let all: Vec<gtk::CheckButton> = buttons.iter().cloned().chain(std::iter::once(other.clone())).collect();
+            {
+                let (guard, all, entry) = (guard.clone(), all.clone(), entry.clone());
+                decide.connect_toggled(move |d| {
+                    if d.is_active() && !guard.replace(true) {
+                        for b in &all {
+                            b.set_active(false);
+                        }
+                        entry.set_text("");
+                        guard.set(false);
+                    }
+                });
+            }
+            for b in &all {
+                let (guard, decide) = (guard.clone(), decide.clone());
+                b.connect_toggled(move |b| {
+                    if b.is_active() && !guard.replace(true) {
+                        decide.set_active(false);
+                        guard.set(false);
+                    }
+                });
+            }
+        }
         stack.add_named(&page, Some(&qi.to_string()));
-        pages.borrow_mut().push(Page { options: buttons, other, other_text: entry });
+        pages.borrow_mut().push(Page { options: buttons, other, other_text: entry, decide });
     }
     card.append(&stack);
 
@@ -172,7 +217,7 @@ pub fn build(questions: Vec<Question>, expired: Arc<AtomicBool>, done: impl Fn(Q
         })
     };
     for p in pages.borrow().iter() {
-        for b in p.options.iter().chain(std::iter::once(&p.other)) {
+        for b in p.options.iter().chain([&p.other, &p.decide]) {
             let r = refresh.clone();
             b.connect_toggled(move |_| r());
         }
@@ -227,7 +272,7 @@ pub fn build(questions: Vec<Question>, expired: Arc<AtomicBool>, done: impl Fn(Q
         p.other_text.connect_activate(move |_| g());
     }
 
-    // keys: 1 to 6 pick an option (typing in the Other field is never taken), Enter goes on, Esc skips
+    // keys: 1 to 6 pick an option, D = You decide (typing in the Other field is never taken), Enter goes on, Esc skips
     let keys = gtk::EventControllerKey::new();
     {
         let (cur, pages, finish, go_next, questions) = (cur.clone(), pages.clone(), finish.clone(), go_next.clone(), questions.clone());
@@ -239,6 +284,12 @@ pub fn build(questions: Vec<Question>, expired: Arc<AtomicBool>, done: impl Fn(Q
             if key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter {
                 go_next();
                 return glib::Propagation::Stop;
+            }
+            if key == gtk::gdk::Key::d || key == gtk::gdk::Key::D {
+                if let Some(p) = pages.borrow().get(cur.get()) {
+                    p.decide.set_active(!p.decide.is_active());
+                    return glib::Propagation::Stop;
+                }
             }
             let digit = key.to_unicode().and_then(|c| c.to_digit(10)).map(|d| d as usize);
             if let Some(d) = digit.filter(|d| (1..=6).contains(d)) {
@@ -286,9 +337,9 @@ mod tests {
 
     #[test]
     fn the_chat_line_says_what_was_decided() {
-        let qs = vec![q(true), q(false)];
-        let a = QuestionResult::Answers(vec![QuestionAnswer { selected: vec!["a".into(), "b".into()], other: Some("c".into()) }, QuestionAnswer { selected: vec![], other: Some("mine".into()) }]);
-        assert_eq!(summary(&qs, &a), "You answered: a, b, c; mine");
+        let qs = vec![q(true), q(false), q(false)];
+        let a = QuestionResult::Answers(vec![QuestionAnswer { selected: vec!["a".into(), "b".into()], other: Some("c".into()), decide: false }, QuestionAnswer { selected: vec![], other: Some("mine".into()), decide: false }, QuestionAnswer { selected: vec![], other: None, decide: true }]);
+        assert_eq!(summary(&qs, &a), "You answered: a, b, c; mine; you left it to Zohara Agent");
         assert_eq!(summary(&qs, &QuestionResult::Declined), "You skipped the question.");
         assert!(summary(&qs, &QuestionResult::Unanswered).contains("not answered"));
     }
@@ -325,7 +376,7 @@ mod tests {
         // two questions: a multi-select and a single-select
         let (card, got) = make(vec![q(true), q(false)], Arc::new(AtomicBool::new(false)));
         let checks = of::<gtk::CheckButton>(&card);
-        assert_eq!(checks.len(), 6, "two options and Other for each question");
+        assert_eq!(checks.len(), 8, "two options, Other and You decide for each question");
         let next = button(&card, "Next");
         assert!(!next.is_sensitive(), "nothing chosen yet");
         checks[0].set_active(true);
@@ -338,15 +389,15 @@ mod tests {
         // typing in the Other field picks Other and allows sending
         let entries = of::<gtk::Entry>(&card);
         entries[1].set_text("my own words");
-        assert!(checks[5].is_active() && next.is_sensitive());
+        assert!(checks[6].is_active() && next.is_sensitive());
         // Back keeps the first page's choices
         button(&card, "Back").emit_clicked();
         assert!(checks[0].is_active() && checks[1].is_active());
         next.emit_clicked();
         next.emit_clicked();
         assert_eq!(*got.borrow(), vec![QuestionResult::Answers(vec![
-            QuestionAnswer { selected: vec!["a".into(), "b".into()], other: None },
-            QuestionAnswer { selected: vec![], other: Some("my own words".into()) },
+            QuestionAnswer { selected: vec!["a".into(), "b".into()], other: None, decide: false },
+            QuestionAnswer { selected: vec![], other: Some("my own words".into()), decide: false },
         ])]);
         next.emit_clicked();
         assert_eq!(got.borrow().len(), 1, "the answer is given once");
@@ -358,7 +409,29 @@ mod tests {
         checks[1].set_active(true);
         assert!(!checks[0].is_active() && checks[1].is_active());
         button(&card, "Send").emit_clicked();
-        assert_eq!(*got.borrow(), vec![QuestionResult::Answers(vec![QuestionAnswer { selected: vec!["b".into()], other: None }])]);
+        assert_eq!(*got.borrow(), vec![QuestionResult::Answers(vec![QuestionAnswer { selected: vec!["b".into()], other: None, decide: false }])]);
+
+        // You decide: stands alone, in a single-select and in a multi-select question
+        let (card, got) = make(vec![q(true), q(false)], Arc::new(AtomicBool::new(false)));
+        let checks = of::<gtk::CheckButton>(&card);
+        let next = button(&card, "Next");
+        checks[0].set_active(true);
+        checks[1].set_active(true);
+        checks[3].set_active(true); // You decide clears the choices
+        assert!(!checks[0].is_active() && !checks[1].is_active() && checks[3].is_active());
+        assert!(next.is_sensitive(), "You decide is an answer");
+        checks[0].set_active(true); // a choice clears You decide
+        assert!(!checks[3].is_active() && checks[0].is_active());
+        checks[3].set_active(true);
+        next.emit_clicked();
+        checks[4].set_active(true); // second question: pick b then change to You decide
+        checks[7].set_active(true);
+        assert!(!checks[4].is_active());
+        next.emit_clicked();
+        assert_eq!(*got.borrow(), vec![QuestionResult::Answers(vec![
+            QuestionAnswer { selected: vec![], other: None, decide: true },
+            QuestionAnswer { selected: vec![], other: None, decide: true },
+        ])]);
 
         // Skip
         let (card, got) = make(vec![q(false)], Arc::new(AtomicBool::new(false)));

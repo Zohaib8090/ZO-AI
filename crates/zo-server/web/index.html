@@ -1147,8 +1147,8 @@ function ask(ev) {
   yes.onclick = () => answer(true); no.onclick = () => answer(false);
 }
 /* Zohara Agent asks a question (zohara_ask_user, docs/INTERACTION.md). One card for up to 4 questions: header chip, the question, the options
-   (radio, or check boxes for a multi-select) with their descriptions, an "Other" row with a text box, Skip, and Back / Next with one
-   Send at the end. Keys: 1 to 6 pick an option, Enter goes on, Esc skips. The answer is sent to /api/reply with the id of the
+   (radio, or check boxes for a multi-select) with their descriptions, an "Other" row with a text box, a "You decide" row (Zohara Agent picks
+   the best option itself and says which), Skip, and Back / Next with one Send at the end. Keys: 1 to 6 pick an option, D = You decide, Enter goes on, Esc skips. The answer is sent to /api/reply with the id of the
    stream the card came from; the composer stays as the running answer left it (it is locked while Zohara Agent works). */
 const qCards = new Set();
 /* the answer ended (done, stopped, an error, a lost connection) while cards were still open: they close as "not answered" */
@@ -1161,15 +1161,15 @@ function askQuestion(ev) {
   const d = document.createElement("div"); d.className = "q-card"; d.tabIndex = 0;
   d.setAttribute("role", "group"); d.setAttribute("aria-label", "Zohara Agent is asking you a question");
   /* per question: the chosen option numbers, whether Other is on and its text */
-  const st = questions.map(() => ({ sel: new Set(), otherOn: false, other: "" }));
+  const st = questions.map(() => ({ sel: new Set(), otherOn: false, other: "", decide: false }));
   let cur = 0, over = false, sending = false;
   const multi = i => !!questions[i].multi_select;
-  const valid = i => st[i].sel.size > 0 || (st[i].otherOn && st[i].other.trim().length > 0);
-  const answers = () => questions.map((q, i) => ({
+  const valid = i => st[i].decide || st[i].sel.size > 0 || (st[i].otherOn && st[i].other.trim().length > 0);
+  const answers = () => questions.map((q, i) => st[i].decide ? { selected: [], other: null, decide: true } : ({
     selected: Array.from(st[i].sel).sort((a, b) => a - b).map(k => String(q.options[k].label)),
     other: st[i].otherOn && st[i].other.trim() ? st[i].other.trim().slice(0, 2000) : null
   }));
-  const said = () => answers().map(a => a.selected.concat(a.other ? [a.other] : []).join(", ")).join("; ");
+  const said = () => answers().map(a => a.decide ? "you left it to Zohara Agent" : a.selected.concat(a.other ? [a.other] : []).join(", ")).join("; ");
   const handle = { close() { if (!over) collapse('<span class="pc-meta">Not answered (the answer ended).</span>'); } };
   const collapse = html => { over = true; qCards.delete(handle); d.removeAttribute("tabindex"); d.innerHTML = html; };
   qCards.add(handle);
@@ -1191,7 +1191,7 @@ function askQuestion(ev) {
   /* the parts that change while the person chooses: no rebuilding, so the text box keeps its focus */
   const sync = () => {
     if (over) return;
-    d.querySelectorAll(".q-opt").forEach((row, k) => { const i = row.dataset.k; row.classList.toggle("selected", i === "other" ? st[cur].otherOn : st[cur].sel.has(+i)); });
+    d.querySelectorAll(".q-opt").forEach((row, k) => { const i = row.dataset.k; row.classList.toggle("selected", i === "decide" ? st[cur].decide : i === "other" ? st[cur].otherOn : st[cur].sel.has(+i)); const inp = row.querySelector("input:not([type=text])"); if (inp) inp.checked = i === "decide" ? st[cur].decide : i === "other" ? st[cur].otherOn : st[cur].sel.has(+i); });
     const n = d.querySelector(".q-next"); if (n) n.disabled = sending || !valid(cur);
   };
   const render = () => {
@@ -1202,23 +1202,26 @@ function askQuestion(ev) {
     q.options.forEach((o, k) => {
       h += `<label class="q-opt" data-k="${k}"><input type="${kind}" name="${name}" data-k="${k}"><div class="q-opt-body"><div class="q-opt-label">${k < 6 ? `<span class="q-num">${k + 1}</span>` : ""}${esc(o.label)}</div>${o.description ? `<div class="q-opt-desc">${esc(o.description)}</div>` : ""}</div></label>`;
     });
-    h += `<label class="q-opt" data-k="other"><input type="${kind}" name="${name}" data-k="other"><div class="q-opt-body"><div class="q-opt-label">Other</div><input type="text" class="q-other-input" maxlength="2000" placeholder="Type your own answer" aria-label="Other answer" value=""></div></label></div>`;
+    h += `<label class="q-opt" data-k="other"><input type="${kind}" name="${name}" data-k="other"><div class="q-opt-body"><div class="q-opt-label">Other</div><input type="text" class="q-other-input" maxlength="2000" placeholder="Type your own answer" aria-label="Other answer" value=""></div></label>`;
+    h += `<label class="q-opt" data-k="decide"><input type="${kind}" name="${name}" data-k="decide"><div class="q-opt-body"><div class="q-opt-label"><span class="q-num">D</span>You decide</div><div class="q-opt-desc">Zohara Agent picks the best option and tells you which and why.</div></div></label></div>`;
     h += `<div class="q-msg" role="alert"></div><div class="q-foot"><div><button type="button" class="btn q-skip">Skip</button></div><div style="display:flex;gap:6px">${cur > 0 ? '<button type="button" class="btn q-back">Back</button>' : ""}<button type="button" class="btn primary q-next">${isLast ? "Send" : "Next"}</button></div></div>`;
     d.innerHTML = h;
     /* what was chosen before (Back, or the same page again) */
-    d.querySelectorAll(".q-opts input[type=radio],.q-opts input[type=checkbox]").forEach(inp => { const k = inp.dataset.k; inp.checked = k === "other" ? st[cur].otherOn : st[cur].sel.has(+k); });
+    d.querySelectorAll(".q-opts input[type=radio],.q-opts input[type=checkbox]").forEach(inp => { const k = inp.dataset.k; inp.checked = k === "decide" ? st[cur].decide : k === "other" ? st[cur].otherOn : st[cur].sel.has(+k); });
     const box = d.querySelector(".q-other-input"); box.value = st[cur].other;
     d.querySelectorAll(".q-opts input[type=radio],.q-opts input[type=checkbox]").forEach(inp => {
       inp.onchange = () => {
         const k = inp.dataset.k, s = st[cur];
-        if (k === "other") { s.otherOn = inp.checked; if (inp.checked && !m) s.sel.clear(); if (inp.checked) box.focus(); }
-        else if (m) { if (inp.checked) s.sel.add(+k); else s.sel.delete(+k); }
-        else { s.sel.clear(); s.sel.add(+k); s.otherOn = false; }
+        if (k === "decide") { s.decide = inp.checked; if (s.decide) { s.sel.clear(); s.otherOn = false; s.other = ""; box.value = ""; } }
+        else if (k === "other") { s.otherOn = inp.checked; if (inp.checked) { s.decide = false; if (!m) s.sel.clear(); box.focus(); } }
+        else if (m) { if (inp.checked) { s.sel.add(+k); s.decide = false; } else s.sel.delete(+k); }
+        else { s.sel.clear(); s.sel.add(+k); s.otherOn = false; s.decide = false; }
         sync();
       };
     });
     box.oninput = () => {
       const s = st[cur]; s.other = box.value;
+      if (box.value) s.decide = false;
       if (box.value && !s.otherOn) { s.otherOn = true; if (!m) s.sel.clear(); const r = d.querySelector('.q-opts input[data-k="other"]'); if (r) r.checked = true; }
       sync();
     };
@@ -1232,6 +1235,10 @@ function askQuestion(ev) {
     const inText = e.target.tagName === "INPUT" && e.target.type === "text";
     if (e.key === "Escape") { e.preventDefault(); send(true); }
     else if (e.key === "Enter") { if (e.target.tagName === "BUTTON") return; e.preventDefault(); d.querySelector(".q-next")?.click(); }
+    else if (!inText && /^[dD]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const inp = d.querySelector('.q-opts input[data-k="decide"]');
+      if (inp) { e.preventDefault(); inp.checked = !inp.checked; inp.dispatchEvent(new Event("change")); }
+    }
     else if (!inText && /^[1-6]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const inp = d.querySelector('.q-opts input[data-k="' + (+e.key - 1) + '"]');
       if (inp) { e.preventDefault(); if (inp.type === "radio") inp.checked = true; else inp.checked = !inp.checked; inp.dispatchEvent(new Event("change")); }
@@ -2611,7 +2618,7 @@ async function pagePersonality(b) {
   const st = await op("personalities"); b.innerHTML = "";
   const mk = (id, name, sub, on, del) => { const c = document.createElement("div"); c.style.cssText = "display:flex;gap:6px"; const u = btn(on ? "In use" : "Use", on ? "" : "primary", async () => { await op("personality_use", { id }); pagePersonality(b); }); u.disabled = on; c.appendChild(u);
     if (del) c.appendChild(btn("Delete", "danger", async () => { await op("personality_remove", { id }); pagePersonality(b); })); return row(name, sub, c); };
-  const rows = [mk("", "Plain", "Zohara Agent's own manner: clear and to the point.", !st.active, false), ...st.items.map(p => mk(p.id, p.name + (p.generated ? " · written by the AI" : ""), p.prompt, st.active === p.id, !p.builtin))];
+  const rows = [mk("", "No personality", "Zohara Agent's own manner: clear and to the point.", !st.active, false), ...st.items.map(p => mk(p.id, p.name + (p.generated ? " · written by the AI" : ""), p.prompt, st.active === p.id, !p.builtin))];
   const own = btn("Write my own…", "", () => { const w = document.createElement("div"); w.innerHTML = '<div class="field-label">Name</div><input class="field-input" id="n"><div class="field-label">How should it sound? (4 to 7 sentences)</div><textarea class="field-input" id="p" rows="5"></textarea>';
     const sh = sheet("Write a personality", w, [btn("Cancel", "", () => sh.close()), btn("Save", "primary", async () => { try { await op("personality_add", { name: w.querySelector("#n").value, prompt: w.querySelector("#p").value }); sh.close(); pagePersonality(b); } catch (e) { toast(e.message); } })]); });
   const gen = btn("Describe one…", "primary", () => { const w = document.createElement("div"); w.innerHTML = '<div class="field-label">What should it be like?</div><textarea class="field-input" id="d" rows="4" placeholder="A patient teacher who explains with small everyday examples"></textarea><div class="field-hint" id="gm"></div>';

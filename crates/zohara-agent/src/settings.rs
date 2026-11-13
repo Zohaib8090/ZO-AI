@@ -579,7 +579,7 @@ pub fn show(ui: &Rc<Ui>) {
             });
         }
         plain.append(&plain_btn);
-        card.append(&row("Plain", "Zohara Agent's own manner: clear and to the point.", Some(&plain)));
+        card.append(&row("No personality", "Zohara Agent's own manner: clear and to the point.", Some(&plain)));
         let builtin_ids: Vec<String> = pers::builtin().into_iter().map(|b| b.id).collect();
         for p in pers::all() {
             let active = st.active == p.id;

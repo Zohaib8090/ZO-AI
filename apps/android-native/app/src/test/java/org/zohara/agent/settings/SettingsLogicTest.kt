@@ -94,11 +94,11 @@ class SettingsLogicTest {
   }
 
   // ---- personality
-  @Test fun personalityRowsStartWithPlain() {
+  @Test fun personalityRowsStartWithNoPersonality() {
     val rows = personalityRows(PersonalitiesResp("friend", listOf(Personality("friend", "Friendly buddy", "Sound warm", builtin = true), Personality("p1", "Calm", "Slow", generated = true))))
     assertEquals(listOf("", "friend", "p1"), rows.map { it.id })
     assertFalse(rows[0].inUse); assertTrue(rows[1].inUse)
-    assertEquals("Plain", rows[0].name); assertEquals(PLAIN_TEXT, rows[0].sub)
+    assertEquals("No personality", rows[0].name); assertEquals(PLAIN_TEXT, rows[0].sub)
     assertEquals("Calm · written by the AI", rows[2].name)
     assertEquals(listOf(false, false, true), rows.map { it.deletable })
   }

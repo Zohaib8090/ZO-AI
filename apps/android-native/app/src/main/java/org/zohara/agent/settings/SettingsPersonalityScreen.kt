@@ -36,7 +36,7 @@ data class PersonalityRow(val id: String, val name: String, val sub: String, val
 const val PLAIN_TEXT = "Zohara Agent's own manner: clear and to the point."
 
 fun personalityRows(r: PersonalitiesResp): List<PersonalityRow> =
-  listOf(PersonalityRow("", "Plain", PLAIN_TEXT, r.active.isEmpty(), false)) +
+  listOf(PersonalityRow("", "No personality", PLAIN_TEXT, r.active.isEmpty(), false)) +
     r.items.map { PersonalityRow(it.id, it.name + if (it.generated) " · written by the AI" else "", it.prompt, r.active == it.id, !it.builtin) }
 
 /** Personality. Parity rows: SET-PRS-01..06. */

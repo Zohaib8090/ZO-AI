@@ -27,6 +27,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
@@ -129,6 +132,7 @@ fun QuestionCard(
     val digit = QuestionLogic.digitOf(e.key)
     when {
       e.key == Key.Escape -> { if (!item.sending) onSkip(); true }
+      QuestionLogic.isDecideKey(e.key) && e.isCtrlPressed.not() && e.isMetaPressed.not() && e.isAltPressed.not() -> { draft = draft.toggleDecide(p); true }
       digit != null && digit - 1 < spec.options.size -> { draft = draft.toggle(p, spec.options[digit - 1].label); true }
       e.key == Key.Enter || e.key == Key.NumPadEnter -> {
         if (!draft.last) { if (draft.currentAnswered) draft = draft.next() }
@@ -154,6 +158,8 @@ fun QuestionCard(
       draft.other[p], { draft = draft.setOther(p, it) }, Modifier.padding(top = 6.dp, bottom = 4.dp),
       placeholder = "Type your own answer", singleLine = false, minLines = 1,
     )
+    // "You decide": Zohara Agent picks the best option itself and says which and why (key D)
+    ChoiceRow("You decide", "Zohara Agent picks the best option and tells you which and why.", draft.decide[p], spec.multiSelect) { draft = draft.toggleDecide(p) }
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
       SecondaryButton("Skip", onSkip, Modifier.heightIn(min = 48.dp), enabled = !item.sending)
       Spacer(Modifier.weight(1f))

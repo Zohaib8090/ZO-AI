@@ -73,6 +73,28 @@ class QuestionLogicTest {
     assertNull(QuestionLogic.validate(listOf(multi), listOf(QuestionAnswer(listOf("Apple", "Pear")))))
   }
 
+  @Test fun youDecideStandsAloneAndIsAnAnswer() {
+    var d = QuestionDraft(listOf(single, multi))
+    assertFalse(d.answered(0))
+    d = d.toggle(0, "Red").setOther(0, "teal").toggleDecide(0)
+    assertTrue(d.decide[0] && d.selected[0].isEmpty() && !d.otherOn[0] && d.other[0].isEmpty())
+    assertTrue(d.answered(0))
+    assertEquals(QuestionAnswer(emptyList(), null, decide = true), d.answers()[0])
+    // choosing anything clears it, also in a multi-select
+    assertFalse(d.toggle(0, "Blue").decide[0])
+    assertFalse(d.toggleOther(0).decide[0])
+    assertFalse(d.setOther(0, "x").decide[0])
+    val m = d.toggleDecide(1)
+    assertTrue(m.decide[1])
+    assertFalse(m.toggle(1, "Apple").decide[1])
+    assertFalse("a second tap turns it off", d.toggleDecide(0).decide[0])
+    // validate and the summary
+    assertNull(QuestionLogic.validate(listOf(single), listOf(QuestionAnswer(emptyList(), null, decide = true))))
+    assertNotNull(QuestionLogic.validate(listOf(single), listOf(QuestionAnswer(listOf("Red"), null, decide = true))))
+    assertEquals("you left it to Zohara Agent; Apple", QuestionLogic.summary(listOf(QuestionAnswer(emptyList(), null, true), QuestionAnswer(listOf("Apple")))))
+    assertTrue(QuestionLogic.isDecideKey(androidx.compose.ui.input.key.Key.D))
+  }
+
   @Test fun summaryTextsFollowTheContract() {
     assertEquals("Red", QuestionLogic.summary(listOf(QuestionAnswer(listOf("Red")))))
     assertEquals("Red, Blue - Other: teal", QuestionLogic.summary(listOf(QuestionAnswer(listOf("Red", "Blue"), "teal"))))
