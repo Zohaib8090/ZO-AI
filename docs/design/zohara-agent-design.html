@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Zohara Chat — OS AI Module</title>
+<title>Zohara Agent — OS AI Module</title>
 <style>
   :root {
     --bg: #0B0E14;
@@ -1122,7 +1122,7 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
 
-      <span class="brand">Zohara Chat</span>
+      <span class="brand">Zohara Agent</span>
 
       <span class="status">
         <span class="dot"></span>
@@ -1332,7 +1332,7 @@
         </div>
         <div class="empty">
           <h3 id="placeEmptyTitle">Nothing here yet</h3>
-          <p id="placeEmptyText">This area fills up as Zohara Chat produces things for you.</p>
+          <p id="placeEmptyText">This area fills up as Zohara Agent produces things for you.</p>
         </div>
       </div>
     </section>
@@ -1370,7 +1370,7 @@
 
         <div class="pv-hint">
           <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>
-          <span id="pvHintText">Zohara Chat remembers the same knowledge every time you talk to it in this project.</span>
+          <span id="pvHintText">Zohara Agent remembers the same knowledge every time you talk to it in this project.</span>
         </div>
       </div>
 
@@ -1610,7 +1610,7 @@
       placeEmptyText.textContent =
         title === 'Scheduled'
           ? 'Scheduled runs show up here once you create one.'
-          : 'This area fills up as Zohara Chat produces things for you.';
+          : 'This area fills up as Zohara Agent produces things for you.';
     }
   }
 
@@ -1691,7 +1691,7 @@
       grid.innerHTML =
         '<div class="empty">' +
           '<h3>No projects yet</h3>' +
-          '<p>Projects keep one long-running thing together — its files, notes and context — so Zohara Chat keeps working inside it.</p>' +
+          '<p>Projects keep one long-running thing together — its files, notes and context — so Zohara Agent keeps working inside it.</p>' +
           '<button class="pbtn primary" id="emptyNewProject">New project</button>' +
         '</div>';
       const b = document.getElementById('emptyNewProject');
@@ -1872,7 +1872,7 @@
     pvTitle.textContent = p.name;
     pvPrompt.placeholder = 'New session in ' + p.name;
     pvHintText.textContent = p.goal ||
-      'Zohara Chat remembers the same knowledge every time you talk to it in this project.';
+      'Zohara Agent remembers the same knowledge every time you talk to it in this project.';
     refreshRail();
     showOnly('project');
   }
@@ -1928,10 +1928,10 @@
       const field = document.createElement('div');
       field.className = 'field';
       field.innerHTML =
-        '<label for="sheetText">How should Zohara Chat work in this project?</label>' +
+        '<label for="sheetText">How should Zohara Agent work in this project?</label>' +
         '<textarea class="input" id="sheetText" placeholder="Tone, boundaries, format, things to always or never do..."></textarea>' +
         '<p style="margin-top:8px;font-size:11px;color:var(--dim);line-height:1.5">' +
-        'Sits one layer above the system prompt, for this project only. It does not change Zohara Chat outside the project.</p>';
+        'Sits one layer above the system prompt, for this project only. It does not change Zohara Agent outside the project.</p>';
       sheetBody.appendChild(field);
       document.getElementById('sheetText').value = current.instructions;
 
@@ -1949,7 +1949,7 @@
 
       const hint = document.createElement('p');
       hint.style.cssText = 'margin-top:8px;font-size:11px;color:var(--dim);line-height:1.5';
-      hint.textContent = 'Documents, zips, code, images. Everything in context is available to Zohara Chat in every session of this project.';
+      hint.textContent = 'Documents, zips, code, images. Everything in context is available to Zohara Agent in every session of this project.';
       sheetBody.appendChild(hint);
 
       const fileInput = document.createElement('input');
@@ -1980,7 +1980,7 @@
       field.className = 'field';
       field.style.marginTop = '14px';
       field.innerHTML =
-        '<label for="sheetScheduleText">What should Zohara Chat do?</label>' +
+        '<label for="sheetScheduleText">What should Zohara Agent do?</label>' +
         '<input class="input" id="sheetScheduleText" type="text" placeholder="e.g. summarise new commits and post them here">' +
         '<div class="row-2" style="margin-top:10px">' +
           '<div><label for="sheetScheduleWhen" style="font-size:11px;color:var(--dim)">When</label>' +
@@ -1993,7 +1993,7 @@
           '</select></div>' +
         '</div>' +
         '<p style="margin-top:10px;font-size:11px;color:var(--dim);line-height:1.5">' +
-        'You can also just ask Zohara Chat in this project — “schedule this every Monday” — and it lands here.</p>';
+        'You can also just ask Zohara Agent in this project — “schedule this every Monday” — and it lands here.</p>';
       sheetBody.appendChild(field);
 
       const when = document.getElementById('sheetScheduleWhen');
@@ -2007,13 +2007,13 @@
       const note = document.createElement('p');
       note.style.cssText = 'font-size:11px;color:var(--dim);line-height:1.5;margin-bottom:10px';
       note.textContent =
-        'Project memory is loaded into this project’s working tree on every session, so Zohara Chat already knows it before you type a word.';
+        'Project memory is loaded into this project’s working tree on every session, so Zohara Agent already knows it before you type a word.';
       sheetBody.appendChild(note);
 
       const list = document.createElement('div');
       list.className = 'sheet-list';
       if (!current.memory.length) {
-        list.appendChild(emptyRow('No project memory yet. Zohara Chat writes here as it learns what matters in this project.'));
+        list.appendChild(emptyRow('No project memory yet. Zohara Agent writes here as it learns what matters in this project.'));
       } else {
         current.memory.forEach(m => {
           const item = document.createElement('div');

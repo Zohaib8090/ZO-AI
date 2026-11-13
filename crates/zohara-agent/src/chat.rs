@@ -251,7 +251,7 @@ impl Ctl {
             .iter()
             .filter_map(|e| match e.kind.as_str() {
                 "msg-user" => Some(format!("You: {}", e.display_text())),
-                "msg-ai" => Some(format!("Zohara Chat: {}", e.text)),
+                "msg-ai" => Some(format!("Zohara Agent: {}", e.text)),
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -1244,7 +1244,7 @@ fn fill_context(ui: &Rc<Ui>, body: &gtk::Box, pop: &Rc<dyn Fn()>, mcp: Option<(u
         return;
     };
     if p.protocol == Protocol::ClaudeCode {
-        body.append(&lbl("In Claude Code mode, Claude Code keeps this conversation and compacts it by itself, so Zohara Chat has nothing to show here.", "pop-sub"));
+        body.append(&lbl("In Claude Code mode, Claude Code keeps this conversation and compacts it by itself, so Zohara Agent has nothing to show here.", "pop-sub"));
         return;
     }
     let window = context::window_for(p, &sel.model);
@@ -1466,7 +1466,7 @@ pub fn show_perm_popover(ui: &Rc<Ui>, btn: &gtk::Button) {
     let body = vbox(0);
     body.append(&lbl("Permission mode", "pop-head"));
     let modes = [
-        ("Manual", "Zohara Chat asks before every change and every command."),
+        ("Manual", "Zohara Agent asks before every change and every command."),
         ("Auto", "Looking around runs on its own; changes and other commands ask first."),
         ("Bypass", "Nothing asks. Use with care."),
     ];

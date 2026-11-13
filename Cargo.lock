@@ -2071,7 +2071,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zohara-chat"
+name = "zohara-agent"
 version = "0.1.0"
 dependencies = [
  "glib",

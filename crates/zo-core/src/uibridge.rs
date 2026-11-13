@@ -1,4 +1,4 @@
-//! A way for tools that run on the agent's thread to ask the Zohara Chat window (its own thread) to do something, such as
+//! A way for tools that run on the agent's thread to ask the Zohara Agent window (its own thread) to do something, such as
 //! driving the built-in browser, and wait for the answer.
 
 use serde_json::Value;
@@ -15,11 +15,11 @@ pub fn register(h: impl Fn(&str, &Value) -> Result<String, String> + Send + Sync
 
 pub fn call(name: &str, args: &Value) -> Result<String, String> {
     if crate::tenant::is_restricted() {
-        return Err("This needs the Zohara Chat window.".into());
+        return Err("This needs the Zohara Agent window.".into());
     }
     match HANDLER.get() {
         Some(h) => h(name, args),
-        None => Err("This needs the Zohara Chat window.".into()),
+        None => Err("This needs the Zohara Agent window.".into()),
     }
 }
 

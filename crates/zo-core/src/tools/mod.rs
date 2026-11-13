@@ -1,4 +1,4 @@
-//! The tools: what Zohara Chat (or any MCP client) can do to the machine. Names keep the old `zohara_*` form.
+//! The tools: what Zohara Agent (or any MCP client) can do to the machine. Names keep the old `zohara_*` form.
 
 use crate::policy::Risk;
 use serde_json::{json, Value};
@@ -35,12 +35,12 @@ impl ToolDef {
 
 const P_PATH: (&str, &str, &str, bool) = ("path", "string", "File or folder path (~ is your home)", true);
 
-/// Tools that need the Zohara Chat window (terminals, the browser, sub-agents). Offered only inside the app.
+/// Tools that need the Zohara Agent window (terminals, the browser, sub-agents). Offered only inside the app.
 pub fn app_definitions() -> &'static [ToolDef] {
     use Risk::*;
     const ID: (&str, &str, &str, bool) = ("id", "integer", "The terminal id (zohara_term_list)", true);
     &[
-        ToolDef { name: "zohara_term_open", description: "Open a new terminal in the Zohara Chat window (a real shell the person can see and type in). Use several terminals for several jobs, for example a server in one and tests in another.", risk: Change,
+        ToolDef { name: "zohara_term_open", description: "Open a new terminal in the Zohara Agent window (a real shell the person can see and type in). Use several terminals for several jobs, for example a server in one and tests in another.", risk: Change,
             params: &[("name", "string", "A short name for the tab", false), ("cwd", "string", "Folder to start in", false)] },
         ToolDef { name: "zohara_term_run", description: "Type a command into a terminal, wait until its output settles, and return what the terminal shows. Without an id it uses your last terminal, or opens one. Long-running things (servers, watchers) keep running in the terminal: read them later with zohara_term_read.", risk: Shell,
             params: &[("cmd", "string", "The command", true), ("id", "integer", "Terminal id", false), ("timeout", "integer", "Seconds to wait for output, default 30", false)] },
@@ -48,9 +48,9 @@ pub fn app_definitions() -> &'static [ToolDef] {
             params: &[ID, ("text", "string", "Text to type (no Enter added)", false), ("key", "string", "A key: Enter, Tab, Escape, Up, Down, Left, Right, Backspace, Ctrl+C, Ctrl+D …", false)] },
         ToolDef { name: "zohara_term_read", description: "Read the latest output of a terminal, including what the person typed there.", risk: Read,
             params: &[ID, ("lines", "integer", "How many lines, default 60", false)] },
-        ToolDef { name: "zohara_term_list", description: "List the terminals that are open in the Zohara Chat window.", risk: Read, params: &[] },
+        ToolDef { name: "zohara_term_list", description: "List the terminals that are open in the Zohara Agent window.", risk: Read, params: &[] },
         ToolDef { name: "zohara_term_close", description: "Close a terminal (stops what runs in it).", risk: Change, params: &[ID] },
-        ToolDef { name: "zohara_browser_open", description: "Open a web page in the browser built into the Zohara Chat window (a full browser the person can see and use too) and wait for it to load. Pass a full address, or words to search the web.", risk: Read,
+        ToolDef { name: "zohara_browser_open", description: "Open a web page in the browser built into the Zohara Agent window (a full browser the person can see and use too) and wait for it to load. Pass a full address, or words to search the web.", risk: Read,
             params: &[("url", "string", "Address (https://…) or search words", true)] },
         ToolDef { name: "zohara_browser_read", description: "Read the page now open in the built-in browser: its address, title, the visible text and the links and buttons you can use (each with a number for zohara_browser_click).", risk: Read, params: &[] },
         ToolDef { name: "zohara_browser_click", description: "Click something on the page: a link or button by its number from zohara_browser_read, or by a CSS selector, or by the text it shows.", risk: Change,
@@ -64,7 +64,7 @@ pub fn app_definitions() -> &'static [ToolDef] {
         ToolDef { name: "zohara_browser_screenshot", description: "Take a picture of the page in the built-in browser; returns the PNG path (shown to you when the model can see pictures).", risk: Read, params: &[] },
         ToolDef { name: "zohara_browser_js", description: "Run JavaScript on the page and return its result. For things the other browser tools cannot do.", risk: Change,
             params: &[("script", "string", "JavaScript; the value of the last expression is returned", true)] },
-        ToolDef { name: "zohara_ai_subagent", description: "Hand a self-contained job to a sub-agent: a second Zohara Chat with the same tools that works on it alone and returns its final report. Use it for a side investigation or a long chore so this conversation stays short; call it several times for separate jobs. A sub-agent cannot start sub-agents. Give it everything it needs: it does not see this conversation.", risk: Read,
+        ToolDef { name: "zohara_ai_subagent", description: "Hand a self-contained job to a sub-agent: a second Zohara Agent with the same tools that works on it alone and returns its final report. Use it for a side investigation or a long chore so this conversation stays short; call it several times for separate jobs. A sub-agent cannot start sub-agents. Give it everything it needs: it does not see this conversation.", risk: Read,
             params: &[("task", "string", "The full job, written as instructions, with all the details it needs", true), ("name", "string", "A short name for the job", false)] },
     ]
 }
@@ -195,21 +195,21 @@ pub fn definitions() -> &'static [ToolDef] {
         ToolDef { name: "zohara_waydroid_app_list", description: "Android apps installed in Waydroid.", risk: Change, params: &[] },
         ToolDef { name: "zohara_waydroid_app_install", description: "Install an APK into Waydroid.", risk: Change, params: &[("apk", "string", "Path to the APK", true)] },
         ToolDef { name: "zohara_waydroid_app_launch", description: "Start an Android app in Waydroid.", risk: Change, params: &[("package", "string", "Package name", true)] },
-        ToolDef { name: "zohara_ai_schedule", description: "Schedule a task for Zohara Chat to do later, once or on a repeat. It appears on the Scheduled page.", risk: Change,
-            params: &[("task", "string", "What Zohara Chat should do when the time comes, written as an instruction", true), ("when", "string", "When, in plain words: \"tomorrow 9am\", \"in 2 hours\", \"2026-11-05 18:30\"", true), ("repeat", "string", "once, hourly, daily, weekly or monthly (default once), or your own interval such as \"every 3 days\", \"every 90 minutes\" or \"every 2 months\" (at most every 5 minutes)", false), ("title", "string", "A short name for the list", false)] },
+        ToolDef { name: "zohara_ai_schedule", description: "Schedule a task for Zohara Agent to do later, once or on a repeat. It appears on the Scheduled page.", risk: Change,
+            params: &[("task", "string", "What Zohara Agent should do when the time comes, written as an instruction", true), ("when", "string", "When, in plain words: \"tomorrow 9am\", \"in 2 hours\", \"2026-11-05 18:30\"", true), ("repeat", "string", "once, hourly, daily, weekly or monthly (default once), or your own interval such as \"every 3 days\", \"every 90 minutes\" or \"every 2 months\" (at most every 5 minutes)", false), ("title", "string", "A short name for the list", false)] },
         ToolDef { name: "zohara_ai_list_scheduled", description: "List the scheduled tasks and when they run next.", risk: Read, params: &[] },
         ToolDef { name: "zohara_ai_cancel_scheduled", description: "Remove a scheduled task.", risk: Change, params: &[("id", "string", "The task id from the list", true)] },
         ToolDef { name: "zohara_ai_projects", description: "List the projects (name, goal, memory notes).", risk: Read, params: &[] },
         ToolDef { name: "zohara_ai_create_project", description: "Create a project. It appears on the Projects page.", risk: Change,
             params: &[("name", "string", "The project name", true), ("goal", "string", "What the project is for", false)] },
-        ToolDef { name: "zohara_ai_add_memory", description: "Add a note to a project's memory, so Zohara Chat remembers it in that project.", risk: Change,
+        ToolDef { name: "zohara_ai_add_memory", description: "Add a note to a project's memory, so Zohara Agent remembers it in that project.", risk: Change,
             params: &[("project", "string", "Project name or id", true), ("text", "string", "The note", true)] },
-        ToolDef { name: "zohara_ai_add_mcp_server", description: "Add an MCP server to Zohara Chat itself, so its tools become your own tools from the next message on. Use this when the person gives you an MCP server (an https address, or a program that runs one). It is tried once before it is saved; if it asks for a sign-in, the person's browser opens and they sign in.", risk: Change,
+        ToolDef { name: "zohara_ai_add_mcp_server", description: "Add an MCP server to Zohara Agent itself, so its tools become your own tools from the next message on. Use this when the person gives you an MCP server (an https address, or a program that runs one). It is tried once before it is saved; if it asks for a sign-in, the person's browser opens and they sign in.", risk: Change,
             params: &[("name", "string", "A short name, e.g. spotify", true), ("address", "string", "The https address of a remote server, or the command that starts a local one (e.g. `python3 /home/me/server/app.py`)", true), ("token", "string", "An access token, only if the server gave one", false)] },
-        ToolDef { name: "zohara_ai_add_mcp_config", description: "Add MCP servers to Zohara Chat itself from a JSON configuration, the kind a server's README gives (a \"mcpServers\" object with a command and args, or a url and headers; Claude Desktop's format works as is). Every server in it is tried, signed in to if it asks, and added if it works.", risk: Change,
+        ToolDef { name: "zohara_ai_add_mcp_config", description: "Add MCP servers to Zohara Agent itself from a JSON configuration, the kind a server's README gives (a \"mcpServers\" object with a command and args, or a url and headers; Claude Desktop's format works as is). Every server in it is tried, signed in to if it asks, and added if it works.", risk: Change,
             params: &[("config", "string", "The JSON text", true)] },
-        ToolDef { name: "zohara_ai_mcp_status", description: "Connect to each MCP server that is added to Zohara Chat and say whether it works: how many tools it has (and the first few names), or what is wrong (a sign-in is needed, it is not reachable). Use it when a server's tools are missing.", risk: Read, params: &[] },
-        ToolDef { name: "zohara_ai_list_mcp_servers", description: "List the MCP servers that are added to Zohara Chat.", risk: Read, params: &[] },
+        ToolDef { name: "zohara_ai_mcp_status", description: "Connect to each MCP server that is added to Zohara Agent and say whether it works: how many tools it has (and the first few names), or what is wrong (a sign-in is needed, it is not reachable). Use it when a server's tools are missing.", risk: Read, params: &[] },
+        ToolDef { name: "zohara_ai_list_mcp_servers", description: "List the MCP servers that are added to Zohara Agent.", risk: Read, params: &[] },
         ToolDef { name: "zohara_ai_search_chats", description: "Search the saved chats.", risk: Read, params: &[("query", "string", "Words to look for", true)] },
         ToolDef { name: "zohara_web_search", description: "Search the web (like a Google search) and get the top results: title, address and a short snippet. Use it for anything that may have changed or that you are not sure of (news, versions, prices, documentation, \"what is ...\"). Then read the best result with zohara_web_fetch.", risk: Read,
             params: &[("query", "string", "The search words", true)] },
@@ -258,12 +258,13 @@ pub(crate) fn expand(p: &str) -> std::path::PathBuf {
 /// (it holds the server's secrets). Symbolic links are followed before the check.
 pub(crate) fn guard_read(p: &std::path::Path) -> Result<(), String> {
     let canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let mut blocked = vec![crate::audit::config_dir(), crate::audit::old_config_dir()];
+    let mut blocked = vec![crate::audit::config_dir()];
+    blocked.extend(crate::audit::old_config_dirs());
     // on a multi-tenant server nobody's files are open to the tools of somebody else
     if let Some(root) = std::env::var_os("ZO_TENANT_ROOT").filter(|r| !r.is_empty()) {
         blocked.push(root.into());
     }
-    if let Some(k) = crate::legacy::env_os("ZOHARA_CHAT_KEYS_FILE", "ZO_AI_KEYS_FILE") {
+    if let Some(k) = crate::legacy::env_os("KEYS_FILE") {
         blocked.push(k.into());
     }
     if let Some(h) = std::env::var_os("HOME") {

@@ -167,7 +167,7 @@ mod tests {
         let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let d = temp("guard");
         std::env::set_var("XDG_CONFIG_HOME", &d);
-        let keys = d.join("zohara-chat/keys.json");
+        let keys = d.join("zohara-agent/keys.json");
         fs::create_dir_all(keys.parent().unwrap()).unwrap();
         fs::write(&keys, "{}").unwrap();
         assert!(read(keys.to_str().unwrap()).is_err());

@@ -43,7 +43,7 @@ fn away() -> bool {
     !win.is_some_and(|w| w.is_active() && w.is_visible())
 }
 
-/// "Zohara Chat needs you": a desktop notification (org.freedesktop.Notifications, through GIO), only when the window is not in front.
+/// "Zohara Agent needs you": a desktop notification (org.freedesktop.Notifications, through GIO), only when the window is not in front.
 /// An approval has Allow and Deny buttons (`approval`: the id of the dialog); clicking the body brings the window forward, where the
 /// card or the dialog waits. Main thread only.
 pub fn needs_you(tag: &str, body: &str, approval: Option<u32>) {
@@ -51,7 +51,7 @@ pub fn needs_you(tag: &str, body: &str, approval: Option<u32>) {
         return;
     }
     let Some(app) = gtk::gio::Application::default() else { return };
-    let n = gtk::gio::Notification::new("Zohara Chat needs you");
+    let n = gtk::gio::Notification::new("Zohara Agent needs you");
     n.set_body(Some(body));
     n.set_priority(gtk::gio::NotificationPriority::High);
     n.set_default_action("app.zo-show");
@@ -101,7 +101,7 @@ pub fn start() -> bool {
         rx.recv_timeout(Duration::from_secs(120)).unwrap_or(false)
     });
     if let Err(e) = &result {
-        eprintln!("zohara-chat: cannot listen for approvals: {e}");
+        eprintln!("zohara-agent: cannot listen for approvals: {e}");
     }
     result.is_ok()
 }
@@ -122,7 +122,7 @@ impl zo_core::link::Host for LinkHost {
 
 fn show(tool: &str, summary: &str, tx: mpsc::Sender<bool>) {
     let _ = tool;
-    show_with("Allow Zohara Chat to do this?", summary, "Don't allow", "Allow once", tx);
+    show_with("Allow Zohara Agent to do this?", summary, "Don't allow", "Allow once", tx);
 }
 
 fn show_with(title: &str, summary: &str, deny: &str, allow: &str, tx: mpsc::Sender<bool>) {

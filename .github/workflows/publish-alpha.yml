@@ -1,12 +1,12 @@
 name: Publish to alpha
 
-# Every finished Zohara Chat build on main goes to the ALPHA channel by itself. The channel is fixed to alpha, so this
+# Every finished Zohara Agent build on main goes to the ALPHA channel by itself. The channel is fixed to alpha, so this
 # workflow cannot publish anywhere else; beta and stable are chosen on purpose on the release admin site.
 # It asks zohara-packages/publish.yml to publish the build (that only accepts a run that has completed).
 
 on:
   workflow_run:
-    workflows: [Build & Publish Zohara Chat]
+    workflows: [Build & Publish Zohara Agent]
     types: [completed]
 
 permissions:
@@ -30,4 +30,4 @@ jobs:
           jq -n --arg run "$RUN_ID" '{event_type: "package-published",
             client_payload: {run_id: $run, source_repo: "Zohaib8090/ZO-AI", channel: "alpha"}}' \
             | gh api repos/Zohaib8090/zohara-packages/dispatches --method POST --input -
-          echo "::notice::Zohara Chat build #$RUN_ID sent to the alpha channel"
+          echo "::notice::Zohara Agent build #$RUN_ID sent to the alpha channel"

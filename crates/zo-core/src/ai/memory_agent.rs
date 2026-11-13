@@ -51,7 +51,7 @@ pub fn any_running() -> bool {
 /// A chat that was left alone this long is read even if it has fewer new messages than the memory agent waits for.
 const IDLE_MS: u64 = 10 * 60 * 1000;
 
-const SYSTEM: &str = "You are the memory of an AI assistant called Zohara Chat. You read a conversation between Zohara Chat and the person it works for, and keep a short list of what is worth remembering about that person for later conversations. \
+const SYSTEM: &str = "You are the memory of an AI assistant called Zohara Agent. You read a conversation between Zohara Agent and the person it works for, and keep a short list of what is worth remembering about that person for later conversations. \
 You only write down what the person said or clearly showed. You never guess, and you never write down secrets (passwords, keys, tokens, card or ID numbers), and you do not even mention that a secret was shared. You answer with one JSON object and nothing else.";
 
 fn user_count(entries: &[Entry]) -> usize {
@@ -82,7 +82,7 @@ fn transcript(entries: &[Entry], read: usize) -> String {
     for e in &entries[start..] {
         let who = match e.kind.as_str() {
             "msg-user" => "PERSON",
-            "msg-ai" => "Zohara Chat",
+            "msg-ai" => "Zohara Agent",
             _ => continue,
         };
         out.push_str(&format!("{who}: {}\n", cut(&e.text, 1200)));
@@ -295,7 +295,7 @@ mod tests {
     fn reads_only_what_is_new() {
         let es = vec![e("msg-user", "one"), e("msg-ai", "a1"), e("msg-user", "two"), e("msg-ai", "a2"), e("msg-user", "three"), e("msg-tool", "x"), e("msg-ai", "a3")];
         let all = transcript(&es, 0);
-        assert!(all.contains("PERSON: one") && all.contains("Zohara Chat: a3") && !all.contains("x\n"));
+        assert!(all.contains("PERSON: one") && all.contains("Zohara Agent: a3") && !all.contains("x\n"));
         // two messages were read: start with a little context, at the second one
         let later = transcript(&es, 2);
         assert!(!later.contains("PERSON: one") && later.contains("PERSON: two") && later.contains("PERSON: three"), "{later}");

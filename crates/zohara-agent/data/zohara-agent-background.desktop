@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Zohara Agent (background)
+Comment=Keeps Zohara Agent ready so the shortcut opens instantly and approvals can be asked
+Exec=zohara-agent --background
+Icon=zohara-agent
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

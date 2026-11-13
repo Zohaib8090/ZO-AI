@@ -1,18 +1,22 @@
 [package]
-name = "zohara-chat"
+name = "zohara-agent"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Zohara Chat — the OS-level AI module for Zohara OS"
+description = "Zohara Agent — the OS-level AI module for Zohara OS"
 
 [[bin]]
-name = "zohara-chat"
+name = "zohara-agent"
 path = "src/main.rs"
 
-# the old command name: a hint, then it starts zohara-chat
+# the old command names: a hint, then they start zohara-agent
 [[bin]]
 name = "zo-ai"
 path = "src/bin/zo-ai.rs"
+
+[[bin]]
+name = "zohara-chat"
+path = "src/bin/zohara-chat.rs"
 
 [dependencies]
 zo-core = { path = "../zo-core" }

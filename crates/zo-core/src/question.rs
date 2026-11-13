@@ -1,7 +1,7 @@
 //! The question tool (`zohara_ask_user`), the pure parts: checking what the model asks, checking what the person answers,
 //! the text the model gets back, and the table of questions that are open right now. The contract is docs/INTERACTION.md.
 //!
-//! Nothing here talks to a client: `service.rs` (phone, web link, cloud), `zohara-chat` (the desktop window) and the tests each bring
+//! Nothing here talks to a client: `service.rs` (phone, web link, cloud), `zohara-agent` (the desktop window) and the tests each bring
 //! their own `Questioner`; they all use these functions, so the rules are the same everywhere.
 
 use crate::approval::{Question, QuestionAnswer, QuestionOption, QuestionResult};

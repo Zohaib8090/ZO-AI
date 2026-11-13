@@ -86,7 +86,7 @@ struct TempKey(PathBuf);
 impl TempKey {
     fn new(key: &str) -> Result<TempKey, String> {
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("zohara-chat");
+        let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("zohara-agent");
         std::fs::create_dir_all(&dir).map_err(|e| format!("no place for the key file: {e}"))?;
         let _ = std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700));
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
@@ -325,12 +325,12 @@ mod tests {
 
     #[test]
     fn argv_is_exact_and_safe() {
-        let v = argv(&machine(), Path::new("/run/zohara-chat/key1"), Path::new("/home/z/.config/zohara-chat/known_hosts"), "uptime").unwrap();
+        let v = argv(&machine(), Path::new("/run/zohara-agent/key1"), Path::new("/home/z/.config/zohara-agent/known_hosts"), "uptime").unwrap();
         let s = v.join(" ");
         assert_eq!(
             s,
             "-F /dev/null -T -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -o IdentityAgent=none \
-             -o LogLevel=ERROR -o UserKnownHostsFile=/home/z/.config/zohara-chat/known_hosts -i /run/zohara-chat/key1 -p 2200 -- ubuntu@10.0.0.5 uptime"
+             -o LogLevel=ERROR -o UserKnownHostsFile=/home/z/.config/zohara-agent/known_hosts -i /run/zohara-agent/key1 -p 2200 -- ubuntu@10.0.0.5 uptime"
         );
         // the destination comes right after `--`, then the remote command and nothing else
         let dd = v.iter().position(|x| x == "--").unwrap();

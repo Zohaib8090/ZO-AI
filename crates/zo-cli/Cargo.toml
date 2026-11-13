@@ -3,7 +3,7 @@ name = "zo-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "zo: Zohara Chat in the terminal"
+description = "zo: Zohara Agent in the terminal"
 
 [[bin]]
 name = "zo"

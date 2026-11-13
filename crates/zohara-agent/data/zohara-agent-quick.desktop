@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Zohara Agent Quick Ask
+Comment=Open the Zohara Agent popup (Ctrl+Super+C)
+Exec=zohara-agent --quick
+Icon=zohara-agent
+Terminal=false
+NoDisplay=true
+Categories=Utility;

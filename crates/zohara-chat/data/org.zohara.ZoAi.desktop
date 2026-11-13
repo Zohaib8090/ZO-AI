@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Zohara Chat
-Comment=Old launcher name of Zohara Chat (kept so panel pins made before the rename still start it)
-Exec=zohara-chat
-Icon=zohara-chat
-Terminal=false
-NoDisplay=true
-StartupWMClass=org.zohara.Chat

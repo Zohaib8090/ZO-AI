@@ -51,14 +51,14 @@ fn drain(mut r: impl Read + Send + 'static) -> thread::JoinHandle<String> {
 const SERVER_ENV: &[&str] = &["FIREBASE_SERVICE_ACCOUNT", "ZO_SERVER_SECRET", "ZO_TENANT_ROOT"];
 
 /// Takes every secret out of what a child program inherits: the server's variables, the Claude Code login token
-/// and the provider keys (`ZOHARA_CHAT_KEY_*`).
+/// and the provider keys (`ZOHARA_AGENT_KEY_*`).
 pub fn scrub(cmd: &mut Command) -> &mut Command {
     scrub_server(cmd);
     cmd.env_remove("CLAUDE_CODE_OAUTH_TOKEN");
     for (k, _) in std::env::vars_os() {
-        // both the new prefix and the one used before the rename
+        // the current prefix and the ones used before the renames
         let name = k.to_string_lossy();
-        if name.starts_with("ZOHARA_CHAT_KEY_") || name.starts_with("ZOAI_KEY_") {
+        if name.starts_with("ZOAI_KEY_") || crate::legacy::ENV_PREFIXES.iter().any(|p| name.strip_prefix(p).is_some_and(|r| r.starts_with("KEY_"))) {
             cmd.env_remove(k);
         }
     }
@@ -137,20 +137,23 @@ pub fn simple(program: &str, args: &[&str]) -> Result<String, String> {
 mod tests {
     use super::*;
 
-    /// Provider keys under the new prefix and under the one used before the rename never reach a program the AI starts.
+    /// Provider keys under the current prefix and under every prefix used before the renames never reach a program the AI starts.
     #[test]
-    fn scrub_removes_keys_of_both_prefixes() {
+    fn scrub_removes_keys_of_all_prefixes() {
         let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("ZOHARA_CHAT_KEY_SCRUBTEST", "secret-new");
-        std::env::set_var("ZOAI_KEY_SCRUBTEST", "secret-old");
+        let names = ["ZOHARA_AGENT_KEY_SCRUBTEST", "ZOHARA_CHAT_KEY_SCRUBTEST", "ZOHARA_AI_KEY_SCRUBTEST", "ZO_AI_KEY_SCRUBTEST", "ZOAI_KEY_SCRUBTEST"];
+        for (i, n) in names.iter().enumerate() {
+            std::env::set_var(n, format!("secret-number-{i}"));
+        }
         let mut c = Command::new("sh");
         c.args(["-c", "env"]);
         scrub(&mut c);
         let out = c.output().unwrap();
         let text = String::from_utf8_lossy(&out.stdout);
-        std::env::remove_var("ZOHARA_CHAT_KEY_SCRUBTEST");
-        std::env::remove_var("ZOAI_KEY_SCRUBTEST");
-        assert!(!text.contains("secret-new") && !text.contains("secret-old"), "{text}");
+        for n in names {
+            std::env::remove_var(n);
+        }
+        assert!(!text.contains("secret-number-"), "{text}");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 <svg viewBox="0 0 340 340" xmlns="http://www.w3.org/2000/svg">
-  <!-- Zohara Chat app icon: the mark on the dark Zohara tile -->
+  <!-- Zohara Agent app icon: the mark on the dark Zohara tile -->
   <rect width="340" height="340" rx="64" fill="#0B0E14"/>
   <g transform="translate(40,40) scale(2.0)">
     <defs><mask id="gap"><rect width="120" height="120" fill="#fff"/><circle cx="94" cy="26" r="16" fill="#000"/></mask></defs>

@@ -1,14 +1,15 @@
 # Maintainer: Zohaib Baig <zohaibbaig144@gmail.com>
-# PKGBUILD for zohara-chat. CI (.github/workflows/build.yml) compiles first, copies this file to the repository root and
+# PKGBUILD for zohara-agent. CI (.github/workflows/build.yml) compiles first, copies this file to the repository root and
 # runs makepkg, which only packages the finished binaries. Version: _PKGVER from CI, else Cargo's.
-pkgname=zohara-chat
+pkgname=zohara-agent
 pkgver=${_PKGVER:-0.1.0}
 pkgrel=1
-# The package was called zohara-ai before the rename to Zohara Chat: replaces/conflicts/provides make pacman upgrade it in place.
-replaces=('zohara-ai')
-conflicts=('zohara-ai')
-provides=('zohara-ai')
-pkgdesc="Zohara Chat: the AI built into Zohara OS, with an MCP server that lets any MCP client control the system"
+# The package was called zohara-ai (ZO-AI) and then zohara-chat (Zohara Chat) before Zohara Agent: replaces/conflicts/provides for both
+# make pacman upgrade an install from either stage in place.
+replaces=('zohara-chat' 'zohara-ai')
+conflicts=('zohara-chat' 'zohara-ai')
+provides=('zohara-chat' 'zohara-ai')
+pkgdesc="Zohara Agent: the AI built into Zohara OS, with an MCP server that lets any MCP client control the system"
 arch=('x86_64')
 url="https://github.com/Zohaib8090/ZO-AI"
 license=('GPL-3.0-or-later')
@@ -21,15 +22,17 @@ optdepends=('android-tools: control Android devices over adb'
 
 package() {
   cd "$startdir"
-  local d=crates/zohara-chat/data
-  install -Dm755 target/release/zohara-chat  "$pkgdir/usr/bin/zohara-chat"
-  install -Dm755 target/release/zo-ai "$pkgdir/usr/bin/zo-ai"   # the old command name: prints a hint, starts zohara-chat
+  local d=crates/zohara-agent/data
+  install -Dm755 target/release/zohara-agent  "$pkgdir/usr/bin/zohara-agent"
+  install -Dm755 target/release/zohara-chat "$pkgdir/usr/bin/zohara-chat"   # the old command names: print a hint, start zohara-agent
+  install -Dm755 target/release/zo-ai "$pkgdir/usr/bin/zo-ai"
   install -Dm755 target/release/zo-mcp "$pkgdir/usr/bin/zo-mcp"
   install -Dm755 target/release/zo "$pkgdir/usr/bin/zo"
-  install -Dm644 $d/org.zohara.Chat.desktop    "$pkgdir/usr/share/applications/org.zohara.Chat.desktop"
-  install -Dm644 $d/org.zohara.ZoAi.desktop "$pkgdir/usr/share/applications/org.zohara.ZoAi.desktop"   # old launcher id, hidden: panel pins keep working
-  install -Dm644 $d/zohara-chat-quick.desktop      "$pkgdir/usr/share/applications/zohara-chat-quick.desktop"
-  install -Dm644 $d/zohara-chat-background.desktop "$pkgdir/etc/xdg/autostart/zohara-chat-background.desktop"
-  install -Dm644 $d/org.zohara.Chat.metainfo.xml "$pkgdir/usr/share/metainfo/org.zohara.Chat.metainfo.xml"
-  install -Dm644 $d/zohara-chat.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/zohara-chat.svg"
+  install -Dm644 $d/org.zohara.Agent.desktop    "$pkgdir/usr/share/applications/org.zohara.Agent.desktop"
+  install -Dm644 $d/org.zohara.Chat.desktop "$pkgdir/usr/share/applications/org.zohara.Chat.desktop"   # old launcher ids, hidden: panel pins keep working
+  install -Dm644 $d/org.zohara.ZoAi.desktop "$pkgdir/usr/share/applications/org.zohara.ZoAi.desktop"
+  install -Dm644 $d/zohara-agent-quick.desktop      "$pkgdir/usr/share/applications/zohara-agent-quick.desktop"
+  install -Dm644 $d/zohara-agent-background.desktop "$pkgdir/etc/xdg/autostart/zohara-agent-background.desktop"
+  install -Dm644 $d/org.zohara.Agent.metainfo.xml "$pkgdir/usr/share/metainfo/org.zohara.Agent.metainfo.xml"
+  install -Dm644 $d/zohara-agent.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/zohara-agent.svg"
 }

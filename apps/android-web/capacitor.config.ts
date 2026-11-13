@@ -8,7 +8,7 @@ const host = new URL(url).host;
 
 const config: CapacitorConfig = {
   appId: 'org.zohara.zoai',
-  appName: 'Zohara Chat',
+  appName: 'Zohara Agent',
   webDir: 'www',
   backgroundColor: '#191919',
   server: {

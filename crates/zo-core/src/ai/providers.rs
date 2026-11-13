@@ -1,4 +1,4 @@
-//! The providers Zohara Chat can talk to. Three wire protocols cover all of them; most are the OpenAI-compatible one.
+//! The providers Zohara Agent can talk to. Three wire protocols cover all of them; most are the OpenAI-compatible one.
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Protocol {

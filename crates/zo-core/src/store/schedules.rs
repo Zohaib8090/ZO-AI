@@ -1,4 +1,4 @@
-//! Scheduled tasks: things Zohara Chat should do later, once or on a repeat. Made on the Scheduled page or by asking in a chat.
+//! Scheduled tasks: things Zohara Agent should do later, once or on a repeat. Made on the Scheduled page or by asking in a chat.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -9,7 +9,7 @@ pub struct Task {
     pub id: String,
     /// A short name for lists.
     pub title: String,
-    /// What Zohara Chat is asked to do when it is time, written as an instruction.
+    /// What Zohara Agent is asked to do when it is time, written as an instruction.
     pub prompt: String,
     /// When it runs next, in milliseconds since 1970.
     pub next_run: u64,
@@ -176,7 +176,7 @@ pub fn format_when(ms: u64) -> String {
 
 pub fn add(title: &str, prompt: &str, next_run: u64, repeat: &str, project: Option<String>) -> Result<Task, String> {
     if prompt.trim().is_empty() {
-        return Err("Say what Zohara Chat should do.".into());
+        return Err("Say what Zohara Agent should do.".into());
     }
     let repeat = normalize_repeat(repeat)?;
     let repeat = repeat.as_str();

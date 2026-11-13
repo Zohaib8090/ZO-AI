@@ -3,21 +3,21 @@
 Chats, memory notes and custom personalities written on the desktop show up on the server (and so in the web app), and the other way
 round. Since 2026-11-12 (later the same day) the same goes for the **profiles** (with their pinned models and model addresses), the
 picker preferences (which providers are hidden), the **remote MCP servers**, and, only if switched on, the **API keys** (see "More kinds" below). The phone talks to the desktop, so it follows. Built 2026-11-12. Code: `crates/zo-core/src/sync.rs` (planner, documents,
-client), `crates/zo-server/src/sync_api.rs` (the server's side), Settings > Web sync in `crates/zohara-chat`.
+client), `crates/zo-server/src/sync_api.rs` (the server's side), Settings > Web sync in `crates/zohara-agent`.
 
 ## Setup (every person)
 
 The desktop app **works fully without any login**: nothing is sent to the server until the person signs in, and signing in is optional. It only
 turns on sync with the web. Nobody copies or pastes a token (see `LOGIN.md` for the flow, endpoints and security).
 
-1. In Zohara Chat on the desktop: Settings > Web sync > **Sign in**. Choose Google (a browser opens the server's approval page: sign in, type the short
+1. In Zohara Agent on the desktop: Settings > Web sync > **Sign in**. Choose Google (a browser opens the server's approval page: sign in, type the short
    code the app shows, check the device name and approve) or e-mail and password (typed into the app; a new account must click the link in the
    verification e-mail first). Sync switches on by itself and a round runs at once. "Sync now" runs one more; the line under the buttons says when it
    last worked or why it failed. **Sign out** revokes this device on the server and forgets the sign-in here; chats, memory and personalities stay.
 2. On the web, sign in with the same account. After both are signed in, chats, memory and personalities match.
 3. Behind the scenes the server issues this device a **device credential** (`zd_...`, only its hash is stored on the server). It is kept in the
    system keyring (key id `sync-token`), never in a file, never shown, and can be revoked on the web Account page under **signed-in devices** (a lost computer).
-   The account's e-mail, the on/off switch and a server address chosen by hand are in `~/.config/zohara-chat/sync.json`.
+   The account's e-mail, the on/off switch and a server address chosen by hand are in `~/.config/zohara-agent/sync.json`.
 4. Server address: the default is `https://zo-ai-server.onrender.com`; the environment variable `ZO_SERVER_URL` or the `url` in `sync.json` overrides it. Only
    `https://` addresses are accepted (plain `http://` only for 127.0.0.1 / localhost), because the credential is sent with every call.
 
@@ -100,7 +100,7 @@ The service also answers `{"op":"sync_status"}` (enabled, url, last_ok, error, p
     ZO_SERVER_NO_AUTH=1 PORT=8799 zo-server                    # 127.0.0.1 only, no login, one fixed tenant, no Firestore
 
 Use a private HOME / XDG_* / XDG_RUNTIME_DIR for it (the server shares the app's data folders otherwise).
-`crates/zo-core/examples/syncctl.rs` is a small driver (add a chat or note, delete, list, one sync round with `ZOHARA_CHAT_KEY_SYNC_TOKEN`).
+`crates/zo-core/examples/syncctl.rs` is a small driver (add a chat or note, delete, list, one sync round with `ZOHARA_AGENT_KEY_SYNC_TOKEN`).
 
 ## Tested / not tested
 
@@ -114,7 +114,7 @@ edit resolves to the newest in both directions; a personality and a note added i
 changes nothing in B; the credential is not in the server log. The Settings page renders (headless, container `zs-ai-img`).
 Not tested: against Render or a real Firestore, with the Firebase token (a device credential takes the same path in `who()`), the sign-in flows against real Firebase (`LOGIN.md`),
 the 30-second background loop and the switch in a running app (only `sync_with` was driven), the keyring storage of the credential
-(`secret-tool`; tests used `ZOHARA_CHAT_KEY_SYNC_TOKEN`), big chats (megabytes), two computers syncing at once, the `ZO_BIND` listen address.
+(`secret-tool`; tests used `ZOHARA_AGENT_KEY_SYNC_TOKEN`), big chats (megabytes), two computers syncing at once, the `ZO_BIND` listen address.
 The open chat list in the app is not refreshed live when a sync brings something: it shows after the list is rebuilt (new chat, switching view).
 
 Not tested for the new kinds: a real Firestore round trip (the in-memory database stands in), adding an MCP server on the web against a live server (the web

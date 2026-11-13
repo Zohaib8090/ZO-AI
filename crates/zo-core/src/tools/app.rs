@@ -1,4 +1,4 @@
-//! The tools that let the chat AI (or any MCP client) use the other parts of Zohara Chat: scheduled tasks, projects and saved chats.
+//! The tools that let the chat AI (or any MCP client) use the other parts of Zohara Agent: scheduled tasks, projects and saved chats.
 //! What they change is what the app shows, because they share the same files.
 
 use crate::store::{chats, projects, schedules};
@@ -134,7 +134,7 @@ pub fn add_mcp_server(a: &Value) -> Result<String, String> {
     let mut all = mcp_client::load_servers();
     all.push(cfg);
     mcp_client::save_servers(&all);
-    Ok(format!("Added \"{name}\". Its tools ({}) are yours from the next message on. It is listed in Zohara Chat > Settings > MCP servers.", tools.join(", ")))
+    Ok(format!("Added \"{name}\". Its tools ({}) are yours from the next message on. It is listed in Zohara Agent > Settings > MCP servers.", tools.join(", ")))
 }
 
 pub fn add_mcp_config(config: &str) -> Result<String, String> {

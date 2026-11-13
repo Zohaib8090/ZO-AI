@@ -626,7 +626,7 @@ impl Hub {
         }
         let msg = json!({"message": {
             "token": sub.token,
-            "notification": {"title": "Zohara Chat", "body": body_text},
+            "notification": {"title": "Zohara Agent", "body": body_text},
             "data": data,
             "android": {"priority": "HIGH", "notification": {"tag": format!("zo-chat-{chat}")}},
         }});

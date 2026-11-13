@@ -1,4 +1,4 @@
-//! Zohara Chat's long-term memory: what it remembers about the person across every chat, on the computer and on the phone.
+//! Zohara Agent's long-term memory: what it remembers about the person across every chat, on the computer and on the phone.
 //!
 //! One file (`memory.json`) is shared by the app window, the phone service and the MCP tools, so what one learns the others
 //! know. It holds short notes ("facts") the memory agent wrote after some chats, and one summary ("episode") per chat.

@@ -67,7 +67,7 @@ pub fn resolve(raw: &str) -> Result<PathBuf, String> {
     }
     let rel = real.strip_prefix(&home).unwrap_or(&real);
     if secret_name(rel) || crate::tools::guard_read(&real).is_err() {
-        return Err("That place holds secrets (keys, sign-ins, Zohara Chat's own settings), so it is not available from the web.".into());
+        return Err("That place holds secrets (keys, sign-ins, Zohara Agent's own settings), so it is not available from the web.".into());
     }
     Ok(real)
 }
@@ -274,14 +274,14 @@ mod tests {
     fn secret_places_are_refused_and_left_out_of_listings() {
         let (_g, dir, old) = home_sandbox("secret");
         let h = dir.join("home");
-        for d in [".ssh", ".gnupg", ".config/zohara-chat", ".config/zo-ai", ".claude", ".aws"] {
+        for d in [".ssh", ".gnupg", ".config/zohara-agent", ".config/zohara-chat", ".config/zo-ai", ".claude", ".aws"] {
             std::fs::create_dir_all(h.join(d)).unwrap();
             std::fs::write(h.join(d).join("f"), "x").unwrap();
         }
         std::fs::write(h.join("docs/my-token.txt"), "x").unwrap();
         std::fs::write(h.join("docs/notes.txt"), "x").unwrap();
         std::fs::write(h.join(".bash_history"), "x").unwrap();
-        for bad in [".ssh", ".ssh/f", ".gnupg", ".config/zohara-chat/f", ".config/zo-ai/f", ".claude", ".aws/f", "docs/my-token.txt", ".bash_history"] {
+        for bad in [".ssh", ".ssh/f", ".gnupg", ".config/zohara-agent/f", ".config/zohara-chat/f", ".config/zo-ai/f", ".claude", ".aws/f", "docs/my-token.txt", ".bash_history"] {
             assert!(resolve(bad).is_err(), "{bad} must be refused");
         }
         let l = list_dir(&h).unwrap();

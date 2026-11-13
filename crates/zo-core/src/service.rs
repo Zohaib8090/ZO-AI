@@ -1,4 +1,4 @@
-//! The agent service: Zohara Chat's brain on a local socket, so a program that is not the window can chat with it, run its tools and
+//! The agent service: Zohara Agent's brain on a local socket, so a program that is not the window can chat with it, run its tools and
 //! manage it. The first client is `zohara-linkd`, which carries it to the phone app (Zohara Link > ZoAI).
 //!
 //! Protocol: one JSON object per line. A client sends one request line; the answer is one line, or for `send` a stream of event
@@ -6,7 +6,7 @@
 //! approval the AI asked for, and `{"op":"stop"}` (closing the connection also stops it).
 //!
 //! The socket is private to the user (0600 inside a 0700 folder). Who may talk to it is decided by the client; `zohara-linkd` only
-//! forwards for phones that were allowed Zohara Chat on the computer.
+//! forwards for phones that were allowed Zohara Agent on the computer.
 
 use crate::ai::agent::{self, Config, Event};
 use crate::ai::{claude_code, providers, Selection};
@@ -31,33 +31,42 @@ fn runtime_base(name: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(format!("/tmp/{name}-{}", unsafe { libc::getuid() })))
 }
 
+fn socket_for(name: &str) -> PathBuf {
+    runtime_base(name).join(name).join("agent.sock")
+}
+
 /// Where this version listens.
 pub fn socket_path() -> PathBuf {
-    runtime_base("zohara-chat").join("zohara-chat").join("agent.sock")
+    socket_for(crate::legacy::NAME)
 }
 
-/// Where the version before the rename (ZO-AI) listened. Clients still try it, so a new `zo` or `zo-mcp` reaches an old app that is
-/// still running (and the other way round: an old client finds the new app through a symbolic link at this path, see `link_old_socket`).
-pub fn old_socket_path() -> PathBuf {
-    runtime_base("zo-ai").join("zo-ai").join("agent.sock")
+/// Where the versions before the renames listened (Zohara Chat, then ZO-AI). Clients still try them, so a new `zo` or `zo-mcp` reaches an
+/// old app that is still running (and the other way round: an old client finds the new app through a symbolic link at each of these
+/// paths, see `link_old_sockets`).
+pub fn old_socket_paths() -> Vec<PathBuf> {
+    crate::legacy::OLD_NAMES.iter().map(|n| socket_for(n)).collect()
 }
 
-/// The socket of a running service: the new one, else the old one. Without a running service, the new path (for messages).
+/// The socket of a running service: the new one, else an old one. Without a running service, the new path (for messages).
 pub fn live_socket_path() -> PathBuf {
     let new = socket_path();
-    if UnixStream::connect(&new).is_ok() {
-        return new;
-    }
-    let old = old_socket_path();
-    if UnixStream::connect(&old).is_ok() {
-        return old;
-    }
-    new
+    std::iter::once(new.clone()).chain(old_socket_paths()).find(|p| UnixStream::connect(p).is_ok()).unwrap_or(new)
 }
 
-/// Connects to the running service (new socket first, then the old one).
+/// Connects to the running service (new socket first, then the old ones).
 pub fn connect() -> std::io::Result<UnixStream> {
-    UnixStream::connect(socket_path()).or_else(|e| UnixStream::connect(old_socket_path()).map_err(|_| e))
+    let new = socket_path();
+    let mut err = match UnixStream::connect(&new) {
+        Ok(c) => return Ok(c),
+        Err(e) => e,
+    };
+    for old in old_socket_paths() {
+        match UnixStream::connect(old) {
+            Ok(c) => return Ok(c),
+            Err(e) => err = if err.kind() == std::io::ErrorKind::NotFound { e } else { err },
+        }
+    }
+    Err(err)
 }
 
 /// Starts listening (in the background). Safe to call once per process.
@@ -66,14 +75,14 @@ pub fn start() -> Result<(), String> {
     let dir = path.parent().ok_or("no folder for the socket")?.to_path_buf();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-    // another Zohara Chat is already serving: leave its socket alone
+    // another Zohara Agent is already serving: leave its socket alone
     if UnixStream::connect(&path).is_ok() {
-        return Err("another Zohara Chat already serves the phone socket".into());
+        return Err("another Zohara Agent already serves the phone socket".into());
     }
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path).map_err(|e| format!("cannot listen on {}: {e}", path.display()))?;
     let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    link_old_socket(&path);
+    link_old_sockets(&path);
     std::thread::spawn(move || {
         for conn in listener.incoming().flatten() {
             std::thread::spawn(move || serve(conn));
@@ -82,21 +91,22 @@ pub fn start() -> Result<(), String> {
     Ok(())
 }
 
-/// Programs that were built before the rename (for example `zohara-linkd`, which carries the phone to this service) still look for
-/// the socket at the old path. A symbolic link there points them to the new socket. When something still answers at the old path
+/// Programs that were built before a rename (for example `zohara-linkd`, which carries the phone to this service) still look for
+/// the socket at an old path. A symbolic link at each old path points them to the new socket. When something still answers at an old path
 /// (an old app that is running), it is left alone.
-fn link_old_socket(new: &std::path::Path) {
-    let old = old_socket_path();
-    if UnixStream::connect(&old).is_ok() {
-        return;
+fn link_old_sockets(new: &std::path::Path) {
+    for old in old_socket_paths() {
+        if UnixStream::connect(&old).is_ok() {
+            continue;
+        }
+        let Some(dir) = old.parent() else { continue };
+        if std::fs::create_dir_all(dir).is_err() {
+            continue;
+        }
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::remove_file(&old);
+        let _ = std::os::unix::fs::symlink(new, &old);
     }
-    let Some(dir) = old.parent() else { return };
-    if std::fs::create_dir_all(dir).is_err() {
-        return;
-    }
-    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
-    let _ = std::fs::remove_file(&old);
-    let _ = std::os::unix::fs::symlink(new, &old);
 }
 
 fn line(w: &Mutex<UnixStream>, v: &Value) -> bool {
@@ -751,7 +761,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
         return;
     }
     if sel.provider.is_empty() {
-        line(&out, &json!({"event": "error", "error": "No model is chosen on the computer yet. Open Zohara Chat there and choose one."}));
+        line(&out, &json!({"event": "error", "error": "No model is chosen on the computer yet. Open Zohara Agent there and choose one."}));
         line(&out, &json!({"event": "done"}));
         return;
     }
@@ -1342,7 +1352,7 @@ mod tenant_tests {
         // it used the default folders, not the tenant's
         let r = talk(with_tenant(json!({"op": "memory_add", "text": "A note for the desktop owner"}), &t), false);
         assert_eq!(r[0]["ok"], true);
-        assert!(dir.join("data/zohara-chat/memory.json").exists());
+        assert!(dir.join("data/zohara-agent/memory.json").exists());
         assert!(!t.data.join("memory.json").exists());
         match old.0 {
             Some(v) => std::env::set_var("XDG_DATA_HOME", v),
@@ -1943,50 +1953,60 @@ mod tenant_tests {
 mod rename_tests {
     use std::os::unix::net::UnixListener;
 
-    /// A client finds a service that listens on the socket of the version before the rename, and prefers the new socket when both are up.
-    #[test]
-    fn clients_reach_the_old_socket_and_prefer_the_new_one() {
-        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("zo-rt-{}", std::process::id()));
+    fn run_dir(name: &str) -> (std::path::PathBuf, Option<std::ffi::OsString>) {
+        let dir = std::env::temp_dir().join(format!("zo-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let before = std::env::var_os("XDG_RUNTIME_DIR");
         std::env::set_var("XDG_RUNTIME_DIR", &dir);
-        assert_eq!(super::socket_path(), dir.join("zohara-chat/agent.sock"));
-        assert_eq!(super::old_socket_path(), dir.join("zo-ai/agent.sock"));
-        assert!(super::connect().is_err());
-        assert_eq!(super::live_socket_path(), super::socket_path(), "nothing runs: the new path is named in messages");
-        std::fs::create_dir_all(dir.join("zo-ai")).unwrap();
-        let old = UnixListener::bind(super::old_socket_path()).unwrap();
-        assert!(super::connect().is_ok(), "an old app that still runs is reached");
-        assert_eq!(super::live_socket_path(), super::old_socket_path());
-        std::fs::create_dir_all(dir.join("zohara-chat")).unwrap();
-        let new = UnixListener::bind(super::socket_path()).unwrap();
-        assert_eq!(super::live_socket_path(), super::socket_path());
-        drop((old, new));
-        match before {
-            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
-            None => std::env::remove_var("XDG_RUNTIME_DIR"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
+        (dir, before)
     }
 
-    /// The running service also answers at the old path (a symbolic link), so a program built before the rename still reaches it.
-    #[test]
-    fn the_new_service_is_reachable_at_the_old_socket_path() {
-        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("zo-rt2-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let before = std::env::var_os("XDG_RUNTIME_DIR");
-        std::env::set_var("XDG_RUNTIME_DIR", &dir);
-        super::start().unwrap();
-        assert!(std::os::unix::net::UnixStream::connect(super::socket_path()).is_ok());
-        assert!(std::os::unix::net::UnixStream::connect(super::old_socket_path()).is_ok(), "a client that only knows the old path connects");
+    fn restore(dir: &std::path::Path, before: Option<std::ffi::OsString>) {
         match before {
             Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
             None => std::env::remove_var("XDG_RUNTIME_DIR"),
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A client finds a service that listens on the socket of either version before the renames, and prefers the newest when several are up.
+    #[test]
+    fn clients_reach_the_old_sockets_and_prefer_the_newest() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (dir, before) = run_dir("rt");
+        assert_eq!(super::socket_path(), dir.join("zohara-agent/agent.sock"));
+        assert_eq!(super::old_socket_paths(), vec![dir.join("zohara-chat/agent.sock"), dir.join("zo-ai/agent.sock")]);
+        assert!(super::connect().is_err());
+        assert_eq!(super::live_socket_path(), super::socket_path(), "nothing runs: the new path is named in messages");
+        // an app at the ZO-AI stage
+        std::fs::create_dir_all(dir.join("zo-ai")).unwrap();
+        let ai = UnixListener::bind(dir.join("zo-ai/agent.sock")).unwrap();
+        assert!(super::connect().is_ok(), "an old ZO-AI app that still runs is reached");
+        assert_eq!(super::live_socket_path(), dir.join("zo-ai/agent.sock"));
+        // an app at the Zohara Chat stage wins over it
+        std::fs::create_dir_all(dir.join("zohara-chat")).unwrap();
+        let chat = UnixListener::bind(dir.join("zohara-chat/agent.sock")).unwrap();
+        assert_eq!(super::live_socket_path(), dir.join("zohara-chat/agent.sock"));
+        // and the current one wins over both
+        std::fs::create_dir_all(dir.join("zohara-agent")).unwrap();
+        let new = UnixListener::bind(super::socket_path()).unwrap();
+        assert_eq!(super::live_socket_path(), super::socket_path());
+        drop((ai, chat, new));
+        restore(&dir, before);
+    }
+
+    /// The running service also answers at BOTH old paths (symbolic links), so a program built at any earlier stage still reaches it.
+    #[test]
+    fn the_new_service_is_reachable_at_both_old_socket_paths() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (dir, before) = run_dir("rt2");
+        super::start().unwrap();
+        assert!(std::os::unix::net::UnixStream::connect(super::socket_path()).is_ok());
+        for old in super::old_socket_paths() {
+            assert!(std::fs::symlink_metadata(&old).unwrap().file_type().is_symlink(), "{}", old.display());
+            assert!(std::os::unix::net::UnixStream::connect(&old).is_ok(), "a client that only knows {} connects", old.display());
+        }
+        restore(&dir, before);
     }
 }

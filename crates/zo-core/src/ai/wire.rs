@@ -4,7 +4,7 @@
 use super::providers::{Protocol, Provider};
 use crate::tools::ToolDef;
 
-/// A tool as the model is told about it: Zohara Chat's own, or one from an MCP server added in Settings.
+/// A tool as the model is told about it: Zohara Agent's own, or one from an MCP server added in Settings.
 #[derive(Clone, Debug)]
 pub struct ToolSpec {
     pub name: String,
@@ -12,7 +12,7 @@ pub struct ToolSpec {
     pub schema: Value,
 }
 
-/// Zohara Chat's own tools.
+/// Zohara Agent's own tools.
 pub fn builtin_specs() -> Vec<ToolSpec> {
     crate::tools::active().into_iter().map(|d: &ToolDef| ToolSpec { name: d.name.into(), description: d.description.into(), schema: d.schema() }).collect()
 }

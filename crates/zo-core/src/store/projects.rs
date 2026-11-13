@@ -1,4 +1,4 @@
-//! Data model and persistence for Zohara Chat projects.
+//! Data model and persistence for Zohara Agent projects.
 //!
 //! A project owns its instructions, attached context, memory and schedules.
 //! Memory is loaded into the project's working tree on every session, so the
@@ -103,7 +103,7 @@ impl Store {
             Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
                 // never silently start empty over a file we could not read: keep it aside so nothing is lost
                 let aside = path.with_extension("json.broken");
-                eprintln!("zohara-chat: {} is damaged ({e}); kept as {}", path.display(), aside.display());
+                eprintln!("zohara-agent: {} is damaged ({e}); kept as {}", path.display(), aside.display());
                 let _ = fs::rename(&path, &aside);
                 Self::default()
             }),
@@ -120,7 +120,7 @@ impl Store {
             // write to a side file and rename, so a crash mid-write cannot leave a half file
             let tmp = path.with_extension("json.tmp");
             if let Err(e) = fs::write(&tmp, raw).and_then(|_| fs::rename(&tmp, &path)) {
-                eprintln!("zohara-chat: could not save {}: {e}", path.display());
+                eprintln!("zohara-agent: could not save {}: {e}", path.display());
             }
         }
     }

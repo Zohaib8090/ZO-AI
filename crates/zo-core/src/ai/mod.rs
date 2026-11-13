@@ -1,4 +1,4 @@
-//! The model side of Zohara Chat: providers, API keys, the wire formats and the tool-calling loop.
+//! The model side of Zohara Agent: providers, API keys, the wire formats and the tool-calling loop.
 
 pub mod agent;
 pub mod claude_code;

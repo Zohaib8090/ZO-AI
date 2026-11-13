@@ -1,4 +1,4 @@
-//! A real Zohara Chat service for tests: its socket in $XDG_RUNTIME_DIR, a fake model that asks to run a command and then answers.
+//! A real Zohara Agent service for tests: its socket in $XDG_RUNTIME_DIR, a fake model that asks to run a command and then answers.
 //! Used by zohara-link's tests/e2e_zoai_real.py. Never installed.
 
 use serde_json::{json, Value};

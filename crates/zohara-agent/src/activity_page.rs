@@ -193,9 +193,8 @@ fn snapshot() -> Snapshot {
         vec![format!("Not signed in. {}", sync_state), SYNC_NOW.with(|n| n.borrow().clone())]
     };
 
-    let sock = zo_core::service::socket_path();
-    let sock = if sock.exists() { sock } else { zo_core::service::old_socket_path() };
-    s.services.push(("Zohara Chat service".into(), if sock.exists() { "Listening for the phone, the web app and the command line".into() } else { "Not running".into() }));
+    let sock = std::iter::once(zo_core::service::socket_path()).chain(zo_core::service::old_socket_paths()).find(|p| p.exists()).unwrap_or_else(zo_core::service::socket_path);
+    s.services.push(("Zohara Agent service".into(), if sock.exists() { "Listening for the phone, the web app and the command line".into() } else { "Not running".into() }));
     let tasks = zo_core::store::schedules::load();
     let on: Vec<_> = tasks.iter().filter(|t| t.enabled).collect();
     let next = on.iter().map(|t| t.next_run).min();
@@ -390,7 +389,7 @@ fn rebuild(ui: &Rc<Ui>, s: &Snapshot) {
         card.append(&row);
     }
     for (id, name) in &s.terminals {
-        let (row, right) = line("utilities-terminal-symbolic", &format!("Terminal: {name}"), "Open in the side panel, where you can type in it or watch what Zohara Chat runs");
+        let (row, right) = line("utilities-terminal-symbolic", &format!("Terminal: {name}"), "Open in the side panel, where you can type in it or watch what Zohara Agent runs");
         let open = small_button("Open");
         let ui2 = ui.clone();
         open.connect_clicked(move |_| {

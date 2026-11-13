@@ -1,5 +1,5 @@
 //! Real SSH test through the tool call function: ssh-try <port> <good-key-file> <wrong-key-file>
-//! Run it with HOME, XDG_* and ZOHARA_CHAT_KEYS_FILE pointing into a throw-away folder.
+//! Run it with HOME, XDG_* and ZOHARA_AGENT_KEYS_FILE pointing into a throw-away folder.
 use serde_json::json;
 use zo_core::store::machines::{self, Machine};
 
@@ -32,6 +32,6 @@ fn main() {
     show("unknown machine", c("zohara_ssh_run", &json!({"machine": "ghost", "command": "id"})));
     show("service-style test", zo_core::tools::ssh::test("box"));
     let rt = std::env::var("XDG_RUNTIME_DIR").unwrap();
-    println!("leftover key files: {:?}", std::fs::read_dir(format!("{rt}/zohara-chat")).map(|d| d.flatten().map(|e| e.file_name()).collect::<Vec<_>>()));
-    println!("machines.json:\n{}", std::fs::read_to_string(format!("{}/zohara-chat/machines.json", std::env::var("XDG_CONFIG_HOME").unwrap())).unwrap());
+    println!("leftover key files: {:?}", std::fs::read_dir(format!("{rt}/zohara-agent")).map(|d| d.flatten().map(|e| e.file_name()).collect::<Vec<_>>()));
+    println!("machines.json:\n{}", std::fs::read_to_string(format!("{}/zohara-agent/machines.json", std::env::var("XDG_CONFIG_HOME").unwrap())).unwrap());
 }

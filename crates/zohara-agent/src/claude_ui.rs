@@ -1,5 +1,5 @@
 //! One-click Claude Code login on this computer. The sign-in is the Claude Code program's own (`claude auth login`, run on a pseudo-terminal
-//! by `zo_core::claude_login`): Zohara Chat shows its link as a button, takes the code the person pastes, and shows who is signed in
+//! by `zo_core::claude_login`): Zohara Agent shows its link as a button, takes the code the person pastes, and shows who is signed in
 //! (`claude auth status`). It never sees, stores or shows the login itself.
 
 use crate::{hbox, lbl, primary, secondary, vbox, Ui};
@@ -17,7 +17,7 @@ pub(crate) fn status_text(installed: bool, logged_in: bool, account: &str) -> St
     if !installed {
         "Not installed. Install it with: npm install -g @anthropic-ai/claude-code, then press Log in.".into()
     } else if logged_in {
-        format!("Logged in{}. The Claude Code program keeps the login; Zohara Chat never sees it.", if account.is_empty() { String::new() } else { format!(" as {account}") })
+        format!("Logged in{}. The Claude Code program keeps the login; Zohara Agent never sees it.", if account.is_empty() { String::new() } else { format!(" as {account}") })
     } else {
         "Not logged in. Press Log in: your browser opens the Claude sign-in, you paste the code back here.".into()
     }

@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>org.zohara.Chat</id>
-  <name>Zohara Chat</name>
+  <id>org.zohara.Agent</id>
+  <name>Zohara Agent</name>
   <summary>OS-level AI agent for Zohara OS</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <description>
     <p>
-      Zohara Chat is the AI module that ships inside Zohara OS. It keeps projects with
+      Zohara Agent is the AI module that ships inside Zohara OS. It keeps projects with
       their own instructions, attached context, memory and schedules, and answers
       from the same knowledge every time you work inside a project.
     </p>
   </description>
-  <launchable type="desktop-id">org.zohara.Chat.desktop</launchable>
+  <launchable type="desktop-id">org.zohara.Agent.desktop</launchable>
   <provides>
-    <binary>zohara-chat</binary>
+    <binary>zohara-agent</binary>
   </provides>
   <releases>
     <release version="0.1.0" date="2026-11-02"/>

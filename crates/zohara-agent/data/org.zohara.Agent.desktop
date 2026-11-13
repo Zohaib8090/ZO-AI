@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=Zohara Chat
+Name=Zohara Agent
 GenericName=OS AI Agent
 Comment=The AI built into Zohara OS: it can control the whole system
-Exec=zohara-chat
-Icon=zohara-chat
+Exec=zohara-agent
+Icon=zohara-agent
 Terminal=false
 Categories=Utility;
 Keywords=ai;agent;assistant;zohara;
 StartupNotify=true
-StartupWMClass=org.zohara.Chat
+StartupWMClass=org.zohara.Agent

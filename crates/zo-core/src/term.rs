@@ -1,4 +1,4 @@
-//! Terminals that live inside Zohara Chat: a shell on a pseudo-terminal, a screen kept up to date by a terminal emulator (vt100),
+//! Terminals that live inside Zohara Agent: a shell on a pseudo-terminal, a screen kept up to date by a terminal emulator (vt100),
 //! and a registry so the window (which draws and types into them) and the AI's tools (which open, type into and read
 //! them) work on the very same terminals.
 

@@ -1,4 +1,4 @@
-# The Zohara Chat server (`crates/zo-server`)
+# The Zohara Agent server (`crates/zo-server`)
 
 The same brain as the desktop app, on a server that is always on, behind a Firebase login. First step of
 `PLAN-WEB-CLI-SYNC.md`. Built 2026-11-12. It is a **public, multi-user service**: any Google account, or e-mail and password account, may sign in, each person has their own isolated data and their own API key, and only the owner's addresses are admins. Design, threat model, limits and cost: `PUBLIC.md`. Privacy and terms: `PRIVACY.md`, `TERMS.md`.
@@ -66,7 +66,7 @@ Full steps, free-plan facts and the Claude Code token: `docs/DEPLOY.md`. Short v
 In this mode there is no CORS, a request needs the header `X-ZO-Local: 1` (the web page sends it) and a `Host` of this computer, and a
 request with another `Origin` is refused, so a web page from another site cannot use the server through your browser.
 Programs the AI starts (shell, ssh, terminals, other MCP servers) do not get `FIREBASE_SERVICE_ACCOUNT`, `ZO_SERVER_SECRET`,
-`CLAUDE_CODE_OAUTH_TOKEN` or `ZOHARA_CHAT_KEY_*`, and the file tools refuse the config folder, `~/.ssh` and `/proc/*/environ`.
+`CLAUDE_CODE_OAUTH_TOKEN` or `ZOHARA_AGENT_KEY_*`, and the file tools refuse the config folder, `~/.ssh` and `/proc/*/environ`.
 
 Use a separate `XDG_RUNTIME_DIR`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME` if the desktop app is running, or it will refuse to start
 (the app already owns the socket) and would share the app's data.

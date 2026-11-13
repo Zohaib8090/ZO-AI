@@ -35,7 +35,7 @@ Flows (the person only sees steps, never a token):
   matching the app, Ctrl-C and arrow keys, an extra key row on phones (Esc, Tab, Ctrl, Alt, arrows, |, ~, /, -), reconnect to a
   running session after a network drop (session kept 30 minutes idle), scrollback, bell, links clickable.
 * **Targets:** (1) **Cloud**: a real login shell (PTY) on the server container as an unprivileged per-tenant user environment: HOME in the
-  tenant dir, scrubbed environment (no Zohara Chat secrets), PATH with `claude`, `git`, `ssh`; ADMIN ONLY (restricted users never get a shell
+  tenant dir, scrubbed environment (no Zohara Agent secrets), PATH with `claude`, `git`, `ssh`; ADMIN ONLY (restricted users never get a shell
   on the shared server); resource limits (setrlimit: processes, memory, file size, CPU), idle timeout, output caps, process group kill,
   audit log. (2) **My computer** (any signed-in person, through the desktop link): a PTY on their own desktop using zo-core's
   existing terminal code (`term.rs`, vt100), opened only after a LOCAL approval (FULL-CONTROL.md), output streamed back as link events,
@@ -66,7 +66,7 @@ The web version looked wrong on an Android phone (AGY's attempt at an Android ap
 
 Code: `zo-core/src/pty.rs` (a program on a pseudo-terminal, output kept as raw bytes with sequence numbers), `zo-core/src/claude_login.rs`
 (the sign-in flows), `zo-server/src/term.rs` (terminals), `zo-server/src/claude_api.rs` (the sign-in calls), `zo-core/src/link.rs` + `zo-server/src/link.rs`
-(a `term` job), `zohara-chat/src/claude_ui.rs` (desktop), `zo-server/web/index.html` (the `TERM-BEGIN` and `CLAUDE-LOGIN-BEGIN` sections).
+(a `term` job), `zohara-agent/src/claude_ui.rs` (desktop), `zo-server/web/index.html` (the `TERM-BEGIN` and `CLAUDE-LOGIN-BEGIN` sections).
 `terminal_run` (the one-shot command op) is gone from the service and the web page.
 
 ### A. Claude Code login
@@ -75,14 +75,14 @@ Code: `zo-core/src/pty.rs` (a program on a pseudo-terminal, output kept as raw b
   prompted >"; `claude setup-token` is a full-screen TUI that prints the same kind of link and then the token (`sk-ant-oat01-...`); `claude auth status`
   prints JSON (`loggedIn`, `email`, `planTier`). The programs are run with a 1000-column terminal so that the link is never wrapped. If a later version prints
   something else the flow fails with a plain message and the terminal still works.
-* **Desktop (zohara-chat)**: Settings > Model > Claude Code and the model sheet show the state (`claude auth status`), with Log in / Log out / Check. Log in opens a sheet:
+* **Desktop (zohara-agent)**: Settings > Model > Claude Code and the model sheet show the state (`claude auth status`), with Log in / Log out / Check. Log in opens a sheet:
   the link is a button (opened by the system browser; only sign-in hosts of Anthropic are accepted), the code is pasted into a field and typed into the program,
-  success is the program's exit code 0. Zohara Chat stores nothing.
+  success is the program's exit code 0. Zohara Agent stores nothing.
 * **Server (web)**: `/api/claude/{status,start,poll,code,cancel,logout}`. The server runs `claude setup-token` in a sandbox (empty environment, a private home that is
   deleted afterwards, CPU/file/memory limits, 5 minutes, one flow per person, `ZO_MAX_CLAUDE_LOGINS` flows for the whole server, default 2). The page only receives a
   state, a fixed message and the checked link; the program's screen is never passed on. The token printed at the end is stored encrypted (`claude-code-token`) and
   the program is destroyed. Log out removes the token and the person's `claude-home`.
-* **Who may**: `ZO_CLAUDE_CODE_USERS=admins` (default) or `all`. With `all` a restricted person can store a token and use Claude Code on the server, and ONLY with Zohara Chat's
+* **Who may**: `ZO_CLAUDE_CODE_USERS=admins` (default) or `all`. With `all` a restricted person can store a token and use Claude Code on the server, and ONLY with Zohara Agent's
   five safe tools: Claude's own tools are off (`--tools ""`), the MCP tools program is started with `ZO_TENANT_RESTRICTED=1` (so it serves the restricted tool set),
   and the operator's fallback token (`CLAUDE_CODE_OAUTH_TOKEN`) is never used for a restricted person. Anthropic's terms do not allow third-party products to offer
   Claude subscription logins: choosing `all` is the operator's decision. Not reviewed by the owner yet: leave it on `admins`.

@@ -1,12 +1,12 @@
 # The terminal client `zo` (`crates/zo-cli`)
 
-Zohara Chat in the terminal. It does no thinking itself: it talks to Zohara Chat's service (zo-core's `service.rs`), so it shares chats,
+Zohara Agent in the terminal. It does no thinking itself: it talks to Zohara Agent's service (zo-core's `service.rs`), so it shares chats,
 memory, model choice and permission mode with the app and the phone. Small on purpose: `zo-core` (for the socket path),
 `serde_json`, `ureq`, `libc`; no TUI crate, plain stdin/stdout.
 
 ## Where it connects
 
-* **Local** (default): the Unix socket `$XDG_RUNTIME_DIR/zohara-chat/agent.sock`, served by the Zohara Chat desktop app (or a local
+* **Local** (default): the Unix socket `$XDG_RUNTIME_DIR/zohara-agent/agent.sock`, served by the Zohara Agent desktop app (or a local
   `zo-server`). If nothing listens, `zo` says so and shows how to start the app or use `--remote`.
 * **Remote**: `--remote https://server` (or `ZO_REMOTE_URL`; `--local` ignores it). Calls `POST /api/op`, `POST /api/send`
   (one JSON object per line; first line `{"event":"stream","id":N}`) and `POST /api/reply` (approve, stop), with

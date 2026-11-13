@@ -1,4 +1,4 @@
-//! Zohara Chat in the cloud, as a public service: anybody with a Google account may sign in and use the same brain as the desktop app,
+//! Zohara Agent in the cloud, as a public service: anybody with a Google account may sign in and use the same brain as the desktop app,
 //! each person in their own isolated corner (a "tenant") with their own API key, their data kept in Firestore because the server's
 //! own disk does not last. Only the owner's addresses are admins; everybody else is restricted to a small set of safe tools.
 //!
@@ -339,7 +339,7 @@ impl From<Refusal> for Fail {
         match r {
             Refusal::Rate(s) => Fail { status: 429, error: "You are sending requests too fast. Wait a moment.".into(), retry: Some(s) },
             Refusal::Busy(m, s) => Fail { status: 429, error: m.into(), retry: Some(s) },
-            Refusal::Full => Fail::new(503, "Zohara Chat has as many people as it can take right now. Try again later."),
+            Refusal::Full => Fail::new(503, "Zohara Agent has as many people as it can take right now. Try again later."),
             Refusal::Gone => Fail::new(410, "This account was deleted."),
             Refusal::Storage(e) => Fail::new(503, e),
         }
@@ -475,7 +475,7 @@ fn body(req: &mut Request, limit: usize, secs: u64) -> Result<Value, Fail> {
 }
 
 fn connect() -> Result<UnixStream, String> {
-    zo_core::service::connect().map_err(|e| format!("Zohara Chat's service is not running: {e}"))
+    zo_core::service::connect().map_err(|e| format!("Zohara Agent's service is not running: {e}"))
 }
 
 /// The request as the service gets it: whose it is comes from the verified credential, whatever the client wrote.
@@ -496,7 +496,7 @@ fn op(v: &Value) -> Result<Value, String> {
     conn.write_all(format!("{v}\n").as_bytes()).map_err(|e| e.to_string())?;
     let mut line = String::new();
     BufReader::new(conn).read_line(&mut line).map_err(|e| e.to_string())?;
-    serde_json::from_str(&line).map_err(|_| "Zohara Chat gave no answer.".into())
+    serde_json::from_str(&line).map_err(|_| "Zohara Agent gave no answer.".into())
 }
 
 /// Sends a message and passes the answer on as it is written: one JSON object per line. The lease and the permit are held until
@@ -526,7 +526,7 @@ fn send(app: &Arc<App>, req: Request, v: Value, lease: Lease, tenant: zo_core::t
         Err(e) => return reply(app, req, 500, json!({"ok": false, "error": e.to_string()})),
     };
     if to_service.write_all(format!("{v}\n").as_bytes()).is_err() {
-        return reply(app, req, 503, json!({"ok": false, "error": "Zohara Chat's service closed the connection."}));
+        return reply(app, req, 503, json!({"ok": false, "error": "Zohara Agent's service closed the connection."}));
     }
     let id = app.next.fetch_add(1, Ordering::SeqCst);
     app.streams.lock().unwrap().insert(id, (tenant.id.clone(), to_service));
@@ -611,7 +611,7 @@ fn route(app: Arc<App>, mut req: Request) {
     // cross-site permission at all, and a request that carries an Origin (only browsers send one) is refused. Otherwise any page could
     // start a sign-in from its visitor's own address and show the visitor the code.
     if matches!(path.as_str(), "/api/auth/device_start" | "/api/auth/device_poll") && (method == Method::Options || get_header(&req, "Origin").is_some()) {
-        let r = Response::from_string(json!({"ok": false, "error": "This call is for the Zohara Chat app and terminal client, not for web pages."}).to_string()).with_status_code(403).with_header(header("Content-Type", "application/json")).with_header(header("Cache-Control", "no-store"));
+        let r = Response::from_string(json!({"ok": false, "error": "This call is for the Zohara Agent app and terminal client, not for web pages."}).to_string()).with_status_code(403).with_header(header("Content-Type", "application/json")).with_header(header("Cache-Control", "no-store"));
         return send_bare(&app, req, r);
     }
     match (&method, path.as_str()) {
@@ -628,8 +628,8 @@ fn route(app: Arc<App>, mut req: Request) {
                 .with_header(header("Cache-Control", "no-cache"));
             return send_response(&app, req, r);
         }
-        (Method::Get, "/privacy") => return html(&app, req, pages::page("Zohara Chat privacy notice", &pages::fill(pages::PRIVACY_MD, &app.legal)), pages::PLAIN_CSP),
-        (Method::Get, "/terms") => return html(&app, req, pages::page("Zohara Chat terms of use", &pages::fill(pages::TERMS_MD, &app.legal)), pages::PLAIN_CSP),
+        (Method::Get, "/privacy") => return html(&app, req, pages::page("Zohara Agent privacy notice", &pages::fill(pages::PRIVACY_MD, &app.legal)), pages::PLAIN_CSP),
+        (Method::Get, "/terms") => return html(&app, req, pages::page("Zohara Agent terms of use", &pages::fill(pages::TERMS_MD, &app.legal)), pages::PLAIN_CSP),
         _ => {}
     }
     let Some(r) = route_of(&method, &path) else { return text(&app, req, 404, "not found") };
@@ -833,7 +833,7 @@ fn same_origin(app: &App, req: &Request) -> bool {
 
 fn term_or_claude(app: &Arc<App>, mut req: Request, path: &str, r: Route, who: &Who) {
     if !same_origin(app, &req) {
-        return fail(app, req, Fail::new(403, "This call is only for the Zohara Chat page of this server."));
+        return fail(app, req, Fail::new(403, "This call is only for the Zohara Agent page of this server."));
     }
     if matches!(who.cred, Cred::Account { .. }) {
         match app.has_accepted(&who.tenant) {

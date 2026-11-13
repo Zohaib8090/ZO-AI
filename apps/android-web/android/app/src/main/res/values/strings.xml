@@ -1,9 +1,9 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Zohara Chat</string>
-    <string name="title_activity_main">Zohara Chat</string>
+    <string name="app_name">Zohara Agent</string>
+    <string name="title_activity_main">Zohara Agent</string>
     <string name="package_name">org.zohara.zoai</string>
     <string name="custom_url_scheme">org.zohara.zoai</string>
     <string name="channel_answers">Answers</string>
-    <string name="channel_answers_desc">Notifications when Zohara Chat has finished an answer</string>
+    <string name="channel_answers_desc">Notifications when Zohara Agent has finished an answer</string>
 </resources>

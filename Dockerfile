@@ -1,4 +1,4 @@
-# Zohara Chat server for Render. Only the server and zo-mcp are built: the desktop app (zohara-chat) needs GTK and is not part of this image.
+# Zohara Agent server for Render. Only the server and zo-mcp are built: the desktop app (zohara-agent) needs GTK and is not part of this image.
 # zo-mcp is the program Claude Code connects to; zo-server looks for it next to itself.
 FROM rust:1-bookworm AS build
 WORKDIR /src

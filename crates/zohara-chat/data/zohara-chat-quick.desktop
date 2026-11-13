@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Zohara Chat Quick Ask
-Comment=Open the Zohara Chat popup (Ctrl+Super+C)
-Exec=zohara-chat --quick
-Icon=zohara-chat
-Terminal=false
-NoDisplay=true
-Categories=Utility;

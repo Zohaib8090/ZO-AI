@@ -1,5 +1,5 @@
 //! The quick popup: a small window for a fast question or action, without opening the full app.
-//! Opened by the shortcut (Copilot key or Super+C) through `zohara-chat --quick`; Esc or clicking away closes it.
+//! Opened by the shortcut (Copilot key or Super+C) through `zohara-agent --quick`; Esc or clicking away closes it.
 
 use adw::prelude::*;
 use gtk4 as gtk;
@@ -23,7 +23,7 @@ pub fn toggle(app: &gtk::Application, open_full: impl Fn(&str) + 'static) {
 
     let win = gtk::Window::builder()
         .application(app)
-        .title("Zohara Chat")
+        .title("Zohara Agent")
         .decorated(false)
         .resizable(false)
         .default_width(640)
@@ -35,7 +35,7 @@ pub fn toggle(app: &gtk::Application, open_full: impl Fn(&str) + 'static) {
     root.add_css_class("quick-body");
 
     let entry = gtk::Entry::new();
-    entry.set_placeholder_text(Some("Ask Zohara Chat, or run something on this computer…"));
+    entry.set_placeholder_text(Some("Ask Zohara Agent, or run something on this computer…"));
     entry.add_css_class("composer-entry");
     entry.add_css_class("quick-entry");
     let top = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -93,13 +93,13 @@ pub fn toggle(app: &gtk::Application, open_full: impl Fn(&str) + 'static) {
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
     chips.append(&spacer);
-    let open = gtk::Button::with_label("Open Zohara Chat");
+    let open = gtk::Button::with_label("Open Zohara Agent");
     open.add_css_class("foot-chip");
     chips.append(&open);
     root.append(&chips);
     win.set_child(Some(&root));
 
-    // Enter or "Open Zohara Chat": carry what was typed into the full app
+    // Enter or "Open Zohara Agent": carry what was typed into the full app
     let open_full = std::rc::Rc::new(open_full);
     {
         let (win, open_full) = (win.clone(), open_full.clone());

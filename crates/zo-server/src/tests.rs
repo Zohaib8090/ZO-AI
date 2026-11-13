@@ -1077,7 +1077,7 @@ mod end_to_end {
                 .env("XDG_DATA_HOME", self.dir.join("data"))
                 .env("XDG_CONFIG_HOME", self.dir.join("config"))
                 .env("XDG_RUNTIME_DIR", self.dir.join("rt"))
-                .env("ZOHARA_CHAT_KEYS_FILE", self.dir.join("keys.json"))
+                .env("ZOHARA_AGENT_KEYS_FILE", self.dir.join("keys.json"))
                 .env("ZO_SERVER_URL", &self.url)
                 .args(args);
             c
@@ -1150,7 +1150,7 @@ mod end_to_end {
         assert_eq!(desk.run(&["whoami"]), "a@x.test");
         let cred = desk.credential().expect("the credential is in the device's key store");
         // the person never sees it: not on any screen output of the client, not in sync.json
-        let cfg = std::fs::read_to_string(desk.dir.join("config/zohara-chat/sync.json")).unwrap_or_default();
+        let cfg = std::fs::read_to_string(desk.dir.join("config/zohara-agent/sync.json")).unwrap_or_default();
         assert!(!cfg.contains(&cred) && !end.contains(&cred));
 
         // the sync round pushes the chat and the note
@@ -2229,12 +2229,12 @@ fn claude_code_runs_for_the_owner_on_the_server_with_the_owners_token_in_a_minim
     std::fs::write(&script, format!("#!/bin/sh\nenv > {d}/env\nprintf '%s\\n' \"$@\" > {d}/args\necho '{{\"type\":\"system\",\"session_id\":\"s-9\"}}'\necho '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"hello from claude\"}}]}}}}'\n", d = dir.display())).unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::env::set_var("ZOHARA_CHAT_CLAUDE_BIN", &script);
+    std::env::set_var("ZOHARA_AGENT_CLAUDE_BIN", &script);
     std::env::set_var("FIREBASE_SERVICE_ACCOUNT", "must-not-leak-firebase");
     let sel = call(&r, "tok-o", "/api/op", json!({"op": "select", "provider": "claude-code", "model": "sonnet"}));
     assert_eq!(sel.status, 200, "{:?}", sel.body);
     let (status, lines) = stream_in_thread(&r, "tok-o", json!({"text": "say hello"})).join().unwrap();
-    std::env::remove_var("ZOHARA_CHAT_CLAUDE_BIN");
+    std::env::remove_var("ZOHARA_AGENT_CLAUDE_BIN");
     std::env::remove_var("FIREBASE_SERVICE_ACCOUNT");
     assert_eq!(status, 200);
     assert!(lines.iter().any(|l| l["text"].as_str().is_some_and(|t| t.contains("hello from claude"))), "{lines:?}");
@@ -2248,10 +2248,10 @@ fn claude_code_runs_for_the_owner_on_the_server_with_the_owners_token_in_a_minim
 }
 
 // ===========================================================================================================================
-// link:e2e:begin the real desktop link code (zo-core's `link::run_loop`, in the `linkdesk` example, with the real Zohara Chat service and a fake
+// link:e2e:begin the real desktop link code (zo-core's `link::run_loop`, in the `linkdesk` example, with the real Zohara Agent service and a fake
 // model) against this server over HTTP; and the owner's Claude token sent with the desktop's own code, run through a fake `claude`.
 
-/// Tests that set ZOHARA_CHAT_CLAUDE_BIN / FIREBASE_SERVICE_ACCOUNT take this (the environment is shared by all tests).
+/// Tests that set ZOHARA_AGENT_CLAUDE_BIN / FIREBASE_SERVICE_ACCOUNT take this (the environment is shared by all tests).
 static CLAUDE_ENV: Mutex<()> = Mutex::new(());
 
 /// target/debug, found from the test binary itself.
@@ -2587,7 +2587,7 @@ fn the_owners_claude_token_is_sent_with_the_desktops_own_code_and_runs_through_a
     std::fs::write(&script, format!("#!/bin/sh\nenv > {d}/env\npwd > {d}/pwd\nprintf '%s\\n' \"$@\" > {d}/args\necho '{{\"type\":\"system\",\"session_id\":\"s-7\"}}'\necho '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"the owner subscription answers\"}}]}}}}'\necho '{{\"type\":\"result\",\"result\":\"ok\"}}'\n", d = dir.display())).unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::env::set_var("ZOHARA_CHAT_CLAUDE_BIN", &script);
+    std::env::set_var("ZOHARA_AGENT_CLAUDE_BIN", &script);
     std::env::set_var("FIREBASE_SERVICE_ACCOUNT", "must-not-leak-firebase");
     let sel = call(&r, "tok-o", "/api/op", json!({"op": "select", "provider": "claude-code", "model": "sonnet"}));
     assert_eq!(sel.status, 200, "{:?}", sel.body);
@@ -2600,7 +2600,7 @@ fn the_owners_claude_token_is_sent_with_the_desktops_own_code_and_runs_through_a
     let gsel = call(&r, "tok-b", "/api/op", json!({"op": "select", "provider": "claude-code", "model": "sonnet"}));
     let guest_lines = drain(&stream_live(&r, "tok-b", json!({"text": "say hello", "provider": "claude-code"})), 20);
     let guest_env_exists = dir.join("env").exists();
-    std::env::remove_var("ZOHARA_CHAT_CLAUDE_BIN");
+    std::env::remove_var("ZOHARA_AGENT_CLAUDE_BIN");
     std::env::remove_var("FIREBASE_SERVICE_ACCOUNT");
     assert!(all_text(&owner_lines).contains("the owner subscription answers"), "{owner_lines:?}");
     assert_eq!(gsel.body["ok"], false, "{:?}", gsel.body);
@@ -2705,7 +2705,7 @@ fn the_cloud_terminal_is_for_the_owner_only_runs_a_real_shell_with_no_server_sec
     let (text, _) = until_output(&rx, "[/", 15);
     assert!(text.contains("zo-42") && text.contains("24 100"), "{text}");
     // the shell's environment is exactly what term.rs gives it: not one of the server's variables
-    for bad in ["ZO_SERVER_SECRET", "FIREBASE", "ZO_TENANT_ROOT", "ZO_ADMIN", "ZO_MULTI_TENANT", testenv::SECRET, "CLAUDE_CODE_OAUTH_TOKEN", "ZOHARA_CHAT_KEY", "ZOAI_KEY"] {
+    for bad in ["ZO_SERVER_SECRET", "FIREBASE", "ZO_TENANT_ROOT", "ZO_ADMIN", "ZO_MULTI_TENANT", testenv::SECRET, "CLAUDE_CODE_OAUTH_TOKEN", "ZOHARA_AGENT_KEY", "ZOHARA_CHAT_KEY", "ZOAI_KEY"] {
         assert!(!text.contains(bad), "{bad} is visible in the terminal:\n{text}");
     }
     assert!(text.contains("TERM=xterm-256color") && text.contains("DISABLE_AUTOUPDATER=1"), "{text}");
@@ -2940,7 +2940,7 @@ fn the_guided_claude_sign_in_over_http_gives_the_page_a_link_takes_the_code_and_
     std::fs::write(&script, format!("#!/bin/sh\nenv > {d}/env\nprintf 'Open: https://claude.com/cai/oauth/authorize?state=http1\\r\\nPaste code > '\nread code\nif [ \"$code\" = \"the-code\" ]; then printf 'Your token:\\r\\n{TOKEN}\\r\\n'; sleep 20; else exit 1; fi\n", d = dir.display())).unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::env::set_var("ZOHARA_CHAT_CLAUDE_BIN", &script);
+    std::env::set_var("ZOHARA_AGENT_CLAUDE_BIN", &script);
     std::env::set_var("FIREBASE_SERVICE_ACCOUNT", "must-not-leak-firebase");
     let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // the restricted person (the operator did not allow everybody) is refused everywhere except the status, which says so
@@ -3005,7 +3005,7 @@ fn the_guided_claude_sign_in_over_http_gives_the_page_a_link_takes_the_code_and_
         assert_eq!(call(&r, "tok-o", "/api/claude/logout", json!({})).status, 200);
         assert_eq!(call(&r, "tok-o", "/api/claude/status", json!({})).body["present"], false);
     }));
-    std::env::remove_var("ZOHARA_CHAT_CLAUDE_BIN");
+    std::env::remove_var("ZOHARA_AGENT_CLAUDE_BIN");
     std::env::remove_var("FIREBASE_SERVICE_ACCOUNT");
     let _ = std::fs::remove_dir_all(&dir);
     if let Err(e) = done {

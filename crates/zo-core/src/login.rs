@@ -1,4 +1,4 @@
-//! Signing in to the Zohara Chat server, for the desktop app and the terminal client (no GUI code here). See docs/SYNC.md.
+//! Signing in to the Zohara Agent server, for the desktop app and the terminal client (no GUI code here). See docs/SYNC.md.
 //!
 //! Nothing here runs unless the person chooses to sign in: the app works fully without it, and nothing is sent anywhere before.
 //! Two ways in, both ending in a **device credential** (`zd_...`, issued by the server, stored hashed there, revocable):
@@ -9,7 +9,7 @@
 //!   server's approval page after signing in there, and the server hands the credential over once.
 //!
 //! The credential is kept in the key store (id `sync-token`, the system keyring); the account's e-mail and the on/off switch are
-//! in ~/.config/zohara-chat/sync.json, never the credential. It is never logged, and never put in an error text.
+//! in ~/.config/zohara-agent/sync.json, never the credential. It is never logged, and never put in an error text.
 //! Every call that goes out takes its base address as a parameter (`*_at`), so tests can talk to a mock on this computer.
 
 use crate::sync;
@@ -27,7 +27,7 @@ const CREDENTIAL_ID: &str = "sync-token";
 // ---------------------------------------------------------------------------------------------------------------------------
 // the server address
 
-/// Where the Zohara Chat server is: the environment `ZO_SERVER_URL`, else the address saved in sync.json, else the default.
+/// Where the Zohara Agent server is: the environment `ZO_SERVER_URL`, else the address saved in sync.json, else the default.
 /// Every one of them has to pass `sync::clean_url` (https; plain http only for this computer), because a credential goes there.
 pub fn server_url() -> Result<String, String> {
     resolve_server_url(std::env::var("ZO_SERVER_URL").ok().as_deref(), &sync::config().url)
@@ -113,7 +113,7 @@ fn fb_call(base: &str, endpoint: &str, body: &Value) -> Result<Value, String> {
     Err(friendly_firebase_error(msg))
 }
 
-/// Why a call to the Zohara Chat server failed: a hiccup worth trying again, or an answer.
+/// Why a call to the Zohara Agent server failed: a hiccup worth trying again, or an answer.
 #[derive(Debug)]
 enum Fail {
     Transient(String),
@@ -256,13 +256,13 @@ pub fn clean_device_name(name: &str) -> Result<String, String> {
     }
 }
 
-/// "Zohara Chat desktop on <host name of this computer>".
+/// "Zohara Agent desktop on <host name of this computer>".
 pub fn default_device_name(kind: &str) -> String {
     let host = std::env::var("HOSTNAME").ok().filter(|h| !h.trim().is_empty()).or_else(|| std::fs::read_to_string("/etc/hostname").ok()).unwrap_or_default();
     let host = host.trim();
     let what = if kind == "cli" { "terminal" } else { "desktop" };
-    let n = if host.is_empty() { format!("Zohara Chat {what}") } else { format!("Zohara Chat {what} on {host}") };
-    clean_device_name(&n).unwrap_or_else(|_| "Zohara Chat".into())
+    let n = if host.is_empty() { format!("Zohara Agent {what}") } else { format!("Zohara Agent {what} on {host}") };
+    clean_device_name(&n).unwrap_or_else(|_| "Zohara Agent".into())
 }
 
 fn credential_from(v: &Value) -> Result<Login, String> {
@@ -673,7 +673,7 @@ mod tests {
         }
         assert!(clean_device_name("  ").is_err());
         assert_eq!(clean_device_name(&"x".repeat(100)).unwrap().len(), 60);
-        assert!(default_device_name("cli").starts_with("Zohara Chat terminal"));
+        assert!(default_device_name("cli").starts_with("Zohara Agent terminal"));
         assert!(check_kind("phone").is_err());
     }
 
@@ -750,7 +750,7 @@ mod tests {
         assert!(n <= 15, "{n}");
     }
 
-    // ---- a tiny mock of Firebase REST and the Zohara Chat server ----------------------------------------------------------------
+    // ---- a tiny mock of Firebase REST and the Zohara Agent server ----------------------------------------------------------------
 
     #[derive(Default)]
     struct Mock {
@@ -1026,8 +1026,8 @@ mod tests {
         let d = sandbox("persist");
         std::env::set_var("XDG_CONFIG_HOME", d.join("config"));
         std::env::set_var("XDG_DATA_HOME", d.join("data"));
-        std::env::set_var("ZOHARA_CHAT_KEYS_FILE", d.join("keys.json"));
-        std::env::remove_var("ZOHARA_CHAT_KEY_SYNC_TOKEN");
+        std::env::set_var("ZOHARA_AGENT_KEYS_FILE", d.join("keys.json"));
+        std::env::remove_var("ZOHARA_AGENT_KEY_SYNC_TOKEN");
         std::env::remove_var("ZO_SERVER_URL");
         assert_eq!(signed_in(), None);
         assert!(!sync::config().enabled);
@@ -1042,7 +1042,7 @@ mod tests {
         assert_eq!(sync::token().as_deref(), Some(l.credential.as_str()));
         assert_eq!(server_url().unwrap(), "http://127.0.0.1:8799");
         // the credential is in the key store, never in sync.json
-        let cfg_text = std::fs::read_to_string(d.join("config/zohara-chat/sync.json")).unwrap();
+        let cfg_text = std::fs::read_to_string(d.join("config/zohara-agent/sync.json")).unwrap();
         assert!(!cfg_text.contains("zd_") && !cfg_text.contains("AAAA"), "{cfg_text}");
         // turning syncing off by hand keeps the e-mail
         sync::save_config("http://127.0.0.1:8799", false).unwrap();
@@ -1062,7 +1062,7 @@ mod tests {
         std::env::set_var("ZO_SERVER_URL", "https://env.example/");
         assert_eq!(server_url().unwrap(), "https://env.example");
         std::env::remove_var("ZO_SERVER_URL");
-        for k in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZOHARA_CHAT_KEYS_FILE"] {
+        for k in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZOHARA_AGENT_KEYS_FILE"] {
             std::env::remove_var(k);
         }
         let _ = std::fs::remove_dir_all(&d);
@@ -1075,8 +1075,8 @@ mod tests {
         let d = sandbox("e2e");
         std::env::set_var("XDG_CONFIG_HOME", d.join("config"));
         std::env::set_var("XDG_DATA_HOME", d.join("data"));
-        std::env::set_var("ZOHARA_CHAT_KEYS_FILE", d.join("keys.json"));
-        std::env::remove_var("ZOHARA_CHAT_KEY_SYNC_TOKEN");
+        std::env::set_var("ZOHARA_AGENT_KEYS_FILE", d.join("keys.json"));
+        std::env::remove_var("ZOHARA_AGENT_KEY_SYNC_TOKEN");
         std::env::set_var("ZO_SERVER_URL", &addr);
         st.lock().unwrap().users.insert("cy@x.co".into(), ("secret1".into(), true));
         let fb = format!("{addr}/fb");
@@ -1102,7 +1102,7 @@ mod tests {
         let e = sign_out().unwrap_err();
         assert!(e.contains("Signed out here") && !e.contains("zd_"), "{e}");
         assert_eq!(signed_in(), None);
-        for k in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZOHARA_CHAT_KEYS_FILE", "ZO_SERVER_URL"] {
+        for k in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZOHARA_AGENT_KEYS_FILE", "ZO_SERVER_URL"] {
             std::env::remove_var(k);
         }
         let _ = std::fs::remove_dir_all(&d);
@@ -1111,12 +1111,12 @@ mod tests {
     fn env_on(d: &std::path::Path) {
         std::env::set_var("XDG_CONFIG_HOME", d.join("config"));
         std::env::set_var("XDG_DATA_HOME", d.join("data"));
-        std::env::set_var("ZOHARA_CHAT_KEYS_FILE", d.join("keys.json"));
-        std::env::remove_var("ZOHARA_CHAT_KEY_SYNC_TOKEN");
+        std::env::set_var("ZOHARA_AGENT_KEYS_FILE", d.join("keys.json"));
+        std::env::remove_var("ZOHARA_AGENT_KEY_SYNC_TOKEN");
         std::env::set_var("ZO_SERVER_URL", "http://127.0.0.1:9");
     }
     fn env_off() {
-        for k in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZOHARA_CHAT_KEYS_FILE", "ZO_SERVER_URL"] {
+        for k in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZOHARA_AGENT_KEYS_FILE", "ZO_SERVER_URL"] {
             std::env::remove_var(k);
         }
     }
@@ -1196,12 +1196,12 @@ mod tests {
         let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let d = sandbox("nokeyring");
         env_on(&d);
-        std::env::remove_var("ZOHARA_CHAT_KEYS_FILE");
+        std::env::remove_var("ZOHARA_AGENT_KEYS_FILE");
         std::env::set_var("ZO_TEST_SECRET_TOOL", d.join("nothing")); // no secret-tool (PATH stays untouched: other tests start programs)
         let l = login();
         let r = save_login_as(Client::Cli, &l);
         let got = credential_of(Client::Cli);
-        let f = d.join("config/zohara-chat/credentials.json");
+        let f = d.join("config/zohara-agent/credentials.json");
         let mode = std::fs::metadata(&f).map(|m| m.permissions().mode() & 0o777);
         clear_login_as(Client::Cli);
         let gone = credential_of(Client::Cli).is_none() && !f.exists();

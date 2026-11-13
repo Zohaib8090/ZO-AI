@@ -1,6 +1,6 @@
 {
-  "name": "Zohara Chat",
-  "short_name": "Zohara Chat",
+  "name": "Zohara Agent",
+  "short_name": "Zohara Agent",
   "description": "Your AI, from any browser: the same assistant as in Zohara OS.",
   "id": "/",
   "start_url": "/",

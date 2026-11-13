@@ -1,10 +1,10 @@
-# Plan: Zohara Chat everywhere (web, terminal, sync, remote machines)
+# Plan: Zohara Agent everywhere (web, terminal, sync, remote machines)
 
 Written 2026-11-12 from the owner's request. Status 2026-11-12: the web app, the `zo` terminal client (docs/CLI.md), laptop sync (docs/SYNC.md) and SSH machines (docs/SSH.md) are built and merged on main. Still not built: phone sync, `zo ssh`, and the real Render, Firebase and Firestore set-up has not been tested. The text below is the original brief.
 
 > **Update 2026-11-12 (latest): no manual tokens.** People sign in with a Google account or e-mail and password; the desktop app works fully without any login and sends nothing until the person signs in; the web needs one. The desktop app and `zo` get a server-issued, revocable device credential through a browser device flow or an e-mail exchange, and nobody sees or copies it. Where the text below says "device token" or "made on the Account page", read: the sign-in flows in `LOGIN.md`.
 
-> **Update 2026-11-12 (later): the server is public.** The owner decided that every person who uses Zohara OS / Zohara Chat may sign in with
+> **Update 2026-11-12 (later): the server is public.** The owner decided that every person who uses Zohara OS / Zohara Agent may sign in with
 > Google and use the service. The single-owner assumptions in this plan (one allowed account, one shared data folder, one global
 > `ZO_ACCESS_TOKEN`, shell and file tools on the server) are **replaced** by a multi-tenant, bring-your-own-key design: per-user tenants and
 > encrypted keys, restricted tools for everyone except the admin addresses in `ZO_ADMIN_EMAILS`, per-user device credentials (later by sign-in, see LOGIN.md), limits, an Account
@@ -13,13 +13,13 @@ Written 2026-11-12 from the owner's request. Status 2026-11-12: the web app, the
 
 ## What the owner asked for
 
-1. A **web version** of Zohara Chat, a full clone of the desktop app, with a **login** (Firebase Authentication), usable from anywhere.
+1. A **web version** of Zohara Agent, a full clone of the desktop app, with a **login** (Firebase Authentication), usable from anywhere.
 2. **Everything in sync**: chats, memory, personalities, projects, settings, between laptop, phone and web.
 3. **API keys** entered once work on the web too.
 4. **Works with the laptop off**: normal chats must still work from the web.
 5. **Claude Code mode** (the experimental provider) reachable from the web, even when the laptop is locked.
-6. **SSH control**: give Zohara Chat other machines (for example a cloud VM) to work on.
-7. A **terminal version** of Zohara Chat.
+6. **SSH control**: give Zohara Agent other machines (for example a cloud VM) to work on.
+7. A **terminal version** of Zohara Agent.
 
 ## The one decision that shapes everything
 
@@ -36,7 +36,7 @@ A locked laptop still runs its agent, so tools keep working while it is locked. 
 
 ```
  web app ─┐
- phone  ──┼──> Zohara Chat cloud server (zo-core, always on) ──> model APIs
+ phone  ──┼──> Zohara Agent cloud server (zo-core, always on) ──> model APIs
  terminal ┘        │  Firebase Auth checks who you are
                    │  Firestore keeps chats, memory, settings (sync)
                    └──> machine agents: laptop (outbound link), VMs (SSH)
@@ -99,4 +99,4 @@ A locked laptop still runs its agent, so tools keep working while it is locked. 
 * **Claude Code mode on the server and on VMs** (admin only, never for other users): the server (and any VM added over SSH) runs `claude` itself, signed in with a
   long-lived token the owner makes once with `claude setup-token` and stores as the secret `CLAUDE_CODE_OAUTH_TOKEN`. So
   Claude Code mode works from the web with the laptop off. For the owner's own use only.
-* **SSH machines**: the owner adds a host, user and key; Zohara Chat's shell and file tools, and Claude Code, can then run there.
+* **SSH machines**: the owner adds a host, user and key; Zohara Agent's shell and file tools, and Claude Code, can then run there.

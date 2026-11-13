@@ -1,4 +1,4 @@
-//! `zo`: Zohara Chat in the terminal. Talks to the local Zohara Chat service (the app's Unix socket) or to a zo-server with --remote.
+//! `zo`: Zohara Agent in the terminal. Talks to the local Zohara Agent service (the app's Unix socket) or to a zo-server with --remote.
 
 mod account;
 mod net;
@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
-const USAGE: &str = "zo: Zohara Chat in the terminal
+const USAGE: &str = "zo: Zohara Agent in the terminal
 
 Usage:
   zo \"question\"              ask once; the answer streams to stdout, tool steps go to stderr
@@ -22,7 +22,7 @@ Usage:
   zo ask <text>              ask, even when the text starts with a command word
   zo chats                   list saved chats
   zo show <chat-id>          print a saved chat
-  zo memory                  list what Zohara Chat remembers
+  zo memory                  list what Zohara Agent remembers
   zo remember \"text\"         remember something
   zo forget <note-id>        forget a note
   zo status                  model, permission mode, version
@@ -46,7 +46,7 @@ Options:
   -h, --help             this text
   -V, --version
 
-Where zo talks to: the Zohara Chat app on this computer when it runs; otherwise, when you have signed in with `zo login`, the Zohara Chat
+Where zo talks to: the Zohara Agent app on this computer when it runs; otherwise, when you have signed in with `zo login`, the Zohara Agent
 server (the same chats, memory and personalities as the web version). `--local` forces the app, `--remote URL` a server.
 You never copy a token: `zo login` does it. For scripts a device credential (starts with zd_) can still be given in the
 environment (ZO_DEVICE_TOKEN, or the older name ZO_ACCESS_TOKEN) or a file; never as an argument value (the process list shows those).
@@ -496,7 +496,7 @@ fn ask(cx: &Ctx, text: &str, chat: Option<&str>, input: &mut Input) -> i32 {
     if rend.failed { 1 } else { 0 }
 }
 
-const CHAT_HELP: &str = "/new            start a new chat\n/chats          list saved chats\n/open N         open number N of the last list (or a chat id)\n/model [name]   show the models, or choose one\n/mode [name]    show or set the permission mode (Manual, Auto, Bypass)\n/memory         list what Zohara Chat remembers\n/stop           stop the running answer\n/quit           leave (also Ctrl-D, or Ctrl-C twice)";
+const CHAT_HELP: &str = "/new            start a new chat\n/chats          list saved chats\n/open N         open number N of the last list (or a chat id)\n/model [name]   show the models, or choose one\n/mode [name]    show or set the permission mode (Manual, Auto, Bypass)\n/memory         list what Zohara Agent remembers\n/stop           stop the running answer\n/quit           leave (also Ctrl-D, or Ctrl-C twice)";
 
 fn chat_loop(cx: &Ctx, first: Option<String>, input: &mut Input) -> i32 {
     let mut chat = first;

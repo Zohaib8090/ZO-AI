@@ -1,6 +1,6 @@
-# Zohara Chat as a public service
+# Zohara Agent as a public service
 
-Written 2026-11-12. The server is not a personal site: every person who uses Zohara OS / Zohara Chat may sign in with Google or with e-mail and password and use it from
+Written 2026-11-12. The server is not a personal site: every person who uses Zohara OS / Zohara Agent may sign in with Google or with e-mail and password and use it from
 the web, the desktop app (sync) and the terminal client `zo`. The web version needs a sign-in; the desktop app works fully without one and sends nothing until the person signs in (`LOGIN.md`). This page is the design, the threat model, the limits, the cost and the
 operator checklist. Privacy and terms texts: `PRIVACY.md`, `TERMS.md` (templates, not legal advice). Cost and quota figures come from
 the vendors' pages read on 2026-11-12 (sources at the end); the per-user usage numbers are my assumptions, not measurements.
@@ -178,7 +178,7 @@ intermediate usage (Commercial Terms A.1 and D.4, code.claude.com/docs/en/legal-
 route a Claude.ai login or subscription token for other people: Claude Code mode stays admin-only on the owner's own token. The owner sends it once from the desktop app (`claude setup-token`, see `LINK.md`); it is stored encrypted for that account only and `claude` runs on the server with a minimal environment. Everybody else signs in to Claude Code on their own computer and the web page reaches it through the desktop link ("My computer"), so no other person's subscription is ever on the server. Anthropic asks
 that users are told outputs may be wrong (D.3): the Terms say it. OpenRouter requires users to be 18+ and makes the key holder responsible
 for charges (openrouter.ai/terms). OpenAI forbids sharing or reselling keys (3.1, 3.3(g)); a user pasting their own key is not clearly
-addressed, so the consent wording is "Zohara Chat may use your key only for your own requests".
+addressed, so the consent wording is "Zohara Agent may use your key only for your own requests".
 
 ## Not verified
 

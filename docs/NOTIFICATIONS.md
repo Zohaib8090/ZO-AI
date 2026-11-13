@@ -1,6 +1,6 @@
 # Notifications, the installable web app and background push
 
-Written 2026-11-12 for the web version of Zohara Chat (`crates/zo-server`). Three layers, each one optional for the person:
+Written 2026-11-12 for the web version of Zohara Agent (`crates/zo-server`). Three layers, each one optional for the person:
 
 1. **Installable app (PWA).** The web page has a manifest, icons and a service worker, so Chrome, Edge, Safari (iOS: Share, Add to Home Screen) and Firefox for Android can install it. Settings > *Install and notifications* has the *Install app* button (it appears when the browser offers installation) and the iOS hint.
 2. **Notifications from the open page** (tab in the background). Local to the browser: nothing is sent to any server for this.
@@ -12,7 +12,7 @@ Written 2026-11-12 for the web version of Zohara Chat (`crates/zo-server`). Thre
 |---|---|---|
 | Layer 2 notice | nobody (made in the browser by the service worker) | "Your answer is ready", or the chat title if the person switched *Show the chat title* on |
 | Web Push (layer 3) | the push service the browser itself named when it subscribed: Google (`fcm.googleapis.com`), Mozilla (`updates.push.services.mozilla.com`), Apple (`*.push.apple.com`, `web.push.apple.com`), Microsoft (`*.notify.windows.com`) | an encrypted record (RFC 8291, aes128gcm; the push service cannot read it). Plain content: `{"v":1,"type":"answer","chat":"<chat id>"}` and, only for a device whose owner switched the title on, `"title"` cut to 60 characters |
-| FCM (Android app) | `fcm.googleapis.com/v1/projects/<project>/messages:send` with the Firebase service account the server already has (scope `firebase.messaging`) | notification "Zohara Chat: Your answer is ready", data `chat` (and `title` under the same rule). FCM is not end-to-end encrypted |
+| FCM (Android app) | `fcm.googleapis.com/v1/projects/<project>/messages:send` with the Firebase service account the server already has (scope `firebase.messaging`) | notification "Zohara Agent: Your answer is ready", data `chat` (and `title` under the same rule). FCM is not end-to-end encrypted |
 | Registration | this server | the browser's push address and two keys (needed to encrypt for it), a label such as "Chrome on Linux", the title choice. Kept in Firestore `users/<tenant>/meta/push`, deleted with the account (`delete` wipes the whole `users/<tenant>` tree) |
 
 Never sent: the question, the answer, tool output, the API key, the e-mail address. The chat id is a random-looking number (`c<time>`), not content.
@@ -53,9 +53,9 @@ The browser stores its choices in `localStorage["zo-notify"]` (which toggles are
 
 ## Web app behaviour (settings, notifications)
 
-* Permission is asked only from the button, with an explanation. *Answer finished while this tab is in the background* is on after permission; *Zohara Chat needs my approval* (admins only), *Show the chat title* (off by default), *Sound* (system sound; `silent` when off), *Send a test notification*.
-* No notice while the tab is visible. The tab title shows `(1) Zohara Chat` and the icon gets a dot while an answer is unseen; both reset when the tab is visible or focused again (open notifications are closed too).
-* Notices go through the service worker (`registration.showNotification`), with a fallback to `new Notification`. Clicking one focuses an open Zohara Chat window and opens that chat (message `zo-open-chat`), or opens `/?chat=<id>`. The same tag per chat de-duplicates.
+* Permission is asked only from the button, with an explanation. *Answer finished while this tab is in the background* is on after permission; *Zohara Agent needs my approval* (admins only), *Show the chat title* (off by default), *Sound* (system sound; `silent` when off), *Send a test notification*.
+* No notice while the tab is visible. The tab title shows `(1) Zohara Agent` and the icon gets a dot while an answer is unseen; both reset when the tab is visible or focused again (open notifications are closed too).
+* Notices go through the service worker (`registration.showNotification`), with a fallback to `new Notification`. Clicking one focuses an open Zohara Agent window and opens that chat (message `zo-open-chat`), or opens `/?chat=<id>`. The same tag per chat de-duplicates.
 * The service worker (`/sw.js`) caches only the page shell (`/`, manifest, icons), stale-while-revalidate, and **never** `/api/*`. Its version is a hash of the page, made by the server; a new page means a new worker, which waits, and the app shows *Update available - Reload*. Headers: `Content-Type: text/javascript`, `Service-Worker-Allowed: /`, `Cache-Control: no-cache` (also for the manifest). The CSP has `worker-src 'self'` and `manifest-src 'self'`.
 * In the Android app (Capacitor) the web push parts are hidden; it registers with kind `fcm`.
 

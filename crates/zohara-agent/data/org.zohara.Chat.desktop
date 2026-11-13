@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Zohara Agent
+Comment=Old launcher name of Zohara Agent when it was called Zohara Chat (kept so panel pins made before the rename still start it)
+Exec=zohara-agent
+Icon=zohara-agent
+Terminal=false
+NoDisplay=true
+StartupWMClass=org.zohara.Agent

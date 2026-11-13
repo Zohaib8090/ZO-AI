@@ -1,4 +1,4 @@
-# Render blueprint for the Zohara Chat server (public, multi-user). The secrets are typed into Render by the owner; they are never in this repository.
+# Render blueprint for the Zohara Agent server (public, multi-user). The secrets are typed into Render by the owner; they are never in this repository.
 #
 # Plan: "free" (the owner's choice for the first launch). Known limits: the instance spins down after 15 minutes without
 # inbound traffic (the server's self-ping every 8 minutes tries to prevent that; add an external pinger on /healthz if it
