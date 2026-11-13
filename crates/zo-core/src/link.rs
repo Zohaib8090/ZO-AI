@@ -151,6 +151,9 @@ pub enum Kind {
     Op { op: String, args: Vec<(String, Value)> },
     Stop { job_id: Option<String> },
     ApprovalReply { job_id: String, approval: u64, yes: bool },
+    /// The person's answer to a question card (`zohara_ask_user`) of a running web session: `reply` is the checked
+    /// `{"cancelled":true}` or `{"answers":[...]}`; the service checks it again against the question it asked.
+    AnswerReply { job_id: String, question: u64, reply: Value },
 }
 
 #[derive(Debug, PartialEq)]
@@ -256,9 +259,43 @@ pub fn parse_job(v: &Value, now_ms: u64) -> Result<Job, (Option<String>, String)
                 _ => return bad("The approval answer is not valid."),
             }
         }
+        "answer_reply" => {
+            let job = v.get("job_id").and_then(Value::as_str).unwrap_or("");
+            let qid = v.get("question_id").or_else(|| v.get("question")).and_then(|x| x.as_u64().or_else(|| x.as_str().and_then(|s| s.parse().ok())));
+            let reply = if v.get("cancelled").and_then(Value::as_bool) == Some(true) {
+                Some(json!({"cancelled": true}))
+            } else {
+                clean_answers(v.get("answers")).map(|a| json!({"answers": a}))
+            };
+            match (safe_id(job, 64), qid, reply) {
+                (true, Some(q), Some(r)) => Kind::AnswerReply { job_id: job.to_string(), question: q, reply: r },
+                _ => return bad("The answer to the question is not valid."),
+            }
+        }
         _ => return bad("Unknown job type."),
     };
     Ok(Job { id, kind })
+}
+
+/// The `answers` of an answer job rebuilt from checked fields only: at most 4 answers, each `{selected: [<=6 texts of <=100
+/// characters], other: <=4000 characters or null}`. (What the answers MEAN is checked by the service against its own question.)
+fn clean_answers(v: Option<&Value>) -> Option<Value> {
+    let list = v?.as_array().filter(|l| !l.is_empty() && l.len() <= 4)?;
+    let mut out = Vec::new();
+    for a in list {
+        let sel = match a.get("selected") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(items)) if items.len() <= 6 => items.iter().map(|i| i.as_str().filter(|s| s.chars().count() <= 100).map(|s| json!(s))).collect::<Option<Vec<_>>>()?,
+            _ => return None,
+        };
+        let other = match a.get("other") {
+            None | Some(Value::Null) => Value::Null,
+            Some(Value::String(s)) if s.chars().count() <= 4000 => json!(s),
+            _ => return None,
+        };
+        out.push(json!({"selected": sel, "other": other}));
+    }
+    Some(Value::Array(out))
 }
 
 /// The `op` request for the local service, built from validated arguments only. The mode operation can only make this computer
@@ -286,7 +323,8 @@ pub fn op_request(op: &str, args: &[(String, Value)], saved: Mode) -> Result<Val
 
 /// The request for the local service for a `send` job.
 pub fn send_request(text: &str, chat: &Option<String>, edit: Option<u64>, attachments: &Option<Value>, mode: Mode) -> Value {
-    let mut r = json!({"op": "send", "text": text, "client": "web-link", "mode": mode.name().to_ascii_lowercase()});
+    // "can_ask": the web page shows question cards, so the model may ask (the answer comes back as an `answer_reply` job)
+    let mut r = json!({"op": "send", "text": text, "client": "web-link", "mode": mode.name().to_ascii_lowercase(), "can_ask": true});
     if let Some(c) = chat {
         r["chat"] = json!(c);
     }
@@ -400,6 +438,10 @@ struct Ctl {
     /// Approvals this job waits for (answered from the web), by approval id.
     waiting: Mutex<HashMap<u64, mpsc::Sender<bool>>>,
     approvals_from_web: bool,
+    /// Question cards that were shown to the web for this job (ids announced by the service): only these can be answered.
+    questions: Mutex<std::collections::HashSet<u64>>,
+    /// The connection to the service that runs this job, for forwarding an answer.
+    service: Mutex<Option<Arc<Mutex<UnixStream>>>>,
 }
 
 struct Shared {
@@ -463,6 +505,7 @@ fn run_send(sh: Arc<Shared>, base: String, cred: String, id: String, ctl: Arc<Ct
     };
     let Ok(read_half) = conn.try_clone() else { return };
     let out = Arc::new(Mutex::new(conn));
+    *ctl.service.lock().unwrap_or_else(|e| e.into_inner()) = Some(out.clone());
     let say = |v: &Value| -> bool {
         let mut s = v.to_string();
         s.push('\n');
@@ -531,8 +574,17 @@ fn run_send(sh: Arc<Shared>, base: String, cred: String, id: String, ctl: Arc<Ct
                     }
                     flush_now = true;
                 } else {
+                    // a question card goes to the web as it is; its answer comes back as an `answer_reply` job (only for this id)
+                    if kind == "question" {
+                        if let Some(q) = ev.get("id").and_then(Value::as_u64) {
+                            let mut open = ctl.questions.lock().unwrap_or_else(|e| e.into_inner());
+                            if open.len() < 16 {
+                                open.insert(q);
+                            }
+                        }
+                    }
                     batch.push(trim_event(ev));
-                    flush_now = matches!(kind.as_str(), "error" | "stopped" | "done" | "chat");
+                    flush_now = matches!(kind.as_str(), "error" | "stopped" | "done" | "chat" | "question");
                 }
                 if kind == "done" {
                     finished = true;
@@ -578,6 +630,8 @@ fn run_send(sh: Arc<Shared>, base: String, cred: String, id: String, ctl: Arc<Ct
             break;
         }
     }
+    ctl.questions.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    *ctl.service.lock().unwrap_or_else(|e| e.into_inner()) = None;
     let _ = out.lock().map(|o| o.shutdown(std::net::Shutdown::Both));
     // the chat was saved on this computer: let the sync carry it to the web now
     crate::sync::kick();
@@ -628,7 +682,7 @@ fn start_job(sh: &Arc<Shared>, base: &str, cred: &str, job: Job) {
             }
             let capped = cap_mode(mode, Mode::load(), cfg.allow_bypass);
             let req = send_request(&text, &chat, edit, &attachments, capped);
-            let ctl = Arc::new(Ctl { stop: AtomicBool::new(false), waiting: Mutex::new(HashMap::new()), approvals_from_web: cfg.approvals_from_web });
+            let ctl = Arc::new(Ctl { stop: AtomicBool::new(false), waiting: Mutex::new(HashMap::new()), approvals_from_web: cfg.approvals_from_web, questions: Mutex::new(Default::default()), service: Mutex::new(None) });
             sh.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(job.id.clone(), ctl.clone());
             st().active = Some(job.id.clone());
             let sh2 = sh.clone();
@@ -655,6 +709,24 @@ fn start_job(sh: &Arc<Shared>, base: &str, cred: &str, job: Job) {
             for (id, ctl) in jobs.iter() {
                 if job_id.as_deref().map(|j| j == id).unwrap_or(true) {
                     ctl.stop.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+        Kind::AnswerReply { job_id, question, reply } => {
+            // only for a running job and a question card that this job showed. A question is just the person's own words (it runs
+            // nothing), so it does not need the "approvals from the web" switch; the service checks the content again.
+            let ctl = sh.jobs.lock().unwrap_or_else(|e| e.into_inner()).get(&job_id).cloned();
+            if let Some(ctl) = ctl {
+                if ctl.questions.lock().unwrap_or_else(|e| e.into_inner()).contains(&question) {
+                    let mut line = json!({"op": "answer", "id": question});
+                    if let (Some(o), Some(r)) = (line.as_object_mut(), reply.as_object()) {
+                        o.extend(r.iter().map(|(k, v)| (k.clone(), v.clone())));
+                    }
+                    if let Some(svc) = ctl.service.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+                        let mut s = line.to_string();
+                        s.push('\n');
+                        let _ = svc.lock().map(|mut o| o.write_all(s.as_bytes()));
+                    }
                 }
             }
         }
@@ -923,7 +995,7 @@ mod tests {
     #[test]
     fn the_service_request_is_built_from_checked_fields_only() {
         let r = send_request("hi", &Some("c1".into()), None, &None, Mode::Auto);
-        assert_eq!(r, json!({"op": "send", "text": "hi", "client": "web-link", "mode": "auto", "chat": "c1"}));
+        assert_eq!(r, json!({"op": "send", "text": "hi", "client": "web-link", "mode": "auto", "can_ask": true, "chat": "c1"}));
         // the web can only make the saved mode stricter
         let args = |s: &str| vec![("set".to_string(), json!(s))];
         assert!(op_request("mode", &args("bypass"), Mode::Auto).is_err());
@@ -1147,7 +1219,7 @@ mod tests {
         assert_eq!(kinds, ["chat", "delta", "text", "done"], "{kinds:?}");
         // the request the service saw: capped to Auto, no tenant, no other keys
         let req = seen_req.lock().unwrap().clone();
-        assert_eq!(req, json!({"op": "send", "text": "hi", "client": "web-link", "mode": "auto"}));
+        assert_eq!(req, json!({"op": "send", "text": "hi", "client": "web-link", "mode": "auto", "can_ask": true}));
         assert!(r.polls.load(Ordering::SeqCst) >= 1);
     }
 
@@ -1306,6 +1378,47 @@ mod tests {
         assert_eq!(*got.lock().unwrap(), Some(true));
         assert!(h.asked.lock().unwrap().is_empty(), "nothing was asked locally");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_answer_job_is_checked_and_rebuilt_from_known_fields() {
+        let ok = parse_job(&json!({"id": "a1", "type": "answer_reply", "job_id": "j-1", "question_id": 4, "answers": [{"selected": ["x"], "other": "t", "evil": 1}], "tenant": {"id": "z"}}), 0).unwrap();
+        assert_eq!(ok.kind, Kind::AnswerReply { job_id: "j-1".into(), question: 4, reply: json!({"answers": [{"selected": ["x"], "other": "t"}]}) });
+        let c = parse_job(&json!({"id": "a2", "type": "answer_reply", "job_id": "j-1", "question_id": "7", "cancelled": true}), 0).unwrap();
+        assert_eq!(c.kind, Kind::AnswerReply { job_id: "j-1".into(), question: 7, reply: json!({"cancelled": true}) });
+        let bad = |v: Value| parse_job(&v, 0).unwrap_err().1;
+        let base = |extra: Value| { let mut b = json!({"id": "a3", "type": "answer_reply", "job_id": "j-1", "question_id": 1}); for (k, v) in extra.as_object().unwrap() { b[k] = v.clone(); } b };
+        for extra in [json!({}), json!({"answers": []}), json!({"answers": "x"}), json!({"answers": [{"selected": [1]}]}), json!({"answers": [{"selected": ["a","b","c","d","e","f","g"]}]}),
+                      json!({"answers": [{"selected": ["x".repeat(101)]}]}), json!({"answers": [{"other": "y".repeat(4001)}]}), json!({"answers": [{"other": 5}]}),
+                      json!({"answers": [{}, {}, {}, {}, {}]}), json!({"job_id": "../x", "answers": [{"selected": ["a"]}]}), json!({"question_id": "abc", "answers": [{"selected": ["a"]}]})] {
+            assert!(bad(base(extra.clone())).contains("not valid"), "{extra}");
+        }
+    }
+
+    #[test]
+    fn a_question_card_is_shown_to_the_web_and_only_its_answer_reaches_the_service() {
+        let (_g, _dir) = sandbox("a_ques");
+        let got = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let g2 = got.clone();
+        let connect = fake_service(move |req, w, r| {
+            assert_eq!(req["can_ask"], true, "the web page can show question cards");
+            wl(w, json!({"event": "question", "id": 5, "questions": [{"question": "Which?", "header": "H", "multi_select": false, "options": [{"label": "a", "description": ""}, {"label": "b", "description": ""}]}]}));
+            let mut l = String::new();
+            r.read_line(&mut l).unwrap();
+            g2.lock().unwrap().push(serde_json::from_str(&l).unwrap());
+            wl(w, json!({"event": "done"}));
+        });
+        let r = rig(vec![json!({"id": "j-q", "type": "send", "text": "go"})], connect, host(true), None);
+        wait_until("the question to reach the web", || r.events.lock().unwrap().iter().any(|e| e["event"] == "question"));
+        assert_eq!(r.events.lock().unwrap().iter().find(|e| e["event"] == "question").unwrap()["questions"][0]["question"], "Which?");
+        let reply = |job: &str, q: u64| start_job(&r.shared, "http://127.0.0.1:9", "x", Job { id: "r".into(), kind: Kind::AnswerReply { job_id: job.into(), question: q, reply: json!({"answers": [{"selected": ["b"], "other": null}]}) } });
+        reply("other-job", 5); // not a running job
+        reply("j-q", 99); // a card that was never shown
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(got.lock().unwrap().is_empty(), "nothing reached the service for a wrong job or a wrong card");
+        reply("j-q", 5);
+        wait_until("done", || r.done.lock().unwrap().contains(&"j-q".to_string()));
+        assert_eq!(got.lock().unwrap()[0], json!({"op": "answer", "id": 5, "answers": [{"selected": ["b"], "other": null}]}));
     }
 
     #[test]

@@ -14,6 +14,7 @@ mod dock;
 mod markdown;
 mod modelpick;
 use zo_core::store::projects as model;
+mod questioncard;
 mod quick;
 mod scheduler;
 mod settings;
@@ -2869,8 +2870,9 @@ fn walk_tree(widget: &gtk::Widget, depth: usize) {
 
 fn main() -> glib::ExitCode {
     let app = adw::Application::builder().application_id(std::env::var("ZO_AI_APP_ID").unwrap_or_else(|_| APP_ID.to_string()).as_str()).flags(gtk::gio::ApplicationFlags::HANDLES_COMMAND_LINE).build();
-    app.connect_startup(|_| {
+    app.connect_startup(|app| {
         theme::init();
+        ask::init(app);
         gtk::Window::set_default_icon_name("zo-ai");
     });
     app.connect_activate(|_| show_main(""));

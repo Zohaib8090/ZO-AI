@@ -623,7 +623,8 @@ mod tests {
         let system = seen[0]["messages"][0]["content"].as_str().unwrap();
         assert!(system.contains("no access to the person's computer") && !system.contains("Waydroid") && !system.contains("zohara_ss"), "{system}");
         let tools: Vec<&str> = seen[0]["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap()).collect();
-        assert_eq!(tools.len(), crate::tools::RESTRICTED_TOOLS.len(), "{tools:?}");
+        // (zohara_ask_user is left out: nobody can be asked by this run)
+        assert_eq!(tools.len(), crate::tools::RESTRICTED_TOOLS.len() - 1, "{tools:?}");
         assert!(tools.iter().all(|n| crate::tools::RESTRICTED_TOOLS.contains(n)));
         // not restricted: the old limit of 15 and the full prompt
         let admin = fresh(false);

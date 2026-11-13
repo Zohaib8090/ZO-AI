@@ -56,7 +56,11 @@ fn main() {
             if said.contains("slow") {
                 std::thread::sleep(std::time::Duration::from_secs(25));
             }
-            if said.contains("write") && last["role"] != "tool" {
+            if said.contains("ask me") && last["role"] != "tool" {
+                serde_json::json!({ "choices": [{ "message": { "content": "I need to know one thing.", "tool_calls": [{
+                    "id": "call_q", "type": "function",
+                    "function": { "name": "zohara_ask_user", "arguments": "{\"questions\":[{\"question\":\"Which colour?\",\"header\":\"Colour\",\"multi_select\":false,\"options\":[{\"label\":\"Red\",\"description\":\"Warm\"},{\"label\":\"Blue\",\"description\":\"Cool\"}]}]}" } }] } }] })
+            } else if said.contains("write") && last["role"] != "tool" {
                 serde_json::json!({ "choices": [{ "message": { "content": "I will save a note.", "tool_calls": [{
                     "id": "call_w", "type": "function",
                     "function": { "name": "zohara_fs_write", "arguments": "{\"path\":\"~/zo-note.md\",\"content\":\"# A note\\nwritten by ZO-AI\\n\"}" } }] } }] })

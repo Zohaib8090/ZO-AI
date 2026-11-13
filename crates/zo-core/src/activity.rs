@@ -114,6 +114,13 @@ impl Drop for Guard {
     }
 }
 
+/// Changes the second line of the item with this id (see `Guard::id`), for code that has the id but not the guard.
+pub fn set_detail_of(id: u64, detail: &str) {
+    if let Some(i) = items().iter_mut().find(|i| i.id == id) {
+        i.detail = cut(detail, 200);
+    }
+}
+
 fn cut(s: &str, n: usize) -> String {
     let one: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if one.chars().count() <= n {
