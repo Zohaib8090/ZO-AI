@@ -115,11 +115,11 @@ pub fn current() -> Option<Tenant> {
     if let Some(t) = CURRENT.with(|c| c.borrow().clone()) {
         return Some(t);
     }
-    // a program the server started for one tenant (the tools program of Claude Code mode) is told who it works for; it is never
-    // restricted, because a restricted tenant cannot start one
+    // a program the server started for one tenant (the tools program of Claude Code mode) is told who it works for, and whether that
+    // person is restricted (ZO_TENANT_RESTRICTED=1: only when the operator lets everybody use Claude Code)
     if multi_tenant() {
         static FROM_ENV: std::sync::OnceLock<Option<Tenant>> = std::sync::OnceLock::new();
-        return FROM_ENV.get_or_init(|| std::env::var("ZO_TENANT_ID").ok().filter(|i| valid_id(i)).and_then(|id| Tenant::open(&id, false).ok())).clone();
+        return FROM_ENV.get_or_init(|| std::env::var("ZO_TENANT_ID").ok().filter(|i| valid_id(i)).and_then(|id| Tenant::open(&id, std::env::var("ZO_TENANT_RESTRICTED").as_deref() == Ok("1")).ok())).clone();
     }
     None
 }
@@ -139,8 +139,17 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
+    #[cfg(test)]
+    let (multi, users) = (TEST_MULTI.with(|c| c.get()), crate::ai::claude_code::test_users_get());
     match current() {
-        Some(t) => std::thread::spawn(move || scope(&t, f)),
+        Some(t) => std::thread::spawn(move || {
+            #[cfg(test)]
+            {
+                test_multi(multi);
+                crate::ai::claude_code::test_users_all(users);
+            }
+            scope(&t, f)
+        }),
         None => std::thread::spawn(f),
     }
 }

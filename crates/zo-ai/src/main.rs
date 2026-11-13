@@ -6,6 +6,7 @@
 mod activity_page;
 mod ask;
 mod chat;
+mod claude_ui;
 use zo_core::store::chats;
 use zo_core::store::artifacts;
 use zo_core::store::schedules;

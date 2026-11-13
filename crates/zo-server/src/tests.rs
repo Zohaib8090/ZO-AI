@@ -41,6 +41,8 @@ fn rig_push(people: &[(&str, &str, &str)], admins: &str, max_users: usize, per_m
         accepted: Mutex::new(Default::default()),
         push,
         link: link::Link::new(fast_link()),
+        term: crate::term::Hub::default(),
+        term_root: std::env::temp_dir().join("zo-test-terminals"),
     });
     let server = Server::http("127.0.0.1:0").unwrap();
     let base = format!("http://{}", server.server_addr().to_ip().unwrap());
@@ -142,13 +144,13 @@ fn the_scope_matrix_every_route_for_every_kind_of_credential() {
     let acct = Cred::Account { uid: "u".into(), email: "e".into() };
     let full = Cred::Device { scope: Scope::Full, id: "d".into() };
     let sync = Cred::Device { scope: Scope::Sync, id: "d".into() };
-    let routes = [Route::Op, Route::Send, Route::Reply, Route::Sync, Route::Account, Route::Auth, Route::Signout, Route::LinkDevice, Route::LinkStatus, Route::ClaudeToken];
+    let routes = [Route::Op, Route::Send, Route::Reply, Route::Sync, Route::Account, Route::Auth, Route::Signout, Route::LinkDevice, Route::LinkStatus, Route::ClaudeToken, Route::Term, Route::Claude];
     // a web session is never a linked computer and never hands over the Claude token; the terminal client is neither; the desktop app's
     // credential may sync, sign out, link and send the token (and ask which computers are linked)
-    let table: [(&Cred, [bool; 10]); 3] = [
-        (&acct, [true, true, true, true, true, true, true, false, true, false]),
-        (&full, [true, true, true, true, false, false, true, false, true, false]),
-        (&sync, [false, false, false, true, false, false, true, true, true, true]),
+    let table: [(&Cred, [bool; 12]); 3] = [
+        (&acct, [true, true, true, true, true, true, true, false, true, false, true, true]),
+        (&full, [true, true, true, true, false, false, true, false, true, false, true, true]),
+        (&sync, [false, false, false, true, false, false, true, true, true, true, false, false]),
     ];
     for (cred, want) in table {
         for (r, w) in routes.iter().zip(want) {
@@ -163,7 +165,13 @@ fn the_scope_matrix_every_route_for_every_kind_of_credential() {
     for (p, r) in [("/api/link/poll", Route::LinkDevice), ("/api/link/events", Route::LinkDevice), ("/api/link/status", Route::LinkStatus), ("/api/sync/claude_token", Route::ClaudeToken)] {
         assert_eq!(route_of(&post, p), Some(r), "{p}");
     }
-    for p in ["/api/link", "/api/link/", "/api/link/other", "/api/sync/claude", "/api/sync/claude_token/x"] {
+    for n in term::CALLS {
+        assert_eq!(route_of(&post, &format!("/api/term/{n}")), Some(Route::Term), "{n}");
+    }
+    for n in claude_api::CALLS {
+        assert_eq!(route_of(&post, &format!("/api/claude/{n}")), Some(Route::Claude), "{n}");
+    }
+    for p in ["/api/term", "/api/term/", "/api/term/run", "/api/term/open/x", "/api/claude/", "/api/claude/token", "/api/claude/start/x", "/api/link", "/api/link/", "/api/link/other", "/api/sync/claude", "/api/sync/claude_token/x"] {
         assert_eq!(route_of(&post, p), None, "{p}");
     }
     assert_eq!(route_of(&Method::Get, "/api/link/poll"), None);
@@ -613,7 +621,7 @@ fn the_web_page_the_policy_pages_and_the_headers() {
 fn the_no_login_test_mode_uses_one_fixed_restricted_person_and_only_answers_its_own_page() {
     let root = testenv::service();
     let tenants = Arc::new(TenantMap::new(root, None, testenv::SECRET.into(), 200, 8));
-    let app = Arc::new(App { no_auth: true, noauth_admin: false, verifier: None, policy: Policy::default(), tenants, devices: None, login: DeviceLogin::new(Default::default()), public_url: None, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1), conns: AtomicUsize::new(0), legal: Default::default(), require_terms: std::sync::atomic::AtomicBool::new(false), accepted: Mutex::new(Default::default()), push: Default::default(), link: link::Link::default() });
+    let app = Arc::new(App { no_auth: true, noauth_admin: false, verifier: None, policy: Policy::default(), tenants, devices: None, login: DeviceLogin::new(Default::default()), public_url: None, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1), conns: AtomicUsize::new(0), legal: Default::default(), require_terms: std::sync::atomic::AtomicBool::new(false), accepted: Mutex::new(Default::default()), push: Default::default(), link: link::Link::default(), term: crate::term::Hub::default(), term_root: std::env::temp_dir().join("zo-test-terminals") });
     let server = Server::http("127.0.0.1:0").unwrap();
     let base = format!("http://{}", server.server_addr().to_ip().unwrap());
     let a = app.clone();
@@ -2570,4 +2578,448 @@ fn the_owners_claude_token_is_sent_with_the_desktops_own_code_and_runs_through_a
     assert!(args.contains("--tools\n\n"), "built-in tools are off: {args}");
     assert!(cwd.trim().starts_with(tenant_dir(&uo).to_str().unwrap()), "runs in the owner's own folder: {cwd}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+
+// ===========================================================================================================================
+// terminals (term.rs) and the Claude sign-in (claude_api.rs)
+
+/// A terminal stream in a thread: every line as it arrives, until the stream ends.
+fn term_stream(r: &Rig, token: &str, body: Value) -> std::sync::mpsc::Receiver<Option<Value>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (base, token) = (r.base.clone(), token.to_string());
+    std::thread::spawn(move || {
+        let res = match ureq::post(&format!("{base}/api/term/open")).set("Authorization", &format!("Bearer {token}")).timeout(Duration::from_secs(60)).send_string(&body.to_string()) {
+            Ok(r) => r,
+            Err(ureq::Error::Status(_, r)) => r,
+            Err(e) => {
+                let _ = tx.send(Some(json!({"event": "transport_error", "error": e.to_string()})));
+                return;
+            }
+        };
+        let status = res.status();
+        if status != 200 {
+            let text = res.into_string().unwrap_or_default();
+            let _ = tx.send(Some(json!({"event": "http_error", "status": status, "body": serde_json::from_str::<Value>(&text).unwrap_or(Value::Null)})));
+            let _ = tx.send(None);
+            return;
+        }
+        for l in std::io::BufReader::new(res.into_reader()).lines().map_while(Result::ok) {
+            if let Ok(v) = serde_json::from_str::<Value>(&l) {
+                if v["event"] != "ping" && tx.send(Some(v)).is_err() {
+                    return;
+                }
+            }
+        }
+        let _ = tx.send(None);
+    });
+    rx
+}
+
+fn b64d(s: &str) -> Vec<u8> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(s).unwrap_or_default()
+}
+
+/// Reads lines until the collected terminal output contains `needle` (or the time is up). Returns (all output, all lines).
+fn until_output(rx: &std::sync::mpsc::Receiver<Option<Value>>, needle: &str, secs: u64) -> (String, Vec<Value>) {
+    let (mut text, mut lines) = (Vec::new(), Vec::new());
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_secs(secs) {
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(Some(v)) => {
+                if v["event"] == "out" {
+                    text.extend(b64d(v["b"].as_str().unwrap_or("")));
+                }
+                lines.push(v);
+                if String::from_utf8_lossy(&text).contains(needle) {
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(_) => {}
+        }
+    }
+    (String::from_utf8_lossy(&text).into_owned(), lines)
+}
+
+#[test]
+fn the_cloud_terminal_is_for_the_owner_only_runs_a_real_shell_with_no_server_secrets_and_belongs_to_one_person() {
+    let (uo, ur, uo2) = (uniq("tm-o"), uniq("tm-r"), uniq("tm-o2"));
+    let r = rig(&[("tok-o", &uo, "owner@x.test"), ("tok-r", &ur, "r@x.test"), ("tok-o2", &uo2, "second@x.test")], "owner@x.test,second@x.test", 200, 6000);
+    // the restricted person never gets a shell, whatever they send
+    let a = call(&r, "tok-r", "/api/term/open", json!({"target": "cloud"}));
+    assert_eq!(a.status, 403, "{:?}", a.body);
+    assert!(a.body["error"].as_str().unwrap().contains("only for the owner"), "{:?}", a.body);
+    assert_eq!(r.app.term.count(), 0);
+    for n in ["input", "resize", "close"] {
+        assert_ne!(call(&r, "tok-r", &format!("/api/term/{n}"), json!({"session": "abc", "data": "id\n"})).status, 200, "{n}");
+    }
+    let l = call(&r, "tok-r", "/api/term/list", json!({}));
+    assert_eq!((l.body["cloud"].clone(), l.body["sessions"].clone()), (json!(false), json!([])));
+    // no sign-in at all
+    assert_eq!(call(&r, "", "/api/term/open", json!({})).status, 401);
+
+    // the owner opens one
+    let rx = term_stream(&r, "tok-o", json!({"target": "cloud", "rows": 24, "cols": 100, "name": "build"}));
+    let first = rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+    assert_eq!((first["event"].as_str(), first["target"].as_str(), first["name"].as_str(), first["rows"].as_u64()), (Some("term"), Some("cloud"), Some("build"), Some(24)), "{first:?}");
+    let sid = first["id"].as_str().unwrap().to_string();
+    // type: a calculation, the size, who it is, and everything in its environment
+    let typed = call(&r, "tok-o", "/api/term/input", json!({"session": sid, "data": "echo zo-$((6*7)); stty size; id -un; env | sort; echo [$HOME]\n"}));
+    assert_eq!(typed.status, 200, "{:?}", typed.body);
+    let (text, _) = until_output(&rx, "[/", 15);
+    assert!(text.contains("zo-42") && text.contains("24 100"), "{text}");
+    // the shell's environment is exactly what term.rs gives it: not one of the server's variables
+    for bad in ["ZO_SERVER_SECRET", "FIREBASE", "ZO_TENANT_ROOT", "ZO_ADMIN", "ZO_MULTI_TENANT", testenv::SECRET, "CLAUDE_CODE_OAUTH_TOKEN", "ZOAI_KEY"] {
+        assert!(!text.contains(bad), "{bad} is visible in the terminal:\n{text}");
+    }
+    assert!(text.contains("TERM=xterm-256color") && text.contains("DISABLE_AUTOUPDATER=1"), "{text}");
+    assert!(text.contains("-terminals/"), "the home is outside the people's folders: {text}");
+
+    // it belongs to one person: another admin can neither see it, type into it, resize it nor close it
+    let l2 = call(&r, "tok-o2", "/api/term/list", json!({}));
+    assert_eq!(l2.body["sessions"], json!([]), "{:?}", l2.body);
+    for n in ["input", "resize", "close"] {
+        assert_eq!(call(&r, "tok-o2", &format!("/api/term/{n}"), json!({"session": sid, "data": "id\n", "rows": 10, "cols": 10})).status, 404, "{n}");
+    }
+    let other = until_output(&term_stream(&r, "tok-o2", json!({"session": sid})), "never", 2).1;
+    assert_eq!(other[0]["error"], "gone", "{other:?}");
+    // the owner's list shows it, a resize works
+    let l = call(&r, "tok-o", "/api/term/list", json!({}));
+    assert_eq!(l.body["cloud"], true);
+    assert_eq!(l.body["sessions"][0]["id"], sid.as_str());
+    assert_eq!(call(&r, "tok-o", "/api/term/resize", json!({"session": sid, "rows": 40, "cols": 120})).status, 200);
+    call(&r, "tok-o", "/api/term/input", json!({"session": sid, "data": "stty size\n"}));
+    let (text, _) = until_output(&rx, "40 120", 10);
+    assert!(text.contains("40 120"), "{text}");
+
+    // a page that lost its connection opens again with the sequence number it had: it gets what it missed, the old stream is told it was replaced
+    call(&r, "tok-o", "/api/term/input", json!({"session": sid, "data": "echo after-the-gap\n"}));
+    std::thread::sleep(Duration::from_millis(600));
+    let pty = r.app.term.pty_of(&tenant_of(&uo), &sid).unwrap();
+    let end = pty.end_seq();
+    let rx2 = term_stream(&r, "tok-o", json!({"session": sid, "from": 0}));
+    let (replayed, lines2) = until_output(&rx2, "after-the-gap", 10);
+    assert!(replayed.contains("zo-42") && replayed.contains("after-the-gap"), "the whole kept output: {replayed}");
+    assert_eq!(lines2[0]["event"], "term");
+    assert!(pty.end_seq() >= end);
+    let mut saw_replaced = false;
+    while let Ok(m) = rx.recv_timeout(Duration::from_secs(20)) {
+        match m {
+            Some(v) if v["event"] == "replaced" => {
+                saw_replaced = true;
+                break;
+            }
+            Some(_) => {}
+            None => break,
+        }
+    }
+    assert!(saw_replaced, "the first stream was told that another page took over");
+    // from the end of what the page has: nothing is repeated
+    let rx3 = term_stream(&r, "tok-o", json!({"session": sid, "from": pty.end_seq()}));
+    call(&r, "tok-o", "/api/term/input", json!({"session": sid, "data": "echo only-new\n"}));
+    let (fresh, _) = until_output(&rx3, "only-new", 10);
+    assert!(fresh.contains("only-new") && !fresh.contains("zo-42"), "{fresh}");
+
+    // too much input at once is refused; the shell ends with its own exit code and the stream says so
+    assert_eq!(call(&r, "tok-o", "/api/term/input", json!({"session": sid, "data": "x".repeat(term::MAX_INPUT_CALL + 1)})).status, 413);
+    call(&r, "tok-o", "/api/term/input", json!({"session": sid, "data": "exit 7\n"}));
+    let (_, ended) = until_output(&rx3, "never-appears", 15);
+    assert!(ended.iter().any(|l| l["event"] == "exit" && l["code"] == 7), "{ended:?}");
+    let sid2 = {
+        let rx = term_stream(&r, "tok-o", json!({"target": "cloud"}));
+        let id = rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap()["id"].as_str().unwrap().to_string();
+        assert_eq!(call(&r, "tok-o", "/api/term/close", json!({"session": id})).status, 200);
+        assert_eq!(call(&r, "tok-o", "/api/term/close", json!({"session": id})).status, 404, "closing twice");
+        id
+    };
+    assert!(r.app.term.pty_of(&tenant_of(&uo), &sid2).is_none());
+}
+
+#[test]
+fn terminals_are_limited_per_person_and_refused_from_other_websites_desktops_and_when_switched_off() {
+    let uo = uniq("tm-lim");
+    let r = rig(&[("tok-o", &uo, "owner@x.test")], "owner@x.test", 200, 6000);
+    // another website's page: the browser's Origin does not match the host it called
+    let res = ureq::post(&format!("{}/api/term/open", r.base)).set("Authorization", "Bearer tok-o").set("Origin", "https://evil.example").send_string("{}");
+    assert!(matches!(res, Err(ureq::Error::Status(403, _))), "{res:?}");
+    let res = ureq::post(&format!("{}/api/term/list", r.base)).set("Authorization", "Bearer tok-o").set("Origin", &format!("http://{}", r.base.trim_start_matches("http://"))).send_string("{}");
+    assert!(matches!(res, Err(ureq::Error::Status(403, _))), "plain http from a non-local host is not this server's own page: {res:?}");
+    assert_eq!(r.app.term.count(), 0);
+    // a desktop app's credential is not for terminals
+    let (cred, _) = make_device(&r, "tok-o", "Desk", "desktop");
+    assert_eq!(call(&r, &cred, "/api/term/open", json!({})).status, 403);
+    assert_eq!(call(&r, &cred, "/api/claude/status", json!({})).status, 403);
+    // four per person, then a clear refusal
+    let mut keep = Vec::new();
+    for _ in 0..term::MAX_PER_TENANT {
+        let rx = term_stream(&r, "tok-o", json!({"target": "cloud"}));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap()["event"], "term");
+        keep.push(rx);
+    }
+    let fifth = term_stream(&r, "tok-o", json!({"target": "cloud"}));
+    let line = fifth.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+    assert_eq!((line["event"].as_str(), line["error"].as_str()), (Some("error"), Some("limit")), "{line:?}");
+    assert_eq!(r.app.term.list(&tenant_of(&uo)).len(), term::MAX_PER_TENANT);
+    // the operator's switch ends them for good
+    std::env::set_var("ZO_TERMINAL", "off");
+    let a = call(&r, "tok-o", "/api/term/open", json!({"target": "cloud"}));
+    let st = call(&r, "tok-o", "/api/term/list", json!({}));
+    let id = r.app.term.list(&tenant_of(&uo))[0].id.clone();
+    let typed = call(&r, "tok-o", "/api/term/input", json!({"session": id, "data": "id\n"}));
+    std::env::remove_var("ZO_TERMINAL");
+    assert_eq!(a.status, 403, "{:?}", a.body);
+    assert_eq!((st.body["cloud"].clone(), st.body["cloud_enabled"].clone()), (json!(false), json!(false)));
+    assert_eq!(typed.status, 403, "a running shell gets nothing once the switch is off");
+    assert_eq!(r.app.term.count(), 0, "and every shell of that person is closed");
+    drop(keep);
+}
+
+#[test]
+fn closing_ends_every_job_of_the_shell_and_an_idle_or_old_shell_is_swept() {
+    let h = term::Hub::default();
+    let root = std::env::temp_dir().join(format!("zo-term-root-{}", std::process::id()));
+    let t = "0123456789abcdef0123456789abcdef";
+    let i = h.open(t, &root, 24, 80, "x").unwrap();
+    assert!(h.has(t, &i.id));
+    assert!(!h.has("ffffffffffffffffffffffffffffffff", &i.id));
+    h.close_all(t);
+    assert_eq!(h.count(), 0);
+    // the shell dies with its group: nothing is left running
+    let i = h.open(t, &root, 24, 80, "x").unwrap();
+    let pty = h.pty_of(t, &i.id).unwrap();
+    pty.write(b"sleep 300 &\necho b\"\"g=$!\n").unwrap();
+    let c = {
+        let end = Instant::now() + Duration::from_secs(10);
+        let mut seen = String::new();
+        let mut seq = 0;
+        while Instant::now() < end && !seen.contains("bg=") {
+            let c = pty.read_from(seq, Duration::from_millis(200));
+            seen.push_str(&String::from_utf8_lossy(&c.data));
+            seq = c.next;
+        }
+        seen
+    };
+    let bg: i32 = c.rsplit("bg=").next().unwrap().trim().lines().next().unwrap().trim().parse().unwrap_or_else(|_| panic!("{c}"));
+    assert!(std::path::Path::new(&format!("/proc/{bg}")).exists());
+    h.close(t, &i.id);
+    std::thread::sleep(Duration::from_millis(400));
+    let zombie = std::fs::read_to_string(format!("/proc/{bg}/stat")).map(|s| s.contains(") Z")).unwrap_or(true);
+    assert!(zombie, "the background program died with the shell");
+    // a shell nobody types into is ended after the idle time, one that lives too long after its lifetime, and a busy one stays
+    let h = term::Hub::with_limits(Duration::from_millis(700), Duration::from_secs(3600));
+    let (idle, busy) = (h.open(t, &root, 24, 80, "idle").unwrap(), h.open(t, &root, 24, 80, "busy").unwrap());
+    std::thread::sleep(Duration::from_millis(500));
+    h.pty_of(t, &busy.id).unwrap().write(b"echo still-here\n").unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    h.sweep();
+    assert!(!h.has(t, &idle.id), "the idle one was ended");
+    assert!(h.has(t, &busy.id), "the one with input a moment ago stays");
+    let h2 = term::Hub::with_limits(Duration::from_secs(3600), Duration::from_millis(300));
+    let old = h2.open(t, &root, 24, 80, "old").unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    h2.sweep();
+    assert!(!h2.has(t, &old.id), "the old one was ended");
+    h.close_all(t);
+    let _ = std::fs::remove_dir_all(format!("{}-terminals", root.display()));
+}
+
+#[test]
+fn the_shell_cannot_read_the_servers_memory_or_environment_through_proc() {
+    // this test process plays the server: marked not dumpable, a shell of the same user cannot open what /proc shows of it
+    hardening::protect_memory();
+    let h = term::Hub::default();
+    let root = std::env::temp_dir().join(format!("zo-term-proc-{}", std::process::id()));
+    let t = "00112233445566778899aabbccddeeff";
+    let i = h.open(t, &root, 24, 200, "x").unwrap();
+    let pty = h.pty_of(t, &i.id).unwrap();
+    let me = std::process::id();
+    pty.write(format!("for f in environ mem maps; do head -c 20 /proc/{me}/$f >/dev/null 2>&1 && echo O\"\"PENED-$f || echo D\"\"ENIED-$f; done\n").as_bytes()).unwrap();
+    let end = Instant::now() + Duration::from_secs(10);
+    let (mut seen, mut seq) = (String::new(), 0);
+    while Instant::now() < end && seen.matches("-maps").count() < 2 {
+        let c = pty.read_from(seq, Duration::from_millis(200));
+        seen.push_str(&String::from_utf8_lossy(&c.data));
+        seq = c.next;
+    }
+    h.close_all(t);
+    let _ = std::fs::remove_dir_all(format!("{}-terminals", root.display()));
+    assert!(seen.contains("DENIED-environ") && seen.contains("DENIED-mem") && seen.contains("DENIED-maps") && !seen.contains("OPENED-"), "{seen}");
+}
+
+#[test]
+fn a_terminal_on_the_persons_own_computer_goes_through_the_link_and_the_page_can_only_type_resize_and_close() {
+    let u = uniq("tm-dsk");
+    let r = rig(&[("tok", &u, "d@x.test"), ("tok-b", &uniq("tm-dsk-b"), "b@x.test")], "", 200, 6000);
+    let (cred, _) = make_device(&r, "tok", "Desk", "desktop");
+    // not online: a clear error, and no job is left
+    let (_, lines) = (|| { let rx = term_stream(&r, "tok", json!({"target": "desktop"})); let mut v = vec![]; while let Ok(Some(l)) = rx.recv_timeout(Duration::from_secs(5)) { v.push(l); } ((), v) })();
+    assert_eq!(lines[0]["error"], "desktop_offline", "{lines:?}");
+    assert!(dpoll(&r, &cred, "Desk", caps(false)).is_empty());
+    // a restricted person may use it: it is their own computer (no admin needed)
+    let rx = term_stream(&r, "tok", json!({"target": "desktop", "rows": 20, "cols": 70}));
+    let job = dpoll_for(&r, &cred, "Desk", caps(false), "term");
+    assert_eq!((job["rows"].clone(), job["cols"].clone()), (json!(20), json!(70)));
+    assert!(job.get("cmd").is_none() && job.get("text").is_none(), "{job:?}");
+    let id = job["id"].as_str().unwrap().to_string();
+    let first = rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+    assert_eq!((first["event"].as_str(), first["target"].as_str(), first["id"].as_str()), (Some("term"), Some("desktop"), Some(id.as_str())));
+    // the computer says it waits for its owner, then that it is open, then output; junk events and bad payloads never reach the page
+    let a = post_events(&r, &cred, &id, json!([{"event": "waiting"}, {"event": "opened"}, {"event": "out", "b": "aGVsbG8="}, {"event": "out", "b": "<script>"}, {"event": "run", "cmd": "x"}, {"event": "out", "b": 5}, {"event": "stream", "id": 1}]), false);
+    assert_eq!((a.status, a.body["cancel"].clone()), (200, json!(false)), "{:?}", a.body);
+    let (text, lines) = until_output(&rx, "hello", 10);
+    assert_eq!(text, "hello");
+    let kinds: Vec<&str> = lines.iter().map(|l| l["event"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["waiting", "opened", "out"], "{lines:?}");
+    // the page types: it comes back in the answer to the computer's next post, with only the known fields
+    assert_eq!(call(&r, "tok", "/api/term/input", json!({"session": id, "data": "ls\n", "evil": 1})).status, 200);
+    assert_eq!(call(&r, "tok", "/api/term/resize", json!({"session": id, "rows": 30, "cols": 90})).status, 200);
+    let a = post_events(&r, &cred, &id, json!([]), false);
+    assert_eq!(a.body["term"], json!([{"t": "in", "data": "ls\n"}, {"t": "resize", "rows": 30, "cols": 90}]), "{:?}", a.body);
+    assert!(post_events(&r, &cred, &id, json!([]), false).body.get("term").is_none(), "delivered once");
+    // another person cannot type into it
+    for n in ["input", "resize", "close"] {
+        assert_eq!(call(&r, "tok-b", &format!("/api/term/{n}"), json!({"session": id, "data": "id\n", "rows": 10, "cols": 10})).status, 404, "{n}");
+    }
+    // the page closes it: the computer is told in the next answer, and the stream ends
+    assert_eq!(call(&r, "tok", "/api/term/close", json!({"session": id})).status, 200);
+    assert_eq!(post_events(&r, &cred, &id, json!([{"event": "out", "b": "YQ=="}]), false).body["term"], json!([{"t": "close"}]));
+    post_events(&r, &cred, &id, json!([{"event": "exit", "code": 0}]), true);
+    let mut tail = vec![];
+    while let Ok(Some(l)) = rx.recv_timeout(Duration::from_secs(10)) {
+        tail.push(l);
+    }
+    assert_eq!(tail.last().unwrap()["event"], "done", "{tail:?}");
+    assert_eq!(r.app.link.counts().1, 0, "nothing is left behind");
+}
+
+#[test]
+fn the_guided_claude_sign_in_over_http_gives_the_page_a_link_takes_the_code_and_never_shows_the_token() {
+    let _env = CLAUDE_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let (uo, ur) = (uniq("cl-owner"), uniq("cl-restr"));
+    let r = rig(&[("tok-o", &uo, "owner@x.test"), ("tok-r", &ur, "guest@x.test")], "owner@x.test", 200, 6000);
+    let dir = std::path::PathBuf::from(format!("/tmp/claude-1000/zsrv-login-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    const TOKEN: &str = "sk-ant-oat01-HttpFlowToken0123456789abcdefghijklmn";
+    let script = dir.join("claude");
+    std::fs::write(&script, format!("#!/bin/sh\nenv > {d}/env\nprintf 'Open: https://claude.com/cai/oauth/authorize?state=http1\\r\\nPaste code > '\nread code\nif [ \"$code\" = \"the-code\" ]; then printf 'Your token:\\r\\n{TOKEN}\\r\\n'; sleep 20; else exit 1; fi\n", d = dir.display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::env::set_var("ZOAI_CLAUDE_BIN", &script);
+    std::env::set_var("FIREBASE_SERVICE_ACCOUNT", "must-not-leak-firebase");
+    let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // the restricted person (the operator did not allow everybody) is refused everywhere except the status, which says so
+        let s = call(&r, "tok-r", "/api/claude/status", json!({}));
+        assert_eq!((s.status, s.body["allowed"].clone(), s.body["users"].clone(), s.body["flow"].clone()), (200, json!(false), json!("admins"), Value::Null), "{:?}", s.body);
+        for n in ["start", "poll", "code", "cancel", "logout"] {
+            assert_eq!(call(&r, "tok-r", &format!("/api/claude/{n}"), json!({"code": "x"})).status, 403, "{n}");
+        }
+        // the owner
+        let s = call(&r, "tok-o", "/api/claude/status", json!({}));
+        assert_eq!((s.body["allowed"].clone(), s.body["present"].clone(), s.body["installed"].clone()), (json!(true), json!(false), json!(true)), "{:?}", s.body);
+        assert_eq!(s.body["flow"]["state"], "idle");
+        assert_eq!(call(&r, "tok-o", "/api/claude/code", json!({"code": "x"})).status, 400, "no flow yet");
+        let a = call(&r, "tok-o", "/api/claude/start", json!({}));
+        assert_eq!(a.status, 200, "{:?}", a.body);
+        let t0 = Instant::now();
+        let link = loop {
+            let p = call(&r, "tok-o", "/api/claude/poll", json!({}));
+            if p.body["state"] == "link" {
+                break p.body;
+            }
+            assert!(t0.elapsed() < Duration::from_secs(10), "no link: {:?}", p.body);
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert_eq!(link["url"], "https://claude.com/cai/oauth/authorize?state=http1");
+        assert!(link["secs_left"].as_u64().unwrap() > 250);
+        // what the page gets has only these fields
+        let mut keys: Vec<&str> = link.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(keys, ["message", "ok", "secs_left", "state", "url"]);
+        // the program runs with an empty environment: not one server secret, and its own home
+        let env = std::fs::read_to_string(dir.join("env")).unwrap();
+        assert!(!env.contains("must-not-leak-firebase") && !env.contains(testenv::SECRET) && !env.contains("ZO_TENANT_ROOT"), "{env}");
+        assert!(env.contains("HOME=") && env.contains("claude-login-"), "{env}");
+        // a garbage code is refused by the server and never reaches the program
+        assert_eq!(call(&r, "tok-o", "/api/claude/code", json!({"code": "has space"})).status, 400);
+        assert_eq!(call(&r, "tok-o", "/api/claude/code", json!({"code": "the-code"})).status, 200);
+        let t0 = Instant::now();
+        let end = loop {
+            let p = call(&r, "tok-o", "/api/claude/poll", json!({}));
+            if p.body["state"] == "done" || p.body["state"] == "failed" {
+                break p;
+            }
+            assert!(t0.elapsed() < Duration::from_secs(10), "{:?}", p.body);
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert_eq!(end.body["state"], "done", "{:?}", end.body);
+        assert!(!end.body.to_string().contains("sk-ant") && !end.body.to_string().contains("HttpFlowToken"));
+        let s = call(&r, "tok-o", "/api/claude/status", json!({}));
+        assert_eq!((s.body["present"].clone(), s.body["source"].clone()), (json!(true), json!("own")), "{:?}", s.body);
+        assert!(!s.body.to_string().contains("sk-ant"));
+        // stored encrypted, like the token a desktop sends
+        let raw = std::fs::read(tenant_dir(&uo).join("config").join("keys.enc")).unwrap();
+        assert!(!String::from_utf8_lossy(&raw).contains("HttpFlowToken"));
+        let map = zo_core::ai::keys::decrypt_map(testenv::SECRET, &tenant_of(&uo), &raw).unwrap();
+        assert_eq!(map["claude-code-token"], TOKEN);
+        // the private folder of the sign-in is gone
+        std::thread::sleep(Duration::from_millis(300));
+        let left: Vec<_> = std::fs::read_dir(tenant_dir(&uo).join("config")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("claude-login-")).collect();
+        assert!(left.is_empty(), "{left:?}");
+        // log out: the token and the program's folder go
+        assert_eq!(call(&r, "tok-o", "/api/claude/logout", json!({})).status, 200);
+        assert_eq!(call(&r, "tok-o", "/api/claude/status", json!({})).body["present"], false);
+    }));
+    std::env::remove_var("ZOAI_CLAUDE_BIN");
+    std::env::remove_var("FIREBASE_SERVICE_ACCOUNT");
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(e) = done {
+        std::panic::resume_unwind(e);
+    }
+}
+
+#[test]
+fn the_real_desktop_code_opens_a_terminal_only_after_its_owner_says_yes_on_the_computer_and_the_web_cannot_answer_for_them() {
+    let u = uniq("e2e-term");
+    let r = rig(&[("tok-a", &u, "t@x.test")], "", 200, 6000);
+    let sandbox = std::path::PathBuf::from(format!("/tmp/claude-1000/zl-term-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    let (_model, model_url) = start_model();
+    let (cred, _dev) = make_device(&r, "tok-a", "Desk-T", "desktop");
+    // the person on the computer answers: yes to the first terminal, no to the second
+    let _desk = start_desktop(&r, &sandbox, &cred, &model_url, "y,n");
+    wait_online(&r, "tok-a", true);
+
+    // the first terminal: the page hears "waiting", the computer asks its owner (and says what it is), then it opens and works
+    let rx = term_stream(&r, "tok-a", json!({"target": "desktop", "rows": 24, "cols": 90}));
+    let first = rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+    assert_eq!((first["event"].as_str(), first["target"].as_str()), (Some("term"), Some("desktop")), "{first:?}");
+    let id = first["id"].as_str().unwrap().to_string();
+    let (_, lines) = until_output(&rx, "never-here", 3);
+    let kinds: Vec<&str> = lines.iter().map(|l| l["event"].as_str().unwrap_or("")).collect();
+    assert!(kinds.contains(&"waiting") && kinds.contains(&"opened"), "{lines:?}");
+    assert_eq!(asks(&sandbox).len(), 1, "one dialog on the computer");
+    assert!(asks(&sandbox)[0].contains("TERMINAL") && asks(&sandbox)[0].contains("any command as you"), "{:?}", asks(&sandbox));
+    // typing before anything else: the real shell of the computer answers through the link
+    assert_eq!(call(&r, "tok-a", "/api/term/input", json!({"session": id, "data": "echo from-the-computer-$((6*7)); stty size\n"})).status, 200);
+    let (text, _) = until_output(&rx, "24 90", 20);
+    assert!(text.contains("from-the-computer-42") && text.contains("24 90"), "{text}");
+    // the web cannot approve anything for the computer: /api/reply has no such thing for a terminal, and a second terminal asks again
+    let rx2 = term_stream(&r, "tok-a", json!({"target": "desktop"}));
+    let first2 = rx2.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+    let id2 = first2["id"].as_str().unwrap().to_string();
+    let (_, lines2) = until_output(&rx2, "never-here", 6);
+    assert!(lines2.iter().any(|l| l["event"] == "denied"), "{lines2:?}");
+    assert!(!lines2.iter().any(|l| l["event"] == "opened" || l["event"] == "out"), "no shell was opened: {lines2:?}");
+    assert_eq!(asks(&sandbox).len(), 2, "it asked again");
+    // typing into the denied one goes nowhere (it does not exist any more)
+    assert_ne!(call(&r, "tok-a", "/api/term/input", json!({"session": id2, "data": "touch /tmp/zo-denied-terminal\n"})).status, 200);
+    assert!(!std::path::Path::new("/tmp/zo-denied-terminal").exists());
+    // closing from the page ends the first one
+    assert_eq!(call(&r, "tok-a", "/api/term/close", json!({"session": id})).status, 200);
+    let (_, tail) = until_output(&rx, "never-here", 15);
+    assert_eq!(tail.last().unwrap()["event"], "done", "{tail:?}");
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!((r.app.link.counts().1, r.app.link.counts().2), (0, 0), "no job and no stream is left behind");
 }

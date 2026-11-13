@@ -89,7 +89,7 @@ If you would rather not keep it awake, do nothing: it sleeps and wakes with the 
 
 ## Claude Code on the server (admin only)
 
-Only admins (`ZO_ADMIN_EMAILS`) can use Claude Code mode; restricted users are refused. Never accept or store other people's Claude logins or subscription tokens: Anthropic does not allow it.
+Only admins (`ZO_ADMIN_EMAILS`) can use Claude Code mode unless the operator sets `ZO_CLAUDE_CODE_USERS=all` (see TERMINAL-AND-CLAUDE-LOGIN.md: a person then signs in to Claude with their OWN account on the page and uses it with ZO-AI's safe tools only; Anthropic's terms do not allow third-party products to offer Claude subscription logins, so leave it on `admins` unless you accept that). The owner's own `claude setup-token` can be done from the web page (Settings > Model > Claude Code > Log in). The cloud terminal (admins only) can be switched off with `ZO_TERMINAL=off`.
 
 ZO-AI's Claude Code mode runs the real `claude` program (found on the PATH, `/usr/local/bin`) and connects it to `zo-mcp`.
 On your computer you sign in with a browser; a server has none, so it needs a token from outside.

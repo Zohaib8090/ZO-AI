@@ -21,6 +21,16 @@ extern "C" {
     static environ: *const *mut std::os::raw::c_char;
 }
 
+/// Marks this process as not dumpable. Then `/proc/<pid>/{mem,environ,maps,fd,...}` belong to root and a program of the same user (a
+/// shell that an admin opens in the cloud terminal) cannot read this server's memory (the Firebase key, the secret, other people's data) or
+/// attach a debugger to it. Also stops core dumps of this process. Call it first thing in `main`.
+pub fn protect_memory() {
+    // SAFETY: a plain prctl call with constant arguments.
+    unsafe {
+        libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0);
+    }
+}
+
 /// Overwrites the value of `name` in every entry of the process environment block with zeros (the strings that `/proc/<pid>/environ`
 /// shows), and then removes the variable.
 fn wipe(name: &str) {

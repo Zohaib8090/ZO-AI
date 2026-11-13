@@ -2073,6 +2073,7 @@ dependencies = [
  "getrandom",
  "hkdf",
  "jsonwebtoken",
+ "libc",
  "p256",
  "serde",
  "serde_json",

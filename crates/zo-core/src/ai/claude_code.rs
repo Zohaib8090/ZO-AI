@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 
 /// Where `claude` is: `ZOAI_CLAUDE_BIN`, the PATH, or `~/.local/bin`.
 pub fn binary() -> Option<PathBuf> {
-    // Claude Code is the owner's subscription and a program on the server: never for a restricted account
-    if crate::tenant::is_restricted() {
+    // Claude Code is a program on the server: only for a person the operator allows (see `allowed_here`)
+    if crate::tenant::is_restricted() && !allowed_here() {
         return None;
     }
     if let Some(p) = std::env::var_os("ZOAI_CLAUDE_BIN") {
@@ -23,14 +23,51 @@ pub fn binary() -> Option<PathBuf> {
     on_path.or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/bin/claude")).filter(|p| p.is_file()))
 }
 
+/// The operator's switch `ZO_CLAUDE_CODE_USERS`: `admins` (the default; anything else than `all` means this) or `all` (every signed-in person
+/// may sign in to Claude Code with their own subscription and use it on the server, with ZO-AI's few safe tools only).
+pub fn users_all() -> bool {
+    #[cfg(test)]
+    if let Some(v) = TEST_USERS.with(|c| c.get()) {
+        return v;
+    }
+    std::env::var("ZO_CLAUDE_CODE_USERS").map(|v| v.trim().eq_ignore_ascii_case("all")).unwrap_or(false)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_USERS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Tests only: this thread behaves as if `ZO_CLAUDE_CODE_USERS` were `all` (true) or `admins` (false).
+#[cfg(test)]
+pub(crate) fn test_users_all(v: Option<bool>) {
+    TEST_USERS.with(|c| c.set(v));
+}
+
+#[cfg(test)]
+pub(crate) fn test_users_get() -> Option<bool> {
+    TEST_USERS.with(|c| c.get())
+}
+
+/// On a server: may the current tenant sign in to and use Claude Code here? Admins always; everybody else only when the operator
+/// chose `all`. A request without a tenant never may. On a computer there are no tenants and this is false (it is about servers).
+pub fn allowed_here() -> bool {
+    crate::tenant::multi_tenant() && crate::tenant::current().is_some_and(|t| !t.restricted || users_all())
+}
+
+#[cfg(test)]
+pub(crate) fn binary_path_for_manual_test() -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| std::env::split_paths(&paths).map(|d| d.join("claude")).find(|p| p.is_file()))
+}
+
 /// The id of the Claude sign-in token in a tenant's encrypted key store (`keys.enc`), and of the time it was stored.
 pub const TOKEN_KEY: &str = "claude-code-token";
 const TOKEN_AT_KEY: &str = "claude-code-token-at";
 
 /// What the person is told when the server has no Claude sign-in for them.
-pub const NO_TOKEN: &str = "Claude Code is not set up on the server for your account yet. Send your Claude sign-in from the desktop app (Settings > Account and sync).";
+pub const NO_TOKEN: &str = "Claude Code is not set up on the server for your account yet. Log in to Claude Code: press Log in under Settings > Model and profiles > Claude Code (or in the model list).";
 /// What the person is told when Claude turns the token down (expired, revoked, or not a token).
-pub const TOKEN_REJECTED: &str = "Claude rejected the token: send a new one from the desktop (Settings > Account and sync).";
+pub const TOKEN_REJECTED: &str = "Claude rejected the sign-in (it expired or was revoked): press Log in again under Settings > Model and profiles > Claude Code.";
 
 /// The server's own token from `CLAUDE_CODE_OAUTH_TOKEN`, read at start and taken out of the environment (see `zo-server`'s
 /// hardening). It is only a fallback for an admin who has not sent a token of their own.
@@ -52,7 +89,9 @@ fn now_secs() -> u64 {
 
 /// Stores the token for the current tenant (encrypted, in its key store). Never for a restricted tenant. Returns the time stored.
 pub fn store_token(token: &str) -> Result<u64, String> {
-    crate::tenant::current().filter(|t| !t.restricted).ok_or("Claude Code is not available to this account.")?;
+    if !allowed_here() {
+        return Err("Claude Code is not available to this account.".into());
+    }
     let token = token.trim();
     if !token_shape_ok(token) {
         return Err("That does not look like a Claude token (it starts with sk-ant- and comes from `claude setup-token`).".into());
@@ -82,17 +121,19 @@ pub fn token_set_at() -> Option<u64> {
 /// The token a Claude Code run on the server uses for the current tenant: their own, else (admin only, since a restricted tenant
 /// never gets this far) the server's fallback.
 fn server_token() -> Option<String> {
-    super::keys::get(TOKEN_KEY).or_else(|| GLOBAL_TOKEN.lock().unwrap_or_else(|e| e.into_inner()).clone())
+    // the operator's own fallback token is for admins only: an ordinary person must never run on the owner's subscription
+    let admin = crate::tenant::current().is_some_and(|t| !t.restricted);
+    super::keys::get(TOKEN_KEY).or_else(|| if admin { GLOBAL_TOKEN.lock().unwrap_or_else(|e| e.into_inner()).clone() } else { None })
 }
 
 /// Where the current tenant's Claude sign-in comes from on a server: `own` (they sent it), `server` (the operator's fallback, for an
 /// admin) or `none`.
 pub fn token_source() -> &'static str {
-    if !crate::tenant::current().is_some_and(|t| !t.restricted) {
+    if !allowed_here() {
         "none"
     } else if super::keys::get(TOKEN_KEY).is_some() {
         "own"
-    } else if GLOBAL_TOKEN.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+    } else if crate::tenant::current().is_some_and(|t| !t.restricted) && GLOBAL_TOKEN.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
         "server"
     } else {
         "none"
@@ -105,7 +146,7 @@ pub fn usable_here() -> bool {
     if !crate::tenant::multi_tenant() {
         return binary().is_some();
     }
-    crate::tenant::current().is_some_and(|t| !t.restricted) && server_token().is_some()
+    allowed_here() && server_token().is_some()
 }
 
 /// The program, started the way this place needs. On a computer it is the person's own: it inherits what they have (their login),
@@ -119,7 +160,7 @@ fn command(bin: PathBuf) -> Result<(Command, Option<String>), String> {
         crate::exec::scrub_server(&mut cmd);
         return Ok((cmd, None));
     }
-    let t = crate::tenant::current().filter(|t| !t.restricted).ok_or("Claude Code is not available to this account.")?;
+    let t = crate::tenant::current().filter(|_| allowed_here()).ok_or("Claude Code is not available to this account.")?;
     let token = server_token().ok_or(NO_TOKEN)?;
     let home = t.config.join("claude-home");
     {
@@ -222,7 +263,7 @@ pub fn run(model: &str, effort: Option<&str>, session: &mut Option<String>, prom
 /// `run`, with a permission mode for this question only (None: the saved mode, as the tools server reads it).
 #[allow(clippy::too_many_arguments)]
 pub fn run_in_mode(mode: Option<crate::policy::Mode>, model: &str, effort: Option<&str>, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
-    if crate::tenant::is_restricted() {
+    if crate::tenant::is_restricted() && !allowed_here() {
         return Err("Claude Code is not available to this account.".into());
     }
     let had_session = session.is_some();
@@ -247,6 +288,10 @@ fn tools_env(tenant: Option<&crate::tenant::Tenant>, mode: Option<crate::policy:
     if let Some(t) = tenant {
         env["ZO_TENANT_ID"] = json!(t.id);
         env["ZO_MULTI_TENANT"] = json!("1");
+        // the tools program of a restricted person is restricted too: web, memory and questions only (fails closed: see tenant::current)
+        if t.restricted {
+            env["ZO_TENANT_RESTRICTED"] = json!("1");
+        }
         if let Some(root) = root {
             env["ZO_TENANT_ROOT"] = json!(root);
         }
@@ -613,5 +658,45 @@ mod server_tests {
             assert!(token_set_at().is_none() && crate::ai::keys::get(TOKEN_KEY).is_none());
         });
         cleanup(&dir);
+    }
+
+    #[test]
+    fn everybody_may_use_claude_code_only_when_the_operator_says_all_and_never_on_the_owners_token() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::tenant::testkit::env_once();
+        test_multi(true);
+        let (admin, guest) = (crate::tenant::testkit::fresh(false), crate::tenant::testkit::fresh(true));
+        const T: &str = "sk-ant-oat01-guest-token-0123456789abcdefghijklmnop";
+        set_global_token(Some("sk-ant-oat01-owners-fallback-token-0123456789abcdef".into()));
+        // default (admins): the guest has nothing, and cannot store a token
+        test_users_all(Some(false));
+        scope(&guest, || {
+            assert!(!allowed_here() && !usable_here() && binary().is_none());
+            assert!(store_token(T).is_err());
+            assert_eq!(token_source(), "none");
+        });
+        scope(&admin, || {
+            assert!(allowed_here());
+            assert_eq!(token_source(), "server", "the admin may use the operator's fallback token");
+        });
+        // all: the guest may keep a token of their own and use it; the owner's fallback never becomes theirs
+        test_users_all(Some(true));
+        scope(&guest, || {
+            assert!(allowed_here());
+            assert_eq!(token_source(), "none", "no own token: not the owner's subscription");
+            assert!(!usable_here());
+            assert!(server_token().is_none());
+            store_token(T).unwrap();
+            assert_eq!((token_source(), usable_here()), ("own", true));
+            assert_eq!(server_token().as_deref(), Some(T));
+            clear_token().unwrap();
+        });
+        // the tools program of a guest is told that it is restricted; the admin's is not
+        let env = tools_env(Some(&guest), None, Some("/r".into()));
+        assert_eq!(env["ZO_TENANT_RESTRICTED"], "1");
+        assert!(tools_env(Some(&admin), None, Some("/r".into())).get("ZO_TENANT_RESTRICTED").is_none());
+        test_users_all(None);
+        set_global_token(None);
+        test_multi(false);
     }
 }

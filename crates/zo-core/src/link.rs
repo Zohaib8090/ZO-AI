@@ -150,6 +150,8 @@ pub enum Kind {
     Send { text: String, chat: Option<String>, edit: Option<u64>, attachments: Option<Value>, mode: Option<Mode> },
     Op { op: String, args: Vec<(String, Value)> },
     Stop { job_id: Option<String> },
+    /// A terminal on this computer for the web page. Opened only after the person here says yes (never from the web).
+    Term { rows: u16, cols: u16 },
     ApprovalReply { job_id: String, approval: u64, yes: bool },
     /// The person's answer to a question card (`zohara_ask_user`) of a running web session: `reply` is the checked
     /// `{"cancelled":true}` or `{"answers":[...]}`; the service checks it again against the question it asked.
@@ -244,6 +246,16 @@ pub fn parse_job(v: &Value, now_ms: u64) -> Result<Job, (Option<String>, String)
                 }
             }
             Kind::Op { op: name.to_string(), args }
+        }
+        "term" => {
+            let dim = |k: &str, lo: u64, hi: u64, d: u64| match v.get(k) {
+                None | Some(Value::Null) => Some(d),
+                Some(n) => n.as_u64().filter(|n| (lo..=hi).contains(n)),
+            };
+            match (dim("rows", 2, 500, 30), dim("cols", 10, 2000, 110)) {
+                (Some(r), Some(c)) => Kind::Term { rows: r as u16, cols: c as u16 },
+                _ => return bad("The terminal size is not valid."),
+            }
         }
         "stop" => match v.get("job_id").or_else(|| v.get("target")) {
             None | Some(Value::Null) => Kind::Stop { job_id: None },
@@ -448,6 +460,8 @@ struct Shared {
     host: Arc<dyn Host>,
     connect: Connect,
     jobs: Mutex<HashMap<String, Arc<Ctl>>>,
+    /// Terminals open for the web (not in `jobs`: a terminal does not make this computer "busy" for a chat).
+    terms: Mutex<HashMap<String, Arc<Ctl>>>,
     /// Counter of web jobs run, so a test can wait for them.
     finished: AtomicU64,
 }
@@ -667,6 +681,124 @@ fn run_op(sh: &Shared, base: &str, cred: &str, id: &str, op: &str, args: &[(Stri
     let _ = flush(base, cred, id, &mut events, true);
 }
 
+/// Terminals one computer keeps open for the web at once.
+pub const MAX_TERMS: usize = 3;
+/// What the person here is told when a web page asks for a terminal. It is asked on this computer every time, and no setting lets the
+/// web answer it.
+pub const TERM_QUESTION: &str = "open a TERMINAL on this computer. It can run any command as you, the same as a terminal you opened yourself. Allow it only if you just asked for it in the web page";
+/// The smallest time between two posts of a terminal's output (the server takes 600 posts a minute).
+const TERM_POST_GAP: Duration = Duration::from_millis(120);
+
+fn b64_encode(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for c in data.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// A terminal for the web page: asks the person on this computer, then runs a login shell of theirs and relays it until the page
+/// closes it, the link goes away or the shell ends. The shell is the person's own program in their own home; what the web may do is
+/// type into it and resize it.
+fn run_term(sh: &Shared, base: &str, cred: &str, id: &str, ctl: &Ctl, rows: u16, cols: u16) {
+    // the page is told that it waits; the question is on this computer's screen, whatever the settings say
+    let mut b = vec![json!({"event": "waiting"})];
+    if flush(base, cred, id, &mut b, false).is_err() {
+        return;
+    }
+    let yes = sh.host.ask_local(TERM_QUESTION);
+    if !yes || ctl.stop.load(Ordering::SeqCst) {
+        let mut b = vec![json!({"event": "denied"})];
+        let _ = flush(base, cred, id, &mut b, true);
+        return;
+    }
+    let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty() && std::path::Path::new(s).is_file()).unwrap_or_else(|| "/bin/bash".into());
+    let mut spec = crate::pty::Spec::new(&shell);
+    spec.args = vec!["-l".into()];
+    spec.rows = rows;
+    spec.cols = cols;
+    spec.env = vec![("TERM".into(), "xterm-256color".into()), ("COLORTERM".into(), "truecolor".into())];
+    spec.cwd = std::env::var_os("HOME").map(PathBuf::from).filter(|h| h.is_dir());
+    let pty = match crate::pty::Pty::spawn(&spec) {
+        Ok(p) => p,
+        Err(e) => {
+            let mut b = vec![json!({"event": "error", "error": e})];
+            let _ = flush(base, cred, id, &mut b, true);
+            return;
+        }
+    };
+    let mut batch = vec![json!({"event": "opened"})];
+    let (mut seq, mut last_post, mut failures) = (0u64, Instant::now() - TERM_POST_GAP, 0u32);
+    let mut ended = false;
+    loop {
+        // wait for output, but never longer than a post gap: typed input comes back in the answer to a post
+        let wait = TERM_POST_GAP.saturating_sub(last_post.elapsed()).max(Duration::from_millis(10));
+        let mut c = pty.read_from(seq, wait);
+        let mut chunks = 0;
+        while !c.data.is_empty() && chunks < 8 {
+            batch.push(json!({"event": "out", "b": b64_encode(&c.data)}));
+            seq = c.next;
+            chunks += 1;
+            c = pty.read_from(seq, Duration::ZERO);
+        }
+        if c.ended && c.data.is_empty() {
+            ended = true;
+            batch.push(json!({"event": "exit", "code": pty.exit_code().unwrap_or(-1)}));
+        }
+        let due = !batch.is_empty() || last_post.elapsed() >= Duration::from_millis(300);
+        if due && last_post.elapsed() >= TERM_POST_GAP || ended || ctl.stop.load(Ordering::SeqCst) {
+            let stopping = ctl.stop.load(Ordering::SeqCst);
+            let done = ended || stopping;
+            match post(&format!("{base}/api/link/events"), cred, &json!({"job_id": id, "events": batch, "done": done}), Duration::from_secs(20)) {
+                Ok(r) => {
+                    failures = 0;
+                    batch.clear();
+                    last_post = Instant::now();
+                    if r.get("cancel").and_then(Value::as_bool).unwrap_or(false) {
+                        break;
+                    }
+                    for item in r.get("term").and_then(Value::as_array).into_iter().flatten().take(64) {
+                        match item.get("t").and_then(Value::as_str) {
+                            Some("in") => {
+                                if let Some(d) = item.get("data").and_then(Value::as_str).filter(|d| d.len() <= crate::pty::MAX_INPUT) {
+                                    let _ = pty.write(d.as_bytes());
+                                }
+                            }
+                            Some("resize") => {
+                                let g = |k: &str| item.get(k).and_then(Value::as_u64).filter(|n| *n >= 2 && *n <= 2000);
+                                if let (Some(r), Some(c)) = (g("rows"), g("cols")) {
+                                    pty.resize(r as u16, c as u16);
+                                }
+                            }
+                            Some("close") => ctl.stop.store(true, Ordering::SeqCst),
+                            _ => {}
+                        }
+                    }
+                }
+                // the server does not know this terminal (any more): it is over
+                Err(f) if matches!(f.status, 400 | 403 | 404 | 409 | 410) => break,
+                Err(_) => {
+                    failures += 1;
+                    // the link is gone: the terminal closes (what was typed meanwhile is not lost, but nothing runs unwatched for long)
+                    if failures >= 20 {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            }
+            if done {
+                break;
+            }
+        }
+    }
+    pty.close();
+}
+
 fn start_job(sh: &Arc<Shared>, base: &str, cred: &str, job: Job) {
     let (base, cred) = (base.to_string(), cred.to_string());
     match job.kind {
@@ -711,6 +843,30 @@ fn start_job(sh: &Arc<Shared>, base: &str, cred: &str, job: Job) {
                     ctl.stop.store(true, Ordering::SeqCst);
                 }
             }
+            // a stop names the job it is for: a terminal ends only when it is named (a general "stop" is for chats)
+            if let Some(j) = job_id {
+                if let Some(ctl) = sh.terms.lock().unwrap_or_else(|e| e.into_inner()).get(&j) {
+                    ctl.stop.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+        Kind::Term { rows, cols } => {
+            let open = sh.terms.lock().unwrap_or_else(|e| e.into_inner()).len();
+            if open >= MAX_TERMS {
+                let mut b = vec![json!({"event": "error", "error": "This computer already has as many web terminals open as it allows."})];
+                std::thread::spawn(move || {
+                    let _ = flush(&base, &cred, &job.id, &mut b, true);
+                });
+                return;
+            }
+            let ctl = Arc::new(Ctl { stop: AtomicBool::new(false), waiting: Mutex::new(HashMap::new()), approvals_from_web: false });
+            sh.terms.lock().unwrap_or_else(|e| e.into_inner()).insert(job.id.clone(), ctl.clone());
+            let sh2 = sh.clone();
+            std::thread::spawn(move || {
+                run_term(&sh2, &base, &cred, &job.id, &ctl, rows, cols);
+                sh2.terms.lock().unwrap_or_else(|e| e.into_inner()).remove(&job.id);
+                sh2.finished.fetch_add(1, Ordering::SeqCst);
+            });
         }
         Kind::AnswerReply { job_id, question, reply } => {
             // only for a running job and a question card that this job showed. A question is just the person's own words (it runs
@@ -765,6 +921,10 @@ fn handle_jobs(sh: &Arc<Shared>, base: &str, cred: &str, answer: &Value) {
 fn poll_once(sh: &Arc<Shared>, ep: &Endpoint, name: &str, failures: &mut u32) -> u64 {
     let Some((base, cred)) = ep() else {
         st().connected = false;
+        // the switch is off (or nobody is signed in): no terminal stays open for the web
+        for ctl in sh.terms.lock().unwrap_or_else(|e| e.into_inner()).values() {
+            ctl.stop.store(true, Ordering::SeqCst);
+        }
         return 2;
     };
     let body = json!({"name": name, "caps": caps()});
@@ -794,7 +954,7 @@ fn poll_once(sh: &Arc<Shared>, ep: &Endpoint, name: &str, failures: &mut u32) ->
 
 /// Runs the loop on the calling thread until `quit` is set. Nothing goes over the network while `ep` gives None.
 pub fn run_loop(host: Arc<dyn Host>, ep: Endpoint, connect: Connect, quit: Arc<AtomicBool>) {
-    let sh = Arc::new(Shared { host, connect, jobs: Mutex::new(HashMap::new()), finished: AtomicU64::new(0) });
+    let sh = Arc::new(Shared { host, connect, jobs: Mutex::new(HashMap::new()), terms: Mutex::new(HashMap::new()), finished: AtomicU64::new(0) });
     run_loop_with(sh, ep, quit);
 }
 
@@ -813,7 +973,7 @@ fn run_loop_with(sh: Arc<Shared>, ep: Endpoint, quit: Arc<AtomicBool>) {
         }
     }
     // the switch went off or the app quits: whatever a web session still runs is stopped
-    for ctl in sh.jobs.lock().unwrap_or_else(|e| e.into_inner()).values() {
+    for ctl in sh.jobs.lock().unwrap_or_else(|e| e.into_inner()).values().chain(sh.terms.lock().unwrap_or_else(|e| e.into_inner()).values()) {
         ctl.stop.store(true, Ordering::SeqCst);
     }
 }
@@ -1134,6 +1294,8 @@ mod tests {
         events: Arc<Mutex<Vec<Value>>>,
         done: Arc<Mutex<Vec<String>>>,
         shared: Arc<Shared>,
+        /// What the mock server hands to a terminal in the answers to its event posts.
+        term_in: Arc<Mutex<Vec<Value>>>,
     }
     impl Drop for Rig {
         fn drop(&mut self) {
@@ -1148,7 +1310,8 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::<Value>::new()));
         let done = Arc::new(Mutex::new(Vec::<String>::new()));
         let jobs = Arc::new(Mutex::new(Some(jobs)));
-        let (p2, e2, d2) = (polls.clone(), events.clone(), done.clone());
+        let term_in = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let (p2, e2, d2, t2) = (polls.clone(), events.clone(), done.clone(), term_in.clone());
         let base = mock_server(Arc::new(move |path, body, auth| {
             if auth != "Bearer zd_test_credential_000000" {
                 return (401, json!({"ok": false, "error": "no"}));
@@ -1171,17 +1334,18 @@ mod tests {
                         d2.lock().unwrap().push(body["job_id"].as_str().unwrap_or("").to_string());
                     }
                     let cancel = cancel_after.map(|n| e.len() >= n).unwrap_or(false);
-                    (200, json!({"ok": true, "cancel": cancel}))
+                    let term: Vec<Value> = t2.lock().unwrap().drain(..).collect();
+                    (200, json!({"ok": true, "cancel": cancel, "term": term}))
                 }
                 _ => (404, json!({"ok": false})),
             }
         }));
         let ep: Endpoint = Arc::new(move || Some((base.clone(), "zd_test_credential_000000".to_string())));
-        let sh = Arc::new(Shared { host, connect, jobs: Mutex::new(HashMap::new()), finished: AtomicU64::new(0) });
+        let sh = Arc::new(Shared { host, connect, jobs: Mutex::new(HashMap::new()), terms: Mutex::new(HashMap::new()), finished: AtomicU64::new(0) });
         let quit = Arc::new(AtomicBool::new(false));
         let (sh2, q2) = (sh.clone(), quit.clone());
         std::thread::spawn(move || run_loop_with(sh2, ep, q2));
-        Rig { quit, polls, events, done, shared: sh }
+        Rig { quit, polls, events, done, shared: sh, term_in }
     }
 
     /// A private config/data/runtime folder, and the lock that keeps tests with their own folders apart.
@@ -1447,7 +1611,7 @@ mod tests {
         let on = Arc::new(AtomicBool::new(false));
         let o2 = on.clone();
         let ep: Endpoint = Arc::new(move || o2.load(Ordering::SeqCst).then(|| (base.clone(), "zd_x".to_string())));
-        let sh = Arc::new(Shared { host: host(true), connect: fake_service(|_, _, _| {}), jobs: Mutex::new(HashMap::new()), finished: AtomicU64::new(0) });
+        let sh = Arc::new(Shared { host: host(true), connect: fake_service(|_, _, _| {}), jobs: Mutex::new(HashMap::new()), terms: Mutex::new(HashMap::new()), finished: AtomicU64::new(0) });
         let mut f = 0;
         assert_eq!(poll_once(&sh, &ep, "n", &mut f), 2);
         assert_eq!(polls.load(Ordering::SeqCst), 0, "no request while off");
@@ -1576,5 +1740,95 @@ mod tests {
         assert_eq!(saved[0].title, "hi from the web");
         // while it ran, it was listed as a web session
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn b64_decode(s: &str) -> Vec<u8> {
+        let val = |c: u8| match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            _ => 63,
+        } as u32;
+        let b: Vec<u8> = s.bytes().filter(|c| *c != b'=').collect();
+        let mut out = Vec::new();
+        for c in b.chunks(4) {
+            let n = c.iter().enumerate().fold(0u32, |a, (i, x)| a | val(*x) << (18 - 6 * i));
+            out.push((n >> 16) as u8);
+            if c.len() > 2 {
+                out.push((n >> 8) as u8);
+            }
+            if c.len() > 3 {
+                out.push(n as u8);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn base64_round_trips() {
+        for n in 0..40usize {
+            let data: Vec<u8> = (0..n as u8).map(|i| i.wrapping_mul(37)).collect();
+            assert_eq!(b64_decode(&b64_encode(&data)), data, "{n}");
+        }
+        assert_eq!(b64_encode(b"hello"), "aGVsbG8=");
+    }
+
+    #[test]
+    fn a_terminal_job_is_validated() {
+        let ok = parse_job(&json!({"id": "t1", "type": "term", "rows": 20, "cols": 80, "cmd": "rm -rf /", "tenant": {"id": "x"}}), 0).unwrap();
+        assert_eq!(ok.kind, Kind::Term { rows: 20, cols: 80 }, "unknown fields are ignored: a job cannot carry a command");
+        assert_eq!(parse_job(&json!({"id": "t2", "type": "term"}), 0).unwrap().kind, Kind::Term { rows: 30, cols: 110 });
+        for bad in [json!({"rows": 0}), json!({"rows": 100000}), json!({"cols": "wide"}), json!({"cols": 3})] {
+            let mut j = json!({"id": "t3", "type": "term"});
+            for (k, v) in bad.as_object().unwrap() {
+                j[k] = v.clone();
+            }
+            assert!(parse_job(&j, 0).is_err(), "{j}");
+        }
+    }
+
+    #[test]
+    fn a_web_terminal_is_not_opened_when_the_person_here_says_no() {
+        let (_g, _dir) = sandbox("term_no");
+        let h = host(false);
+        let r = rig(vec![json!({"id": "t-no", "type": "term"})], fake_service(|_, _, _| {}), h.clone(), None);
+        wait_until("the job to end", || r.done.lock().unwrap().contains(&"t-no".to_string()));
+        let kinds: Vec<String> = r.events.lock().unwrap().iter().map(|e| e["event"].as_str().unwrap().to_string()).collect();
+        assert_eq!(kinds, ["waiting", "denied"], "{kinds:?}");
+        assert_eq!(h.asked.lock().unwrap().as_slice(), [TERM_QUESTION.to_string()], "it was asked on this computer");
+        assert!(r.shared.terms.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_web_terminal_runs_a_shell_for_the_page_and_ends_on_close() {
+        let (_g, _dir) = sandbox("term_yes");
+        let old = std::env::var_os("SHELL");
+        std::env::set_var("SHELL", "/bin/sh");
+        let h = host(true);
+        let r = rig(vec![json!({"id": "t-yes", "type": "term", "rows": 24, "cols": 80})], fake_service(|_, _, _| {}), h.clone(), None);
+        wait_until("the terminal to open", || r.events.lock().unwrap().iter().any(|e| e["event"] == "opened"));
+        r.term_in.lock().unwrap().push(json!({"t": "in", "data": "echo zo-link-$((6*7)); stty size\n"}));
+        let seen = |needle: &str| {
+            let text: Vec<u8> = r.events.lock().unwrap().iter().filter(|e| e["event"] == "out").flat_map(|e| b64_decode(e["b"].as_str().unwrap())).collect();
+            String::from_utf8_lossy(&text).contains(needle)
+        };
+        wait_until("the output of the typed command", || seen("zo-link-42"));
+        assert!(seen("24 80"), "the size that was asked for");
+        r.term_in.lock().unwrap().push(json!({"t": "resize", "rows": 40, "cols": 100}));
+        std::thread::sleep(Duration::from_millis(400));
+        r.term_in.lock().unwrap().push(json!({"t": "in", "data": "stty size\n"}));
+        wait_until("the new size", || seen("40 100"));
+        // anything that is not an input, a resize or a close is ignored
+        r.term_in.lock().unwrap().push(json!({"t": "run", "cmd": "touch /tmp/zo-should-not-exist"}));
+        r.term_in.lock().unwrap().push(json!({"t": "close"}));
+        wait_until("the terminal to end", || r.done.lock().unwrap().contains(&"t-yes".to_string()));
+        assert!(!std::path::Path::new("/tmp/zo-should-not-exist").exists());
+        assert_eq!(h.asked.lock().unwrap().len(), 1);
+        wait_until("the terminal to be forgotten", || r.shared.terms.lock().unwrap().is_empty());
+        match old {
+            Some(v) => std::env::set_var("SHELL", v),
+            None => std::env::remove_var("SHELL"),
+        }
     }
 }

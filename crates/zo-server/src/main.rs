@@ -8,6 +8,9 @@
 //!                              (this, ZO_SERVER_SECRET and CLAUDE_CODE_OAUTH_TOKEN are read at start and removed from the environment)
 //!   ZO_ADMIN_EMAILS            the owner's address(es), separated by commas: admins (unrestricted tools, Claude Code, SSH, Bypass)
 //!   ZO_BLOCKED_EMAILS          addresses that are refused (optional)
+//!   ZO_TERMINAL=off            turns the cloud terminal (a shell for admins, see term.rs) off; ZO_MAX_TERMINALS (8), ZO_TERM_MEM_MB (2048), ZO_TERM_NPROC
+//!   ZO_CLAUDE_CODE_USERS       admins (default) or all: who may sign in to Claude Code on the server (see docs/TERMINAL-AND-CLAUDE-LOGIN.md);
+//!                              ZO_MAX_CLAUDE_LOGINS (2) sign-ins at the same time
 //!   ZO_MAX_USERS               how many people may register (default 200)
 //!   ZO_MAX_RUNS                answers being written at once on the whole server (default 8)
 //!   ZO_CONTACT_EMAIL           the operator's address, shown in the privacy notice and the terms (required)
@@ -24,6 +27,7 @@
 
 mod account;
 mod auth;
+mod claude_api;
 mod db;
 mod devicelogin;
 mod devices;
@@ -37,6 +41,7 @@ mod pwa;
 mod sync;
 mod sync_api;
 mod tenants;
+mod term;
 #[cfg(test)]
 mod testenv;
 
@@ -88,6 +93,10 @@ pub enum Route {
     LinkStatus,
     /// /api/sync/claude_token: the owner's desktop sends (or removes) the Claude sign-in (a desktop credential only).
     ClaudeToken,
+    /// /api/term/*: terminals (see term.rs). A person signed in, or a `full` device (the `zo` terminal client); never a desktop's own credential.
+    Term,
+    /// /api/claude/*: the guided Claude Code sign-in on the server (see claude_api.rs).
+    Claude,
 }
 
 /// How a caller proved who they are.
@@ -133,6 +142,8 @@ pub fn route_of(method: &Method, path: &str) -> Option<Route> {
         "/api/link/poll" | "/api/link/events" => Some(Route::LinkDevice),
         "/api/link/status" => Some(Route::LinkStatus),
         "/api/sync/claude_token" => Some(Route::ClaudeToken),
+        p if p.strip_prefix("/api/term/").is_some_and(|n| term::CALLS.contains(&n)) => Some(Route::Term),
+        p if p.strip_prefix("/api/claude/").is_some_and(|n| claude_api::CALLS.contains(&n)) => Some(Route::Claude),
         p if p.strip_prefix("/api/auth/").is_some_and(|n| loginapi::PERSON_CALLS.contains(&n)) => Some(Route::Auth),
         p => p.strip_prefix("/api/account/").filter(|n| account::CALLS.contains(n)).map(|_| Route::Account),
     }
@@ -209,6 +220,9 @@ pub struct App {
     pub push: Arc<push::Hub>,
     /// The desktop link: which computers are online, the jobs on their way to them (`link.rs`).
     pub link: link::Link,
+    /// The shells of the cloud terminal (`term.rs`) and the folder their homes are made in.
+    pub term: term::Hub,
+    pub term_root: std::path::PathBuf,
 }
 
 impl App {
@@ -230,6 +244,7 @@ impl App {
 
     pub fn close_streams(&self, tenant: &str) {
         self.link.purge_tenant(tenant);
+        self.term.close_all(tenant);
         for (_, (t, s)) in self.streams.lock().unwrap().iter() {
             if t == tenant {
                 let _ = s.shutdown(std::net::Shutdown::Both);
@@ -641,6 +656,11 @@ fn route(app: Arc<App>, mut req: Request) {
     if !permits(&who.cred, r) {
         return fail(&app, req, Fail::new(403, "This device token may not do that."));
     }
+    // terminals and the Claude sign-in: small calls and one long stream; they hold no place of the person's (a stream would hold it for
+    // hours) and have their own limits (term.rs, claude_api.rs)
+    if matches!(r, Route::Term | Route::Claude) {
+        return term_or_claude(&app, req, &path, r, &who);
+    }
     // the desktop app's long poll and its event posts: they have their own limits (link.rs) and hold no place of the person's, which
     // would otherwise be taken up for as long as a poll waits
     if r == Route::LinkDevice {
@@ -762,7 +782,7 @@ fn route(app: Arc<App>, mut req: Request) {
             Ok(r) => reply(&app, req, 200, r),
             Err(f) => fail(&app, req, f),
         },
-        Route::DeviceStart | Route::DevicePoll | Route::LinkDevice => fail(&app, req, Fail::new(500, "not here")),
+        Route::DeviceStart | Route::DevicePoll | Route::LinkDevice | Route::Term | Route::Claude => fail(&app, req, Fail::new(500, "not here")),
         Route::LinkStatus => match link::status_http(&app, &who) {
             Ok(r) => reply(&app, req, 200, r),
             Err(f) => fail(&app, req, f),
@@ -803,6 +823,43 @@ fn route(app: Arc<App>, mut req: Request) {
     }
 }
 
+/// Does the request come from this server's own page? Browsers send `Origin` on every POST: another site's page is refused. Programs
+/// (`zo`, curl) send none. A terminal is the most powerful thing the API has, so this is checked on top of the sign-in.
+fn same_origin(app: &App, req: &Request) -> bool {
+    let Some(origin) = get_header(req, "Origin") else { return true };
+    let Some(host) = get_header(req, "Host") else { return false };
+    origin == format!("https://{host}") || (app.no_auth && origin == format!("http://{host}") && host_is_local(&host))
+}
+
+fn term_or_claude(app: &Arc<App>, mut req: Request, path: &str, r: Route, who: &Who) {
+    if !same_origin(app, &req) {
+        return fail(app, req, Fail::new(403, "This call is only for the ZO-AI page of this server."));
+    }
+    if matches!(who.cred, Cred::Account { .. }) {
+        match app.has_accepted(&who.tenant) {
+            Ok(true) => {}
+            Ok(false) => return reply(app, req, 403, json!({"ok": false, "error": "Accept the privacy notice and the terms first.", "terms_required": true, "version": pages::TERMS_VERSION})),
+            Err(e) => {
+                eprintln!("zo-server: {e}");
+                return fail(app, req, Fail::new(503, "The storage is not reachable right now. Try again in a moment."));
+            }
+        }
+    }
+    // typed text can be pasted in bulk, and JSON escapes control characters at up to six bytes each
+    let v = match body(&mut req, 512 * 1024, BODY_SECS) {
+        Ok(v) => v,
+        Err(f) => return fail(app, req, f),
+    };
+    if r == Route::Term {
+        let name = path.strip_prefix("/api/term/").unwrap_or("");
+        if name == "open" {
+            return term::open_http(app, req, v, who);
+        }
+        return term::call_http(app, req, name, &v, who);
+    }
+    claude_api::handle(app, req, path.strip_prefix("/api/claude/").unwrap_or(""), &v, who)
+}
+
 /// Serves requests until the listener ends.
 pub fn serve(app: Arc<App>, server: Server) {
     for req in server.incoming_requests() {
@@ -838,6 +895,8 @@ fn clean_root(root: &std::path::Path) {
 fn main() {
     // first of all, before any thread exists: the secrets are read and taken out of the environment (see hardening.rs)
     let secrets = hardening::take_secrets();
+    // a shell started on this server (an admin's terminal) must not be able to read this process's memory or environment through /proc
+    hardening::protect_memory();
     zo_core::ai::keys::set_server_secret(secrets.server_secret.as_deref().unwrap_or(""));
     zo_core::ai::claude_code::set_global_token(secrets.claude_token.clone());
     let no_auth = env("ZO_SERVER_NO_AUTH").as_deref() == Some("1");
@@ -906,6 +965,7 @@ fn main() {
         database = Some(Arc::new(fs));
         clean_root(&root);
     }
+    let root_for_terminals = root.clone();
     let tenants = Arc::new(TenantMap::new(root, database.clone(), secret.clone().unwrap_or_default(), policy.max_users, max_runs));
     // never start without the database and then overwrite what is saved
     if let Some(reg) = tenants.registry() {
@@ -984,6 +1044,8 @@ fn main() {
         accepted: Mutex::new(Default::default()),
         push,
         link: link::Link::default(),
+        term: term::Hub::default(),
+        term_root: root_for_terminals,
     });
     {
         // requests that ran out are dropped, and a credential nobody collected is revoked
@@ -992,6 +1054,7 @@ fn main() {
             std::thread::sleep(Duration::from_secs(30));
             loginapi::sweep(&a);
             a.link.sweep();
+            a.term.sweep();
         });
     }
     serve(app, server);
