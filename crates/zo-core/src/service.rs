@@ -642,11 +642,13 @@ impl crate::approval::Questioner for RemoteQuestioner {
         }
         let id = self.next.fetch_add(1, Ordering::SeqCst);
         let rx = self.pending.open(id, questions.to_vec());
+        // before the card goes out: a client that answers at once must never see the item still saying something else
+        crate::activity::set_detail_of(self.activity, "Waiting for your answer");
         if !line(&self.out, &json!({"event": "question", "id": id, "questions": questions})) {
             self.pending.close(id);
+            crate::activity::set_detail_of(self.activity, &self.restore);
             return Unanswered;
         }
-        crate::activity::set_detail_of(self.activity, "Waiting for your answer");
         let result = crate::question::wait(&rx, &self.cancel, self.limit);
         self.pending.close(id);
         crate::activity::set_detail_of(self.activity, &self.restore);
