@@ -76,16 +76,6 @@ class TranscriptTest {
     assertEquals("You: hi\n\nZohara Agent: hello", Transcript.copyAll(items))
   }
 
-  @Test fun greetingUsesDesktopHoursAndFirstName() {
-    assertEquals("Good morning, Zohaib", Transcript.greeting(5, "Zohaib Baig", "z@x.org"))
-    assertEquals("Good morning, Zohaib", Transcript.greeting(11, "Zohaib Baig", ""))
-    assertEquals("Good afternoon, Ali", Transcript.greeting(12, "", "ali@x.org"))
-    assertEquals("Good afternoon, Ali", Transcript.greeting(17, "  ", "ali@x.org"))
-    assertEquals("Good evening, Ali", Transcript.greeting(18, "Ali", ""))
-    assertEquals("Good evening, Ali", Transcript.greeting(4, "Ali", ""))
-    assertEquals("Good evening", Transcript.greeting(23, "", ""))
-  }
-
   @Test fun modelNamesAndPillText() {
     assertEquals("Opus 5.5", Transcript.niceName("claude-opus-5-5"))
     assertEquals("Haiku 4.5", Transcript.niceName("claude-haiku-4-5-20251001"))

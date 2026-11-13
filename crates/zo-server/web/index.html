@@ -666,10 +666,58 @@ const view = () => $("view");
 function setTitle(t) { $("title").textContent = t; }
 function setNav(n) { voiceSpeakStop(); if (matchMedia("(max-width:1100px)").matches && typeof dockHide === "function") dockHide(); /* a floating dock must not stay over the next page */ nav = n; document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.nav === n)); markList(); }
 
+/* The home greeting: one message from the shared table (crates/zo-core/data/greetings.json, which the server inlines here), picked once per page load by time, weekday and days since the last visit, never the same as last time. The rules are the same as zo-core/src/greetings.rs. */
+const GREET_TABLE = null /*GREETINGS_JSON*/;
+const GREET_KEY = "zo-greeting";
+const GREET_WD = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const greetSlot = h => h >= 5 && h <= 8 ? "early" : h >= 9 && h <= 11 ? "morning" : h >= 12 && h <= 13 ? "noon" : h >= 14 && h <= 17 ? "afternoon" : h >= 18 && h <= 20 ? "evening" : h >= 21 ? "night" : "late";
+const greetDay = (y, m, d) => Math.floor(Date.UTC(y, m - 1, d) / 86400000);
+function greetVisit(t, st, today) {
+  if (st.last_day == null) return { gap: "first", streak: 1 };
+  const days = today - st.last_day;
+  if (days <= 0) return { gap: "none", streak: Math.max(1, st.streak | 0) };
+  const streak = days === 1 ? (st.streak | 0) + 1 : 1;
+  const gap = days >= t.away_days ? "away" : days >= t.back_days ? "back" : streak >= t.streak_days ? "streak" : "none";
+  return { gap, streak };
+}
+function greetCandidates(t, hour, wd, gap) {
+  const s = greetSlot(hour);
+  const wdOk = tags => !tags.length || tags.some(x => (x === "monday" && wd === 0) || (x === "friday" && wd === 4) || (x === "weekend" && wd >= 5));
+  const fits = m => (!m.time.length || m.time.includes(s)) && wdOk(m.weekday);
+  if (gap !== "none") { const special = t.messages.filter(m => m.gap.includes(gap)).filter(fits); if (special.length) return special; }
+  return t.messages.filter(m => !m.gap.length).filter(fits);
+}
+const greetWeight = m => 1 + (m.weekday.length ? 2 : 0) + (m.time.length ? 1 : 0);
+function greetPick(cands, lastId, rnd) {
+  let pool = cands.slice();
+  if (pool.length > 1) pool = pool.filter(m => m.id !== lastId);
+  let x = Math.min(Math.max(rnd, 0), 0.999999) * pool.reduce((a, m) => a + greetWeight(m), 0);
+  for (const m of pool) { x -= greetWeight(m); if (x < 0) return m; }
+  return pool[pool.length - 1] || null;
+}
+function greetRender(m, name) {
+  name = (name || "").trim();
+  return name ? m.text.split("{name}").join(name) : m.text.split(", {name}").join("").split("{name}").join("").trim();
+}
+function greetFirstName(display, fallback) {
+  const first = (display || "").trim().split(/\s+/)[0] || "";
+  const raw = first || (fallback || "").split("@")[0].trim();
+  return raw ? raw[0].toUpperCase() + raw.slice(1) : "";
+}
+let greetChosen = null;
 function greet() {
-  const h = new Date().getHours(), part = h < 5 ? "evening" : h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
-  const n = (auth.currentUser?.displayName || (auth.currentUser?.email || "").split("@")[0] || "").split(" ")[0];
-  return "Good " + part + (n ? ", " + n[0].toUpperCase() + n.slice(1) : "");
+  const t = GREET_TABLE;
+  if (!t) return "Welcome";
+  if (!greetChosen) {
+    let st = {};
+    try { st = JSON.parse(localStorage.getItem(GREET_KEY) || "{}") || {}; } catch {}
+    const now = new Date(), today = greetDay(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    const v = greetVisit(t, st, today);
+    greetChosen = greetPick(greetCandidates(t, now.getHours(), (now.getDay() + 6) % 7, v.gap), st.last_id, Math.random());
+    try { localStorage.setItem(GREET_KEY, JSON.stringify({ last_day: st.last_day == null ? today : Math.max(st.last_day, today), streak: v.streak, last_id: greetChosen ? greetChosen.id : null })); } catch {}
+  }
+  const u = auth.currentUser;
+  return greetChosen ? greetRender(greetChosen, greetFirstName(u?.displayName, u?.email)) : "Welcome";
 }
 
 /* ---------- the composer (home and chat share it) ---------- */

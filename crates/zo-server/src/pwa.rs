@@ -10,6 +10,9 @@ use tiny_http::{Request, Response};
 const INDEX: &str = include_str!("../web/index.html");
 const SW: &str = include_str!("../web/sw.js");
 const MANIFEST: &str = include_str!("../web/manifest.webmanifest");
+/// The wording of the home greeting, shared with the desktop and Android apps (`crates/zo-core/data/greetings.json`); the page gets it inline.
+const GREETINGS: &str = zo_core::greetings::SOURCE;
+const GREETINGS_SLOT: &str = "null /*GREETINGS_JSON*/";
 /// The address the page files in the repository name (robots.txt, sitemap, canonical, og:url); the server swaps it for its own
 /// address (ZO_PUBLIC_URL / RENDER_EXTERNAL_URL) when that is set, so a move to another host does not leave the old one in every page.
 pub const DEFAULT_BASE: &str = "https://zohara-agent.duckdns.org";
@@ -36,7 +39,12 @@ fn sitemap(base: &str) -> String {
 
 /// The app page with this server's own address in its canonical, og: and JSON-LD tags.
 pub fn index_for(app: &App) -> String {
-    INDEX.replace(DEFAULT_BASE, base_of(app))
+    page(base_of(app))
+}
+
+/// The page with the greeting table inlined and the given address in its canonical, og: and JSON-LD tags.
+fn page(base: &str) -> String {
+    INDEX.replace(GREETINGS_SLOT, GREETINGS.trim()).replace(DEFAULT_BASE, base)
 }
 
 const ICONS: [(&str, &[u8]); 6] = [
@@ -58,7 +66,7 @@ pub fn sw_text() -> &'static str {
     static T: OnceLock<String> = OnceLock::new();
     T.get_or_init(|| {
         let mut h = Sha256::new();
-        for part in [INDEX, SW, MANIFEST] {
+        for part in [INDEX, GREETINGS, SW, MANIFEST] {
             h.update(part.as_bytes());
             h.update([0]);
         }
@@ -105,6 +113,18 @@ mod tests {
             assert!(ICONS.iter().any(|(p, b)| *p == i["src"].as_str().unwrap() && b.starts_with(b"\x89PNG")), "{i}");
         }
         assert!(INDEX.contains("rel=\"manifest\"") && INDEX.contains("apple-touch-icon") && INDEX.contains("theme-color"));
+    }
+
+    #[test]
+    fn the_page_gets_the_shared_greetings_inline() {
+        assert!(INDEX.contains(GREETINGS_SLOT), "the slot is in the page");
+        let p = page(DEFAULT_BASE);
+        assert!(!p.contains("GREETINGS_JSON") && p.contains("\"id\": \"morning-1\"") && p.contains("const GREET_TABLE = {"));
+        // the inlined table is valid and equals the source
+        let start = p.find("const GREET_TABLE = ").unwrap() + "const GREET_TABLE = ".len();
+        let end = p[start..].find(";\nconst GREET_KEY").unwrap();
+        let inline: serde_json::Value = serde_json::from_str(&p[start..start + end]).unwrap();
+        assert_eq!(inline, serde_json::from_str::<serde_json::Value>(GREETINGS).unwrap());
     }
 
     #[test]

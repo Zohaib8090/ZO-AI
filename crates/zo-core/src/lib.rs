@@ -10,6 +10,7 @@ pub mod audit;
 pub mod claude_login;
 pub mod control;
 pub mod exec;
+pub mod greetings;
 pub mod legacy;
 pub mod link;
 pub mod login;
