@@ -52,20 +52,27 @@ fun ToolOutputScreen(chatId: String, index: Int) {
   when {
     group == null && state.loading -> androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { ZoSpinner() }
     group == null -> EmptyBox("Nothing to show", subtitle = "That run is not in this chat any more.")
-    else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-      SelectionContainer {
-        Column(Modifier.fillMaxWidth().background(c.code, ZoTheme.shapes.code).padding(12.dp)) {
-          for (l in group.lines) {
-            Text(
-              when (l.kind) { LineKind.Start -> "▸ "; LineKind.Ok -> "✓ "; LineKind.Fail -> "✗ " } + l.text,
-              style = TextStyle(fontFamily = MonoFamily, fontSize = 13.sp, lineHeight = 19.sp),
-              color = if (l.kind == LineKind.Fail) c.danger else c.codeFg,
-              modifier = Modifier.padding(bottom = 6.dp),
-            )
-            if (looksShortened(l)) Text("…(shortened by the server)", style = ZoTheme.type.fieldHint, color = c.dim, modifier = Modifier.padding(bottom = 6.dp))
-            if (l.kind == LineKind.Start && l.text.contains("screenshot", ignoreCase = true)) {
-              Text("screenshot (kept on ${state.computerName ?: "the computer"})", style = ZoTheme.type.fieldHint, color = c.dim, modifier = Modifier.padding(bottom = 6.dp))
-            }
+    else -> ToolOutputBody(group, state.computerName)
+  }
+}
+
+/** The selectable, scrollable text of a tool run, monospace (CHAT-34), with the notes of CHAT-35 and CHAT-36. */
+@Composable
+fun ToolOutputBody(group: ToolGroupItem, computerName: String?, modifier: Modifier = Modifier) {
+  val c = ZoTheme.colors
+  Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+    SelectionContainer {
+      Column(Modifier.fillMaxWidth().background(c.code, ZoTheme.shapes.code).padding(12.dp)) {
+        for (l in group.lines) {
+          Text(
+            when (l.kind) { LineKind.Start -> "▸ "; LineKind.Ok -> "✓ "; LineKind.Fail -> "✗ " } + l.text,
+            style = TextStyle(fontFamily = MonoFamily, fontSize = 13.sp, lineHeight = 19.sp),
+            color = if (l.kind == LineKind.Fail) c.danger else c.codeFg,
+            modifier = Modifier.padding(bottom = 6.dp),
+          )
+          if (looksShortened(l)) Text("…(shortened by the server)", style = ZoTheme.type.fieldHint, color = c.dim, modifier = Modifier.padding(bottom = 6.dp))
+          if (l.kind == LineKind.Start && l.text.contains("screenshot", ignoreCase = true)) {
+            Text("screenshot (kept on ${computerName ?: "the computer"})", style = ZoTheme.type.fieldHint, color = c.dim, modifier = Modifier.padding(bottom = 6.dp))
           }
         }
       }

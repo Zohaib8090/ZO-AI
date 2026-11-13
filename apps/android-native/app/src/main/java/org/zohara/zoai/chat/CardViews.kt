@@ -20,7 +20,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
+import androidx.compose.foundation.focusable
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -108,10 +117,28 @@ fun QuestionCard(
     ResultLine(item.result, modifier, ok = item.state is QuestionState.Answered)
     return
   }
-  var draft by remember(item.key) { mutableStateOf(initial) }
+  var draft by rememberSaveable(item.key, stateSaver = QuestionDraft.saver(item.questions)) { mutableStateOf(initial) }
   val spec = item.questions.getOrNull(draft.page) ?: return
   val p = draft.page
-  CardFrame(modifier.semantics { contentDescription = "ZO-AI is asking you a question"; liveRegion = LiveRegionMode.Polite }) {
+  val focus = remember { FocusRequester() }
+  LaunchedEffect(item.key) { try { focus.requestFocus() } catch (_: Exception) { } }
+  // INTER-09: hardware keyboard. Arrows and Enter work through the focus of the option rows; the number keys pick an option, Esc skips,
+  // and an Enter that no row took goes to the next question or sends. A text box takes its own keys first (onKeyEvent runs after the child).
+  val keys = Modifier.onKeyEvent { e ->
+    if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
+    val digit = QuestionLogic.digitOf(e.key)
+    when {
+      e.key == Key.Escape -> { if (!item.sending) onSkip(); true }
+      digit != null && digit - 1 < spec.options.size -> { draft = draft.toggle(p, spec.options[digit - 1].label); true }
+      e.key == Key.Enter || e.key == Key.NumPadEnter -> {
+        if (!draft.last) { if (draft.currentAnswered) draft = draft.next() }
+        else if (draft.allAnswered && !item.sending) onSend(draft.answers())
+        true
+      }
+      else -> false
+    }
+  }
+  CardFrame(modifier.then(keys).focusRequester(focus).focusable().semantics { contentDescription = "ZO-AI is asking you a question"; liveRegion = LiveRegionMode.Polite }) {
     Row(verticalAlignment = Alignment.CenterVertically) {
       if (spec.header.isNotBlank()) ZoChip(spec.header.take(24), color = c.accent)
       Spacer(Modifier.weight(1f))

@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,13 +34,31 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import org.zohara.zoai.core.design.PillButton
 import org.zohara.zoai.core.design.ZoIconButton
 import org.zohara.zoai.core.design.ZoIcons
-import org.zohara.zoai.core.design.ZoSpinner
 import org.zohara.zoai.core.design.ZoTheme
 import org.zohara.zoai.core.net.QuestionAnswer
+
+/** Grey placeholder rows while a chat loads (CHAT-45): one bubble on the right, then lines of an answer. */
+@Composable
+fun LoadingSkeleton(modifier: Modifier = Modifier) {
+  val c = ZoTheme.colors
+  fun bar(w: Float, h: Int = 12) = @Composable { Box(Modifier.fillMaxWidth(w).height(h.dp).clip(ZoTheme.shapes.field).background(c.line8)) }
+  androidx.compose.foundation.layout.Column(
+    modifier.widthIn(max = 760.dp).fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp).semantics { contentDescription = "Loading the chat" },
+    verticalArrangement = Arrangement.spacedBy(10.dp),
+  ) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { Box(Modifier.fillMaxWidth(0.55f).height(40.dp).clip(ZoTheme.shapes.bubble).background(c.line8)) }
+    bar(0.92f)(); bar(0.8f)(); bar(0.6f)()
+    androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { Box(Modifier.fillMaxWidth(0.4f).height(40.dp).clip(ZoTheme.shapes.bubble).background(c.line8)) }
+    bar(0.85f)(); bar(0.5f)()
+  }
+}
 
 /** What the thread needs from the screen besides the rows. */
 class ThreadCallbacks(
@@ -66,6 +87,7 @@ fun ThreadView(state: ChatUiState, cb: ThreadCallbacks, modifier: Modifier = Mod
   val lastKey = state.items.lastOrNull { it !is ThinkingItem }?.key
   var editingNth by rememberSaveable { mutableStateOf<Int?>(null) }
   var following by remember { mutableStateOf(true) }
+  val scope = androidx.compose.runtime.rememberCoroutineScope()
 
   val atEnd by remember { derivedStateOf { !listState.canScrollForward } }
   LaunchedEffect(atEnd) { if (atEnd) following = true }
@@ -86,7 +108,7 @@ fun ThreadView(state: ChatUiState, cb: ThreadCallbacks, modifier: Modifier = Mod
   Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     LazyColumn(
       state = listState,
-      modifier = Modifier.widthIn(max = 760.dp).fillMaxSize().nestedScroll(connection),
+      modifier = Modifier.widthIn(max = 760.dp).fillMaxSize().nestedScroll(connection).testTag("thread"),
       contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
       verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -117,10 +139,10 @@ fun ThreadView(state: ChatUiState, cb: ThreadCallbacks, modifier: Modifier = Mod
         }
       }
     }
-    if (state.loading) Box(Modifier.align(Alignment.TopCenter).padding(top = 24.dp)) { ZoSpinner() }
+    if (state.loading && state.items.isEmpty()) LoadingSkeleton(Modifier.align(Alignment.TopCenter))
     if (!following && !atEnd) {
       ZoIconButton(
-        ZoIcons.Down, "Jump to the newest", { following = true },
+        ZoIcons.Down, "Jump to the newest", { following = true; scope.launch { if (total > 0) listState.scrollToItem(total - 1, scrollOffset = Int.MAX_VALUE / 2) } },
         modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp).shadow(4.dp, CircleShape).clip(CircleShape).border(1.dp, c.line12, CircleShape),
         size = 40.dp, background = c.card2,
       )

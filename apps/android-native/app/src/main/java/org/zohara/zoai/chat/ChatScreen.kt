@@ -50,22 +50,16 @@ fun ChatScreen(chatId: String) {
   SetTopBar(title) {
     Box {
       ZoIconButton(ZoIcons.More, "More", { menu = true }, tint = ZoTheme.colors.icon)
-      DropdownMenu(menu, { menu = false }, containerColor = ZoTheme.colors.popover) {
-        val c = ZoTheme.colors
-        DropdownMenuItem(text = { Text("Context", color = c.text) }, onClick = { menu = false; contextRequests++ })
-        DropdownMenuItem(text = { Text("Copy conversation", color = c.text) }, onClick = {
-          menu = false
-          clipboard.setText(AnnotatedString(Transcript.copyAll(state.items)))
-          inst.env.toast("Copied")
-        })
-        DropdownMenuItem(text = { Text(if (pinned == true) "Unpin chat" else "Pin chat", color = c.text) }, onClick = {
-          menu = false
-          val on = pinned != true
-          session.pin(on); pinned = on
-        })
-        if (container.session.admin) DropdownMenuItem(text = { Text("Terminal", color = c.text) }, onClick = { menu = false; nav.terminal() })
-        DropdownMenuItem(text = { Text("Delete chat", color = c.danger) }, onClick = { menu = false; confirmDelete = true })
-      }
+      ChatMenu(
+        menu, { menu = false }, pinned,
+        ChatMenuActions(
+          onContext = { contextRequests++ },
+          onCopyAll = { clipboard.setText(AnnotatedString(Transcript.copyAll(state.items))); inst.env.toast("Copied") },
+          onPin = { val on = pinned != true; session.pin(on); pinned = on },
+          onTerminal = if (container.session.admin) ({ nav.terminal() }) else null,
+          onDelete = { confirmDelete = true },
+        ),
+      )
     }
   }
 

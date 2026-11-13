@@ -27,6 +27,7 @@ class ChatSession(
   private val scope: CoroutineScope,
   private val env: ChatEnv,
   private val windowSize: Int = 60,
+  private val clock: () -> Long = System::currentTimeMillis,
 ) {
   private val _state = MutableStateFlow(ChatUiState())
   val state: StateFlow<ChatUiState> = _state.asStateFlow()
@@ -43,6 +44,8 @@ class ChatSession(
   private var stepHasDeltas = false
   private var chatBegan = false
   private var lastOpenMs = 0L
+  /** the approval or question whose notification is up; any later event of the answer means it was answered somewhere else (INTER-14) */
+  private var needsOpen: Pair<NeedsKind, Long>? = null
 
   val chatId: String? get() = _state.value.chatId
 
@@ -54,7 +57,7 @@ class ChatSession(
     if (s.chatId == id && !force && (s.busy || s.items.isNotEmpty() || s.loading)) return
     loadJob?.cancel()
     _state.value = ChatUiState(chatId = id, loading = true)
-    lastOpenMs = System.currentTimeMillis()
+    lastOpenMs = clock()
     loadJob = scope.launch { fetch(id, silent = false) }
   }
 
@@ -63,8 +66,8 @@ class ChatSession(
     val s = _state.value
     val id = s.chatId ?: return
     if (s.busy || s.loading || s.questionOpen) return
-    if (System.currentTimeMillis() - lastOpenMs < 2000) return
-    lastOpenMs = System.currentTimeMillis()
+    if (clock() - lastOpenMs < 2000) return
+    lastOpenMs = clock()
     loadJob?.cancel()
     loadJob = scope.launch { fetch(id, silent = true) }
   }
@@ -192,6 +195,11 @@ class ChatSession(
 
   /** Returns true when the connection was lost (no `done`). */
   private fun handle(ev: SendEvent): Boolean {
+    needsOpen?.let { (kind, id) ->
+      if (ev is SendEvent.Delta || ev is SendEvent.Text || ev is SendEvent.ToolStart || ev is SendEvent.ToolDone || ev is SendEvent.Done || ev is SendEvent.Error || ev is SendEvent.Stopped || ev is SendEvent.ConnectionLost) {
+        needsDone(_state.value.chatId, kind, id)
+      }
+    }
     when (ev) {
       is SendEvent.Stream -> _state.update { st ->
         var items = st.items
@@ -236,10 +244,11 @@ class ChatSession(
           if (ev.local) add(WaitingItem(key(), ApprovalItem.firstLine(ev.summary, ev.tool)))
           else add(ApprovalItem(key(), ev.id, ev.tool, ev.summary, onComputer = computer))
         }
-        if (!ev.local) env.needsYou(_state.value.chatId, NeedsKind.Approval, _state.value.streamId, ev.id, ApprovalItem.firstLine(ev.summary, ev.tool))
+        if (!ev.local) { needsOpen = NeedsKind.Approval to ev.id; env.needsYou(_state.value.chatId, NeedsKind.Approval, _state.value.streamId, ev.id, ApprovalItem.firstLine(ev.summary, ev.tool)) }
       }
       is SendEvent.Question -> {
         mutate { dropTransient(); add(QuestionItem(key(), ev.id, ev.questions)) }
+        needsOpen = NeedsKind.Question to ev.id
         env.needsYou(_state.value.chatId, NeedsKind.Question, _state.value.streamId, ev.id, ev.questions.firstOrNull()?.question.orEmpty())
       }
       is SendEvent.Usage -> _state.update { it.copy(usage = Usage(ev.input, ev.output)) }
@@ -322,8 +331,8 @@ class ChatSession(
     scope.launch {
       val outcome = reply { backend.replyApprove(stream, item.id, yes) }
       when (outcome) {
-        Reply.Ok -> { setItem(itemKey) { (it as ApprovalItem).copy(sending = false, state = if (yes) ApprovalState.Allowed else ApprovalState.Denied) }; env.needsYouDone(s.chatId, NeedsKind.Approval, item.id) }
-        Reply.Over -> { setItem(itemKey) { (it as ApprovalItem).copy(sending = false, state = ApprovalState.NoAnswer) }; env.needsYouDone(s.chatId, NeedsKind.Approval, item.id) }
+        Reply.Ok -> { setItem(itemKey) { (it as ApprovalItem).copy(sending = false, state = if (yes) ApprovalState.Allowed else ApprovalState.Denied) }; needsDone(s.chatId, NeedsKind.Approval, item.id) }
+        Reply.Over -> { setItem(itemKey) { (it as ApprovalItem).copy(sending = false, state = ApprovalState.NoAnswer) }; needsDone(s.chatId, NeedsKind.Approval, item.id) }
         Reply.OnComputer -> replaceItem(itemKey, WaitingItem(itemKey, ApprovalItem.firstLine(item.summary, item.tool)))
         is Reply.Failed -> { setItem(itemKey) { (it as ApprovalItem).copy(sending = false) }; env.toast("Could not send your answer") }
       }
@@ -338,8 +347,8 @@ class ChatSession(
     setItem(itemKey) { (it as QuestionItem).copy(sending = true) }
     scope.launch {
       when (reply { backend.replyAnswer(stream, item.id, answers) }) {
-        Reply.Ok -> { setItem(itemKey) { (it as QuestionItem).copy(sending = false, state = QuestionState.Answered(QuestionLogic.summary(answers))) }; env.needsYouDone(s.chatId, NeedsKind.Question, item.id) }
-        Reply.Over, Reply.OnComputer -> { setItem(itemKey) { (it as QuestionItem).copy(sending = false, state = QuestionState.Expired) }; env.needsYouDone(s.chatId, NeedsKind.Question, item.id) }
+        Reply.Ok -> { setItem(itemKey) { (it as QuestionItem).copy(sending = false, state = QuestionState.Answered(QuestionLogic.summary(answers))) }; needsDone(s.chatId, NeedsKind.Question, item.id) }
+        Reply.Over, Reply.OnComputer -> { setItem(itemKey) { (it as QuestionItem).copy(sending = false, state = QuestionState.Expired) }; needsDone(s.chatId, NeedsKind.Question, item.id) }
         is Reply.Failed -> { setItem(itemKey) { (it as QuestionItem).copy(sending = false) }; env.toast("Could not send your answer") }
       }
     }
@@ -353,12 +362,14 @@ class ChatSession(
     setItem(itemKey) { (it as QuestionItem).copy(sending = true) }
     scope.launch {
       when (reply { backend.replySkip(stream, item.id) }) {
-        Reply.Ok -> { setItem(itemKey) { (it as QuestionItem).copy(sending = false, state = QuestionState.Skipped) }; env.needsYouDone(s.chatId, NeedsKind.Question, item.id) }
-        Reply.Over, Reply.OnComputer -> { setItem(itemKey) { (it as QuestionItem).copy(sending = false, state = QuestionState.Expired) }; env.needsYouDone(s.chatId, NeedsKind.Question, item.id) }
+        Reply.Ok -> { setItem(itemKey) { (it as QuestionItem).copy(sending = false, state = QuestionState.Skipped) }; needsDone(s.chatId, NeedsKind.Question, item.id) }
+        Reply.Over, Reply.OnComputer -> { setItem(itemKey) { (it as QuestionItem).copy(sending = false, state = QuestionState.Expired) }; needsDone(s.chatId, NeedsKind.Question, item.id) }
         is Reply.Failed -> { setItem(itemKey) { (it as QuestionItem).copy(sending = false) }; env.toast("Could not send your answer") }
       }
     }
   }
+
+  private fun needsDone(chatId: String?, kind: NeedsKind, id: Long) { needsOpen = null; env.needsYouDone(chatId, kind, id) }
 
   private sealed interface Reply {
     data object Ok : Reply

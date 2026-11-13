@@ -125,7 +125,7 @@ data class ContextView(
 private fun n(v: Int): String = NumberFormat.getIntegerInstance(Locale.US).format(v)
 
 @Composable
-fun ContextSheetContent(v: ContextView, onRefresh: () -> Unit, onCompact: () -> Unit) {
+fun ContextSheetContent(v: ContextView, onRefresh: () -> Unit, onCompact: () -> Unit, onPin: (() -> Unit)? = null) {
   val c = ZoTheme.colors
   Column(Modifier.verticalScroll(rememberScrollState())) {
     if (v.message != null) {
@@ -164,7 +164,9 @@ fun ContextSheetContent(v: ContextView, onRefresh: () -> Unit, onCompact: () -> 
       Text("Last request, as the provider counted it: ${n(it.input.toInt())} in, ${n(it.output.toInt())} out.", style = ZoTheme.type.fieldHint, color = c.dimmer, modifier = Modifier.padding(top = 4.dp))
     }
     v.result?.let { Text(it, style = ZoTheme.type.cardMeta, color = c.text2, modifier = Modifier.padding(top = 10.dp)) }
+    onPin?.let { Text("Keep this panel open next to the chat.", style = ZoTheme.type.fieldHint, color = c.dimmer, modifier = Modifier.padding(top = 10.dp)) }
     Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
+      onPin?.let { SecondaryButton("Pin to the side", it, Modifier.heightIn(min = 48.dp)) }
       SecondaryButton("Refresh", onRefresh, Modifier.heightIn(min = 48.dp))
       PrimaryButton(if (v.compacting) "Summarizing…" else "Compact session", onCompact, Modifier.heightIn(min = 48.dp), enabled = !v.compacting, loading = v.compacting)
     }
@@ -172,6 +174,6 @@ fun ContextSheetContent(v: ContextView, onRefresh: () -> Unit, onCompact: () -> 
 }
 
 @Composable
-fun ContextSheet(v: ContextView, onDismiss: () -> Unit, onRefresh: () -> Unit, onCompact: () -> Unit) {
-  ZoBottomSheet("Context", onDismiss) { ContextSheetContent(v, onRefresh, onCompact) }
+fun ContextSheet(v: ContextView, onDismiss: () -> Unit, onRefresh: () -> Unit, onCompact: () -> Unit, onPin: (() -> Unit)? = null) {
+  ZoBottomSheet("Context", onDismiss) { ContextSheetContent(v, onRefresh, onCompact, onPin) }
 }

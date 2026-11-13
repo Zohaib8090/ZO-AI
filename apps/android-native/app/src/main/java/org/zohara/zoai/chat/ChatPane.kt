@@ -3,7 +3,12 @@ package org.zohara.zoai.chat
 import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -48,9 +53,7 @@ fun ChatPane(session: ChatSession, hub: ChatHub.Instance, greetingText: String?,
   val toast = { text: String -> hub.env.toast(text) }
 
   // the draft survives rotation and process death (COMP-18)
-  var savedDraft by rememberSaveable { mutableStateOf("") }
-  LaunchedEffect(Unit) { if (session.draft.value.isEmpty() && savedDraft.isNotEmpty()) session.draft.value = savedDraft }
-  LaunchedEffect(draft) { savedDraft = draft }
+  DraftKeeper(session.draft)
   // text shared into the app (PHN share-in) lands in the home composer
   LaunchedEffect(Unit) {
     if (greetingText != null) ChatHooks.prefill.collect { t ->
@@ -96,34 +99,77 @@ fun ChatPane(session: ChatSession, hub: ChatHub.Instance, greetingText: String?,
     onModel = { sheet = "model"; hub.pills.refresh() },
     onMode = { sheet = "mode" },
     onContext = { sheet = "context" },
+    onTerminal = if (container.session.admin && hub.env.runOn().isCloud) ({ nav.terminal() }) else null,
   )
 
-  ChatContent(state, cb, model, draft, { session.draft.value = it }, greetingText, container.session.restricted, attachmentCount > 0)
+  var pinnedPanel by rememberSaveable { mutableStateOf(false) }
+  val contextView = ContextView(
+    info = Transcript.context(state.items, pills.model), usage = state.usage,
+    message = Transcript.contextMessage(pills.provider, pills.ready),
+    compacting = compacting, result = compactResult,
+  )
+  val refresh = { state.chatId?.let { session.open(it, force = true) }; compactResult = null }
+  val compact = {
+    compacting = true; compactResult = null
+    session.compact { err -> compacting = false; compactResult = err ?: "Session compacted."; if (err == null) toast("Session compacted.") }
+  }
 
-  when (sheet) {
-    "model" -> ModelSheet(
-      pills, { sheet = "" },
-      onPickModel = { p, m -> hub.pills.chooseModel(p, m) { err -> if (err != null) toast(err) }; sheet = "" },
-      onPickProfile = { id -> hub.pills.chooseProfile(id) { err -> if (err != null) toast(err) }; sheet = "" },
-      onMore = { sheet = ""; nav.navigate(Routes.SETTINGS_MODEL) },
-    )
-    "mode" -> ModeSheet(pills.mode, hub.pills.bypassAllowed(), { sheet = "" }, onPick = { m -> hub.pills.setMode(m) { err -> if (err != null) toast(err) }; sheet = "" })
-    "context" -> {
-      val view = ContextView(
-        info = Transcript.context(state.items, pills.model), usage = state.usage,
-        message = Transcript.contextMessage(pills.provider, pills.ready),
-        compacting = compacting, result = compactResult,
+  androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+    // CTX-08, CTX-11: on a tablet the context panel can stay open next to the chat
+    val wide = maxWidth >= PANEL_MIN_WIDTH
+    val panelOn = wide && pinnedPanel && (state.chatId != null || state.items.isNotEmpty())
+    androidx.compose.foundation.layout.Row(Modifier.fillMaxSize()) {
+      Box(Modifier.weight(1f)) {
+        androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalUriHandler provides remember(context) { ChatUriHandler(context) }) {
+          ChatContent(state, cb, model, draft, { session.draft.value = it }, greetingText, container.session.restricted, attachmentCount > 0)
+        }
+      }
+      if (panelOn) ContextPanel(contextView, onUnpin = { pinnedPanel = false }, onRefresh = refresh, onCompact = compact)
+    }
+
+    when (sheet) {
+      "model" -> ModelSheet(
+        pills, { sheet = "" },
+        onPickModel = { p, m -> hub.pills.chooseModel(p, m) { err -> if (err != null) toast(err) }; sheet = "" },
+        onPickProfile = { id -> hub.pills.chooseProfile(id) { err -> if (err != null) toast(err) }; sheet = "" },
+        onMore = { sheet = ""; nav.navigate(Routes.SETTINGS_MODEL) },
       )
-      ContextSheet(
-        view, { sheet = "" },
-        onRefresh = { session.open(state.chatId ?: return@ContextSheet, force = true); compactResult = null },
-        onCompact = {
-          compacting = true; compactResult = null
-          session.compact { err -> compacting = false; compactResult = err ?: "Session compacted."; if (err == null) toast("Session compacted.") }
-        },
+      "mode" -> ModeSheet(pills.mode, hub.pills.bypassAllowed(), { sheet = "" }, onPick = { m -> hub.pills.setMode(m) { err -> if (err != null) toast(err) }; sheet = "" })
+      "context" -> if (wide && pinnedPanel) sheet = "" else ContextSheet(
+        contextView, { sheet = "" }, onRefresh = refresh, onCompact = compact,
+        onPin = if (wide) ({ pinnedPanel = true; sheet = "" }) else null,
       )
     }
   }
+}
+
+/** Width from which the context panel can be pinned beside the chat (a tablet or a phone on its side with a large screen). */
+val PANEL_MIN_WIDTH = 840.dp
+
+/** The pinned context panel (CTX-11): the same content as the sheet, with Unpin. It reads the rows of the chat, so it follows every finished answer. */
+@Composable
+fun ContextPanel(view: ContextView, onUnpin: () -> Unit, onRefresh: () -> Unit, onCompact: () -> Unit, modifier: Modifier = Modifier) {
+  val c = ZoTheme.colors
+  Column(modifier.width(340.dp).fillMaxSize().background(c.card).padding(16.dp)) {
+    androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+      Text("Context", style = ZoTheme.type.sheetTitle, color = c.text, modifier = Modifier.weight(1f))
+      org.zohara.zoai.core.design.SecondaryButton("Unpin", onUnpin, Modifier.heightIn(min = 48.dp))
+    }
+    Spacer(Modifier.height(8.dp))
+    ContextSheetContent(view, onRefresh, onCompact)
+  }
+}
+
+/**
+ * COMP-18, NAV-19: the draft lives in the session (it survives rotation and moving between pages); this also puts it in the saved state of
+ * the screen, so it comes back after the system ended the process.
+ */
+@Composable
+fun DraftKeeper(draft: kotlinx.coroutines.flow.MutableStateFlow<String>) {
+  var saved by rememberSaveable { mutableStateOf("") }
+  LaunchedEffect(Unit) { if (draft.value.isEmpty() && saved.isNotEmpty()) draft.value = saved }
+  val now by draft.collectAsState()
+  LaunchedEffect(now) { saved = now }
 }
 
 /** The body without any state holder, so a screenshot test can draw exactly what the person sees. */

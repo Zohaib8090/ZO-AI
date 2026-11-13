@@ -7,6 +7,17 @@ import org.zohara.zoai.core.net.ZoApi
 object QuestionLogic {
   const val MAX_OTHER = 2000
 
+  /** 1..6 for the number keys that pick an option (INTER-09), else null */
+  fun digitOf(key: androidx.compose.ui.input.key.Key): Int? = when (key) {
+    androidx.compose.ui.input.key.Key.One, androidx.compose.ui.input.key.Key.NumPad1 -> 1
+    androidx.compose.ui.input.key.Key.Two, androidx.compose.ui.input.key.Key.NumPad2 -> 2
+    androidx.compose.ui.input.key.Key.Three, androidx.compose.ui.input.key.Key.NumPad3 -> 3
+    androidx.compose.ui.input.key.Key.Four, androidx.compose.ui.input.key.Key.NumPad4 -> 4
+    androidx.compose.ui.input.key.Key.Five, androidx.compose.ui.input.key.Key.NumPad5 -> 5
+    androidx.compose.ui.input.key.Key.Six, androidx.compose.ui.input.key.Key.NumPad6 -> 6
+    else -> null
+  }
+
   /** "Red, Blue - Other: teal"; several questions are joined with "; " (INTER-08). */
   fun summary(answers: List<QuestionAnswer>): String = answers.joinToString("; ") { a ->
     val labels = a.selected.joinToString(", ")
@@ -85,5 +96,16 @@ data class QuestionDraft(
     val labels = specs[i].options.map { it.label }.filter { it in selected[i] }
     val o = if (otherOn[i]) ZoApi.sanitizeOther(other[i]).takeIf { it.isNotBlank() } else null
     QuestionAnswer(labels, o)
+  }
+
+  companion object {
+    /** keeps a half-filled card over rotation and process death (the draft is plain lists, so a Bundle takes it) */
+    fun saver(specs: List<QuestionSpec>): androidx.compose.runtime.saveable.Saver<QuestionDraft, Any> = androidx.compose.runtime.saveable.listSaver(
+      save = { d -> listOf(d.page, ArrayList(d.selected.map { ArrayList(it) }), ArrayList(d.otherOn), ArrayList(d.other)) },
+      restore = { l ->
+        @Suppress("UNCHECKED_CAST")
+        QuestionDraft(specs, l[0] as Int, (l[1] as List<List<String>>).map { it.toSet() }, l[2] as List<Boolean>, l[3] as List<String>)
+      },
+    )
   }
 }

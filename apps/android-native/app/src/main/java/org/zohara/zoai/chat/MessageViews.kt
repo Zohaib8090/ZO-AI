@@ -187,6 +187,9 @@ fun AiMessage(item: AiItem, actions: MessageActions, modifier: Modifier = Modifi
       DropdownMenuItem(text = { Text("Copy", color = c.text) }, onClick = { actions.onCopy(item.text); menu = false })
       DropdownMenuItem(text = { Text("Select text", color = c.text) }, onClick = { selecting = !selecting; menu = false })
       DropdownMenuItem(text = { Text("Share", color = c.text) }, onClick = { actions.onShare(item.text); menu = false })
+      for (url in remember(item.text) { AnswerLinks.of(item.text) }) {
+        DropdownMenuItem(text = { Text("Copy link: " + url.removePrefix("https://").removePrefix("http://").take(40), color = c.text, maxLines = 1) }, onClick = { actions.onCopy(url); menu = false })
+      }
       if (actions.canRetry) DropdownMenuItem(text = { Text("Try again", color = c.text) }, onClick = { actions.onRetry(); menu = false })
     }
   }

@@ -38,6 +38,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -66,6 +67,8 @@ class ComposerModel(
   val onModel: () -> Unit,
   val onMode: () -> Unit,
   val onContext: () -> Unit,
+  /** the Terminal pill (COMP-12): admin accounts on the cloud only */
+  val onTerminal: (() -> Unit)? = null,
 )
 
 const val PLACEHOLDER = "How can I help you today?"
@@ -99,7 +102,7 @@ fun Composer(text: String, onText: (String) -> Unit, m: ComposerModel, modifier:
           textStyle = t.message.copy(color = c.text),
           cursorBrush = SolidColor(c.accent),
           keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-          modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Message to ZO-AI" }.onPreviewKeyEvent {
+          modifier = Modifier.fillMaxWidth().testTag("message-field").semantics { contentDescription = "Message to ZO-AI" }.onPreviewKeyEvent {
             // COMP-03: Enter sends and Shift+Enter is a new line on a hardware keyboard; the on-screen Enter is always a new line
             if (it.type == KeyEventType.KeyDown && it.key == Key.Enter && !it.isShiftPressed) { send(); true } else false
           },
@@ -122,6 +125,7 @@ fun Composer(text: String, onText: (String) -> Unit, m: ComposerModel, modifier:
       Pill(m.modelText, "Model: ${m.modelText}", m.onModel, chevron = true)
       Pill(m.mode.label, "Permission mode: ${m.mode.label}", m.onMode, chevron = true)
       if (m.showContext) Pill("Context", "Context window", m.onContext, icon = ZoIcons.Context)
+      m.onTerminal?.let { Pill("Terminal", "Terminal", it, icon = ZoIcons.Terminal) }
     }
     Text(
       FOOT_NOTE, style = t.fieldHint.copy(fontSize = 12.sp), color = c.dimmer, textAlign = TextAlign.Center,

@@ -36,9 +36,16 @@ import org.zohara.zoai.nav.ZoTopBar
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [35], qualifiers = "w420dp-h900dp-xhdpi")
+@Config(sdk = [35], qualifiers = "w420dp-h900dp-xhdpi", application = android.app.Application::class)
 class ChatScreenshotTest {
   @get:Rule val rule = createComposeRule()
+
+  /** stand-ins for what the media and link modules plug in, so the pictures show the slots (the real ones need an AppContainer) */
+  @org.junit.Before fun slots() {
+    ChatHooks.attachButton = { Pill("+", "Add", {}) }
+    ChatHooks.runOnPill = { Pill("Cloud", "Run on", {}, chevron = true) }
+  }
+  @org.junit.After fun clearSlots() { ChatHooks.attachButton = null; ChatHooks.runOnPill = null }
 
   private val noop = MessageActions(true, {}, {}, {}, {}, { _, _ -> }, {}, null)
   private val cb = ThreadCallbacks(noop, {}, { _, _ -> }, { _, _ -> }, { _, _ -> }, {})
@@ -196,7 +203,23 @@ class ChatScreenshotTest {
       org.zohara.zoai.core.design.SheetContent("Context", {}) { ContextSheetContent(ContextView(Transcript.context(thread(), "llama3"), null, compacting = true), {}, {}) }
     }
   }
-  @Test fun toolOutputViewer() = shot("tool_output", true, 411.dp, 400.dp) {
-    Column(Modifier.fillMaxSize().padding(16.dp)) { androidx.compose.material3.Text(toolOutputText(ToolGroupItem(1, listOf(ToolLine(LineKind.Start, "zohara_shell  cmd: ls"), ToolLine(LineKind.Ok, "a.txt\nb.txt")), false)), color = ZoTheme.colors.codeFg) }
+  @Test fun toolOutputViewer() = shot("tool_output", true, 411.dp, 420.dp) {
+    ToolOutputBody(
+      ToolGroupItem(1, listOf(
+        ToolLine(LineKind.Start, "zohara_shell  cmd: ls"), ToolLine(LineKind.Ok, "a.txt\nb.txt\nsome very long file name that goes on and on and on.rs…"),
+        ToolLine(LineKind.Start, "screenshot  of the desktop"), ToolLine(LineKind.Ok, "/home/me/shot-1.png"), ToolLine(LineKind.Fail, "permission denied"),
+      ), false), "Laptop",
+    )
+  }
+
+  // ---- loading, a link answer, a tablet with the pinned panel ----
+  @Test fun loadingDark() = shot("loading", true, 411.dp, 640.dp) { ThreadView(ChatUiState(chatId = "c1", loading = true), cb) }
+  @Test fun loadingLight() = shot("loading", false, 411.dp, 640.dp) { ThreadView(ChatUiState(chatId = "c1", loading = true), cb) }
+  @Config(qualifiers = "w1000dp-h700dp-xhdpi")
+  @Test fun tabletWithThePinnedContextPanel() = shot("tablet_panel", true, 1000.dp, 700.dp) {
+    androidx.compose.foundation.layout.Row(Modifier.fillMaxSize()) {
+      Box(Modifier.weight(1f)) { Chat(thread()) }
+      ContextPanel(ContextView(Transcript.context(thread(), "claude-opus-5-5"), Usage(5200, 310)), {}, {}, {})
+    }
   }
 }
