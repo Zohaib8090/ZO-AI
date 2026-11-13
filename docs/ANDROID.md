@@ -1,6 +1,6 @@
 # Zohara Chat on Android
 
-**The native app in `apps/android-native` is the Android app.** It is Kotlin + Jetpack Compose (no WebView), package `org.zohara.chat`, and it replaces the
+**The native app in `apps/android-native` is the Android app.** It is Kotlin + Jetpack Compose (no WebView), package `org.zohara.chat` (renamed from `org.zohara.zoai`), and it replaces the
 Capacitor wrapper in `apps/android-web`, which is kept only as a legacy reference (its README says so; do not add features there). The native app has
 what the desktop app and the web app have; the list of everything, one row per feature with its test, is `docs/ANDROID-NATIVE-PARITY.md`.
 
@@ -8,8 +8,12 @@ what the desktop app and the web app have; the list of everything, one row per f
   debug and release keys, `google-services.json` into `apps/android-native/app/`, the Web client id for Google sign-in, FCM) are in `apps/android-native/README.md`.
 * It talks to the public Zohara Chat service only through `POST /api/op`, `/api/send` (NDJSON), `/api/reply`, `/api/account/*`, `/api/link/status` with the Firebase ID
   token; the shapes are in `apps/android-native/docs/API.md` (live-verified). Question cards and "needs you" notifications follow `docs/INTERACTION.md`.
-* The package id is the same as the wrapper's, so the Firebase app, the Play listing and the SHA fingerprints are shared; the native app can be installed over the
-  wrapper only when both are signed with the same key; the account is the Firebase account, nothing is stored locally, so the login is the same.
+* The package id changed from `org.zohara.zoai` to `org.zohara.chat`. Android treats that as a new app: it installs next to the old one and cannot update
+  it in place, and nothing is carried over (sign-in, notification choices and the saved server address start fresh; chats live on the server, so they come back
+  after signing in). So the Firebase step is done again for the new package: add an Android app `org.zohara.chat` in project `zo-ai-144`, add the SHA-1/SHA-256 of
+  the debug and release keys to it, download a new `google-services.json` into `apps/android-native/app/` and create/keep the Google sign-in Web client id. The old
+  Firebase app for `org.zohara.zoai` is only needed while the legacy wrapper is still installed. Uninstall the old app when done.
+* Links: the app opens `zohara-chat://chat/<id>`, `zohara-chat://new` and `zohara-chat://device`; the old `zoai://` links are still accepted.
 * Verification so far is JVM only (JUnit, MockWebServer, Robolectric, Compose UI tests, Roborazzi screenshots in both themes); nothing was run on a device,
   with real Firebase or FCM, or with a real microphone. The README lists what is not verified.
 
@@ -33,7 +37,7 @@ MODEL-18, MODEL-35, SRV-12 (settings module, see the matrix).
 
 
 A thin Capacitor wrapper in `apps/android-web/` that loads the website (`server.url`), so the app updates whenever the site does.
-Package `org.zohara.chat`, name Zohara Chat. It is separate from Zohara Link (`~/Documents/zohara-link`, a different app and package).
+Package `org.zohara.zoai` (the legacy wrapper keeps its old package on purpose; its visible name is Zohara Chat). It is separate from Zohara Link (`~/Documents/zohara-link`, a different app and package).
 
 What the app adds over the browser (all in the `/* ---- native bridge (Capacitor) ---- */` block of
 `crates/zo-server/web/index.html`, inert in a normal browser):
@@ -48,7 +52,7 @@ Versions: Capacitor 7.6 (Java sources are compiled at the running JDK's level wh
 
 ## Owner steps
 
-1. **Firebase app and google-services.json.** Firebase console > Project settings (project `zo-ai-144`) > Add app > Android. Package name `org.zohara.chat`. Add the SHA-1 and SHA-256 of the debug key and of the release key:
+1. **Firebase app and google-services.json.** Firebase console > Project settings (project `zo-ai-144`) > Add app > Android. Package name `org.zohara.zoai` (the wrapper's own package). Add the SHA-1 and SHA-256 of the debug key and of the release key:
    ```
    keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android | grep -E "SHA1|SHA256"
    keytool -list -v -keystore ~/zo-ai-release.keystore -alias zoai | grep -E "SHA1|SHA256"

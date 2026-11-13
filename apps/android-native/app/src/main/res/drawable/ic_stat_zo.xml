@@ -1,6 +1,6 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
   android:width="24dp" android:height="24dp" android:viewportWidth="120" android:viewportHeight="120">
-  <!-- the ZO-AI mark as a one-colour silhouette for the status bar (notification small icon) -->
+  <!-- the Zohara Chat mark as a one-colour silhouette for the status bar (notification small icon) -->
   <path android:strokeColor="#FFFFFFFF" android:strokeWidth="9" android:pathData="M103.2,38.4 A48,48 0 1 1 81.0,16.7" />
   <path android:fillColor="#FFFFFFFF" android:pathData="M60,30 Q60,60 90,60 Q60,60 60,90 Q60,60 30,60 Q60,60 60,30Z" />
   <path android:fillColor="#FFFFFFFF" android:pathData="M94,14 Q94,26 106,26 Q94,26 94,38 Q94,26 82,26 Q94,26 94,14Z" />

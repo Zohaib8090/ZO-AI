@@ -1,6 +1,6 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
   android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-  <!-- the ZO-AI mark (crates/zo-ai/data/zo-ai-mark.svg, 120 x 120) scaled to 0.5 inside the adaptive-icon safe zone -->
+  <!-- the Zohara Chat mark (crates/zohara-chat/data/zohara-chat-mark.svg, 120 x 120) scaled to 0.5 inside the adaptive-icon safe zone -->
   <group android:scaleX="0.5" android:scaleY="0.5" android:translateX="24" android:translateY="24">
     <path android:strokeColor="#5FD4D4" android:strokeWidth="8" android:pathData="M103.2,38.4 A48,48 0 1 1 81.0,16.7" />
     <path android:fillColor="#7EE0E0" android:pathData="M60,30 Q60,60 90,60 Q60,60 60,90 Q60,60 30,60 Q60,60 60,30Z" />

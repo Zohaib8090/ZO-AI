@@ -8,8 +8,8 @@
     android:shortcutShortLabel="@string/shortcut_new_chat">
     <intent
       android:action="android.intent.action.VIEW"
-      android:data="zoai://new"
-      android:targetPackage="org.zohara.zoai"
-      android:targetClass="org.zohara.zoai.MainActivity" />
+      android:data="zohara-chat://new"
+      android:targetPackage="org.zohara.chat"
+      android:targetClass="org.zohara.chat.MainActivity" />
   </shortcut>
 </shortcuts>

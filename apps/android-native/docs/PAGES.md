@@ -1,4 +1,4 @@
-# Pages module (org.zohara.zoai.pages)
+# Pages module (org.zohara.chat.pages)
 
 Chats, Search, Projects, Artifacts, Scheduled, Activity, Terminal, the sidebar chat lists and the "Running now" part of the user menu.
 Matrix rows: every row with module `pages` in `docs/ANDROID-NATIVE-PARITY.md` (the Done column says which are verified).
@@ -49,11 +49,11 @@ Matrix rows: every row with module `pages` in `docs/ANDROID-NATIVE-PARITY.md` (t
   that open the screen belong to the chat module and call `LocalNav.current.terminal()` (COMP-12 stays open here for that reason).
 * **Restricted accounts**: the drawer hides Projects, Artifacts and Scheduled (foundation). If a restricted account gets there anyway, the server
   refuses and its sentence ("Projects and scheduled tasks are not available to this account.") is shown as the page's error.
-* **Share conversation** (LIST-12): the transcript (You / ZO-AI / Error lines, no tool notes) goes to the Android share sheet as text.
+* **Share conversation** (LIST-12): the transcript (You / Zohara Chat / Error lines, no tool notes) goes to the Android share sheet as text.
 
 ## Tested
 
-* JVM unit tests (`app/src/test/java/org/zohara/zoai/pages`): `PagesFormatTest` (wording and rules), `HoldersTest` (every holder against a fake server:
+* JVM unit tests (`app/src/test/java/org/zohara/chat/pages`): `PagesFormatTest` (wording and rules), `HoldersTest` (every holder against a fake server:
   errors keep the old list, optimistic delete and pin with rollback, debounce and stale search, project create, task add with the own interval,
   Stop, polling period, terminal history), `PagesApiTest` (the real `ZoApi` against MockWebServer with the answers captured live in docs/API.md),
   `ChatActionsTest`, `PagesHubRegistryTest`.

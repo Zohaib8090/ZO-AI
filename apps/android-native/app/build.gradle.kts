@@ -7,7 +7,7 @@ plugins {
   alias(libs.plugins.roborazzi)
 }
 
-// google-services.json is NOT in the repository (it is the owner's Firebase file for package org.zohara.zoai). The plugin is applied only
+// google-services.json is NOT in the repository (it is the owner's Firebase file for package org.zohara.chat). The plugin is applied only
 // when the file exists, so the app builds and runs without it (sign-in then shows "Sign-in is not configured in this build").
 val hasGoogleServices = file("google-services.json").exists()
 if (hasGoogleServices) {
@@ -15,11 +15,11 @@ if (hasGoogleServices) {
 }
 
 android {
-  namespace = "org.zohara.zoai"
+  namespace = "org.zohara.chat"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "org.zohara.zoai"
+    applicationId = "org.zohara.chat"
     minSdk = 26
     targetSdk = 36
     versionCode = (System.getenv("ZO_VERSION_CODE") ?: "1").toInt()
