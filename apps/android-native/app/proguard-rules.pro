@@ -1,16 +1,31 @@
-# Proguard rules for ZO-AI native Android app
--keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+# R8 rules for the release build (minify + resource shrinking).
 
-# Kotlinx Serialization
--keepattributes *Annotation*,InnerClasses
--dontnote kotlinx.serialization.SerializationKt
--keepclassmembers class * {
-    *** Companion;
-}
--keepclasseswithmembers class * {
-    kotlinx.serialization.KSerializer serializer(...);
-}
+# kotlinx.serialization: keep the generated serializers and the companion lookups
+-keepattributes *Annotation*, InnerClasses, Signature, EnclosingMethod
+-dontnote kotlinx.serialization.**
+-keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
+-keepclasseswithmembers class kotlinx.serialization.json.** { kotlinx.serialization.KSerializer serializer(...); }
+-keep,includedescriptorclasses class org.zohara.zoai.**$$serializer { *; }
+-keepclassmembers class org.zohara.zoai.** { *** Companion; }
+-keepclasseswithmembers class org.zohara.zoai.** { kotlinx.serialization.KSerializer serializer(...); }
 
-# OkHttp
--dontwarn okhttp3.**
--dontwarn okio.**
+# Firebase (Auth, Messaging) and Google Play services ship their own consumer rules; keep the messaging service and receiver by name
+-keep class org.zohara.zoai.media.notify.ZoMessagingService { *; }
+-keep class org.zohara.zoai.media.notify.ApprovalReceiver { *; }
+-keep class com.google.firebase.** { *; }
+-dontwarn com.google.firebase.**
+-keep class androidx.credentials.** { *; }
+-keep class com.google.android.libraries.identity.googleid.** { *; }
+
+# OkHttp / Okio
+-dontwarn okhttp3.internal.platform.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+
+# PdfBox-Android (reads PDF text) uses reflection and optional codecs
+-keep class com.tom_roush.pdfbox.** { *; }
+-dontwarn com.tom_roush.pdfbox.**
+-dontwarn com.gemalto.jp2.**
+-dontwarn javax.xml.stream.**
+-dontwarn org.apache.**

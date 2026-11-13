@@ -1,90 +1,130 @@
+import java.util.Properties
+
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.compose")
-    id("org.jetbrains.kotlin.plugin.serialization")
+  alias(libs.plugins.android.application)
+  alias(libs.plugins.kotlin.compose)
+  alias(libs.plugins.kotlin.serialization)
+  alias(libs.plugins.roborazzi)
+}
+
+// google-services.json is NOT in the repository (it is the owner's Firebase file for package org.zohara.zoai). The plugin is applied only
+// when the file exists, so the app builds and runs without it (sign-in then shows "Sign-in is not configured in this build").
+val hasGoogleServices = file("google-services.json").exists()
+if (hasGoogleServices) {
+  apply(plugin = "com.google.gms.google-services")
 }
 
 android {
-    namespace = "org.zohara.zoai"
-    compileSdk = 35
+  namespace = "org.zohara.zoai"
+  compileSdk { version = release(36) { minorApiLevel = 1 } }
 
-    defaultConfig {
-        applicationId = "org.zohara.zoai"
-        minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+  defaultConfig {
+    applicationId = "org.zohara.zoai"
+    minSdk = 26
+    targetSdk = 36
+    versionCode = (System.getenv("ZO_VERSION_CODE") ?: "1").toInt()
+    versionName = "0.1.${System.getenv("ZO_VERSION_CODE") ?: "1"}"
+    buildConfigField("String", "DEFAULT_SERVER_URL", "\"https://zo-ai-server.onrender.com\"")
+    buildConfigField("boolean", "FIREBASE_CONFIGURED", hasGoogleServices.toString())
+    // the Web client id of the Firebase project (Google sign-in): the owner puts it in local.properties as ZO_WEB_CLIENT_ID=... or the
+    // environment; empty means Google sign-in says it is not set up.
+    val localProps = Properties().apply {
+      val f = rootProject.file("local.properties")
+      if (f.exists()) f.inputStream().use { load(it) }
+    }
+    val webClient = (System.getenv("ZO_WEB_CLIENT_ID") ?: localProps.getProperty("ZO_WEB_CLIENT_ID") ?: "")
+    buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$webClient\"")
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+  }
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        vectorDrawables {
-            useSupportLibrary = true
-        }
+  // Release signing is read from gradle.properties (ZO_STORE_FILE, ZO_STORE_PASSWORD, ZO_KEY_ALIAS, ZO_KEY_PASSWORD) or the environment
+  // with the same names. Nothing is committed; without them 'assembleRelease' still builds, unsigned.
+  fun signingValue(name: String): String? = (providers.gradleProperty(name).orNull ?: System.getenv(name))?.takeIf { it.isNotBlank() }
+  val storeFile = signingValue("ZO_STORE_FILE")
+  val releaseSigning = if (storeFile != null && file(storeFile).exists()) {
+    signingConfigs.create("release") {
+      this.storeFile = file(storeFile)
+      storePassword = signingValue("ZO_STORE_PASSWORD")
+      keyAlias = signingValue("ZO_KEY_ALIAS")
+      keyPassword = signingValue("ZO_KEY_PASSWORD") ?: signingValue("ZO_STORE_PASSWORD")
     }
+  } else null
 
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-        }
+  buildTypes {
+    release {
+      isMinifyEnabled = true
+      isShrinkResources = true
+      isDebuggable = false
+      if (releaseSigning != null) signingConfig = releaseSigning
+      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+    debug {
+      applicationIdSuffix = ""
     }
-    kotlinOptions {
-        jvmTarget = "17"
+  }
+  compileOptions {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+  }
+  buildFeatures {
+    compose = true
+    buildConfig = true
+  }
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      isReturnDefaultValues = true
     }
-    buildFeatures {
-        compose = true
-    }
-    packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
-    }
+  }
+  lint {
+    abortOnError = false
+    checkReleaseBuilds = false
+  }
+  packaging { resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/INDEX.LIST", "/META-INF/io.netty.versions.properties") }
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
-    implementation(composeBom)
-    androidTestImplementation(composeBom)
+  implementation(platform(libs.androidx.compose.bom))
+  implementation(libs.androidx.activity.compose)
+  implementation(libs.androidx.core.ktx)
+  implementation(libs.androidx.compose.ui)
+  implementation(libs.androidx.compose.ui.graphics)
+  implementation(libs.androidx.compose.ui.text)
+  implementation(libs.androidx.compose.ui.tooling.preview)
+  implementation(libs.androidx.compose.foundation)
+  implementation(libs.androidx.compose.material3)
+  implementation(libs.androidx.lifecycle.runtime.compose)
+  implementation(libs.androidx.lifecycle.runtime.ktx)
+  implementation(libs.androidx.lifecycle.viewmodel.compose)
+  implementation(libs.androidx.navigation.compose)
+  implementation(libs.androidx.datastore.preferences)
+  implementation(libs.androidx.browser)
+  implementation(libs.kotlinx.coroutines.android)
+  implementation(libs.kotlinx.coroutines.core)
+  implementation(libs.kotlinx.coroutines.play.services)
+  implementation(libs.kotlinx.serialization.json)
+  implementation(libs.okhttp)
+  implementation(platform(libs.firebase.bom))
+  implementation(libs.firebase.auth)
+  implementation(libs.androidx.credentials)
+  implementation(libs.androidx.credentials.play.services)
+  implementation(libs.googleid)
+  // media-link module: push (FCM), picture rotation (EXIF), PDF text
+  implementation(libs.firebase.messaging)
+  implementation(libs.androidx.exifinterface)
+  implementation(libs.pdfbox.android)
 
-    implementation("androidx.core:core-ktx:1.15.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.activity:activity-compose:1.9.3")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
-    implementation("androidx.navigation:navigation-compose:2.8.4")
-
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
-
-    // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-
-    // Serialization
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-
-    // OkHttp for networking + streaming SSE/NDJSON
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
-
-    // DataStore Preferences
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
-
-    // Testing
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
-    debugImplementation("androidx.compose.ui:ui-tooling")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
+  testImplementation(libs.junit)
+  testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation(libs.okhttp.mockwebserver)
+  testImplementation(libs.robolectric)
+  testImplementation(libs.androidx.test.core)
+  testImplementation(libs.androidx.test.junit)
+  testImplementation(platform(libs.androidx.compose.bom))
+  testImplementation(libs.androidx.compose.ui.test.junit4)
+  testImplementation(libs.roborazzi)
+  testImplementation(libs.roborazzi.compose)
+  testImplementation(libs.roborazzi.junit.rule)
+  debugImplementation(libs.androidx.compose.ui.test.manifest)
+  debugImplementation(libs.androidx.compose.ui.tooling)
 }

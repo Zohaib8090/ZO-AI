@@ -1,77 +1,111 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-feature android:name="android.hardware.microphone" android:required="false" />
-    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <application
-        android:allowBackup="false"
-        android:usesCleartextTraffic="false"
-        android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
-        android:supportsRtl="true"
-        android:theme="@style/AppTheme">
+  <!-- MEDIA-LINK-BEGIN (permissions, features, queries) -->
+  <!-- the microphone is asked at run time, with an explanation, only when the person starts dictating (VOICE-08) -->
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <!-- a camera is optional: "Take a photo" is only offered when there is a camera app; the photo goes into the app cache through a FileProvider, so no CAMERA permission -->
+  <uses-feature android:name="android.hardware.camera" android:required="false" />
+  <uses-feature android:name="android.hardware.microphone" android:required="false" />
+  <queries>
+    <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
+    <intent><action android:name="android.speech.RecognitionService" /></intent>
+    <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+  </queries>
+  <!-- MEDIA-LINK-END -->
 
-        <activity
-            android:name=".MainActivity"
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
-            android:label="@string/title_activity_main"
-            android:theme="@style/AppTheme.NoActionBarLaunch"
-            android:launchMode="singleTask"
-            android:windowSoftInputMode="adjustResize"
-            android:exported="true">
+  <application
+    android:name=".ZoApplication"
+    android:allowBackup="false"
+    android:dataExtractionRules="@xml/data_extraction_rules"
+    android:fullBackupContent="@xml/backup_rules"
+    android:icon="@mipmap/ic_launcher"
+    android:roundIcon="@mipmap/ic_launcher"
+    android:label="@string/app_name"
+    android:supportsRtl="true"
+    android:usesCleartextTraffic="false"
+    android:theme="@style/Theme.ZoAi">
 
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+    <activity
+      android:name=".MainActivity"
+      android:exported="true"
+      android:launchMode="singleTask"
+      android:windowSoftInputMode="adjustResize"
+      android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode|locale|layoutDirection">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+      <!-- zoai://chat/<id>: opened from a notification or a link -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="zoai" />
+        <data android:host="chat" />
+      </intent-filter>
+      <!-- zoai://new: the launcher shortcut "New chat"; zoai://device: approve a desktop or terminal sign-in (no code in the link) -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="zoai" />
+        <data android:host="new" />
+        <data android:host="device" />
+      </intent-filter>
+      <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
+    </activity>
 
-            <!-- Share from other apps: text, links, pictures -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/*" />
-                <data android:mimeType="image/*" />
-                <data android:mimeType="application/pdf" />
-                <data android:mimeType="application/zip" />
-                <data android:mimeType="application/json" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.SEND_MULTIPLE" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="image/*" />
-                <data android:mimeType="text/*" />
-            </intent-filter>
+    <!-- MEDIA-LINK-BEGIN (share target, camera files, push, notification buttons) -->
+    <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="answers" />
+    <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_zo" />
 
-            <!-- Deep links: zoai://device, zoai://chat/{id} -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="zoai" />
-            </intent-filter>
+    <!-- ATT-22, PHN-08: text, links, pictures and files shared from other apps open a new message -->
+    <activity
+      android:name=".media.ShareActivity"
+      android:exported="true"
+      android:excludeFromRecents="true"
+      android:taskAffinity=""
+      android:theme="@style/Theme.ZoAi.Share">
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="text/*" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="application/pdf" />
+        <data android:mimeType="application/zip" />
+        <data android:mimeType="application/json" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.SEND_MULTIPLE" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="text/*" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="application/pdf" />
+        <data android:mimeType="application/zip" />
+        <data android:mimeType="application/json" />
+      </intent-filter>
+    </activity>
 
-        </activity>
+    <provider
+      android:name="androidx.core.content.FileProvider"
+      android:authorities="${applicationId}.media.fileprovider"
+      android:exported="false"
+      android:grantUriPermissions="true">
+      <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/zo_media_paths" />
+    </provider>
 
-        <!-- Broadcast receiver for Approval notifications (Allow / Deny buttons in notification) -->
-        <receiver
-            android:name=".notification.ApprovalActionReceiver"
-            android:exported="false" />
+    <service android:name=".media.notify.ZoMessagingService" android:exported="false">
+      <intent-filter>
+        <action android:name="com.google.firebase.MESSAGING_EVENT" />
+      </intent-filter>
+    </service>
 
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
-
-    </application>
-
+    <receiver android:name=".media.notify.ApprovalReceiver" android:exported="false" />
+    <!-- MEDIA-LINK-END -->
+  </application>
 </manifest>

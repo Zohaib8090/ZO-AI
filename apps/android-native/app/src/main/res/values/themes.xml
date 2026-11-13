@@ -1,0 +1,9 @@
+<resources>
+  <!-- The window background is only seen before Compose draws: the same bg as the app's palette (light #FAF9F5, dark #191919). -->
+  <style name="Theme.ZoAi" parent="android:Theme.DeviceDefault.Light.NoActionBar">
+    <item name="android:windowBackground">@color/zo_window_bg</item>
+    <item name="android:statusBarColor">@android:color/transparent</item>
+    <item name="android:navigationBarColor">@android:color/transparent</item>
+    <item name="android:windowLightStatusBar">true</item>
+  </style>
+</resources>

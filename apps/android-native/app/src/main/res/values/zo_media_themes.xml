@@ -1,0 +1,4 @@
+<resources>
+  <!-- the share target shows nothing: it copies what was shared and opens the main screen -->
+  <style name="Theme.ZoAi.Share" parent="android:Theme.Translucent.NoTitleBar" />
+</resources>

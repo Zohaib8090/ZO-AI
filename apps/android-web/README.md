@@ -1,6 +1,4 @@
-# Legacy Android Web Wrapper (Capacitor)
+# ZO-AI Android (Capacitor wrapper) - LEGACY
 
-> [!NOTE]
-> This folder contains the legacy Capacitor-based web wrapper (`apps/android-web`).
-> It has been superseded by the native Android app in `apps/android-native` (Kotlin + Jetpack Compose).
-> Do not add new features here. All Android work happens in `apps/android-native`.
+This is the old web-view wrapper of the ZO-AI web app. It is replaced by the native app in `apps/android-native` (Kotlin + Jetpack Compose,
+same package id `org.zohara.zoai`). Keep this folder only as a reference for the migration; do not add features here.

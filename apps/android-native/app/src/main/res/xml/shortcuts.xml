@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- NAV-22: long-press the launcher icon, "New chat" -->
+  <shortcut
+    android:shortcutId="new_chat"
+    android:enabled="true"
+    android:icon="@drawable/ic_zo_mark"
+    android:shortcutShortLabel="@string/shortcut_new_chat">
+    <intent
+      android:action="android.intent.action.VIEW"
+      android:data="zoai://new"
+      android:targetPackage="org.zohara.zoai"
+      android:targetClass="org.zohara.zoai.MainActivity" />
+  </shortcut>
+</shortcuts>

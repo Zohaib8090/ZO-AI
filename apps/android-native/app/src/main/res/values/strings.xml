@@ -1,11 +1,4 @@
-<?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">ZO-AI</string>
-    <string name="title_activity_main">ZO-AI</string>
-    <string name="package_name">org.zohara.zoai</string>
-    <string name="custom_url_scheme">org.zohara.zoai</string>
-    <string name="channel_answers">Answers</string>
-    <string name="channel_answers_desc">Notifications when ZO-AI has finished an answer</string>
-    <string name="channel_needs_you">Needs you</string>
-    <string name="channel_needs_you_desc">Approvals and questions that need your decision</string>
+  <string name="app_name">ZO-AI</string>
+  <string name="shortcut_new_chat">New chat</string>
 </resources>
