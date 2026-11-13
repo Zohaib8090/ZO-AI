@@ -37,7 +37,7 @@ pub fn socket_path() -> PathBuf {
 }
 
 /// Where the version before the rename (ZO-AI) listened. Clients still try it, so a new `zo` or `zo-mcp` reaches an old app that is
-/// still running (and the other way round: an old client finds the new app, see `connect`).
+/// still running (and the other way round: an old client finds the new app through a symbolic link at this path, see `link_old_socket`).
 pub fn old_socket_path() -> PathBuf {
     runtime_base("zo-ai").join("zo-ai").join("agent.sock")
 }
@@ -73,12 +73,30 @@ pub fn start() -> Result<(), String> {
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path).map_err(|e| format!("cannot listen on {}: {e}", path.display()))?;
     let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    link_old_socket(&path);
     std::thread::spawn(move || {
         for conn in listener.incoming().flatten() {
             std::thread::spawn(move || serve(conn));
         }
     });
     Ok(())
+}
+
+/// Programs that were built before the rename (for example `zohara-linkd`, which carries the phone to this service) still look for
+/// the socket at the old path. A symbolic link there points them to the new socket. When something still answers at the old path
+/// (an old app that is running), it is left alone.
+fn link_old_socket(new: &std::path::Path) {
+    let old = old_socket_path();
+    if UnixStream::connect(&old).is_ok() {
+        return;
+    }
+    let Some(dir) = old.parent() else { return };
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    let _ = std::fs::remove_file(&old);
+    let _ = std::os::unix::fs::symlink(new, &old);
 }
 
 fn line(w: &Mutex<UnixStream>, v: &Value) -> bool {
@@ -1946,6 +1964,25 @@ mod rename_tests {
         let new = UnixListener::bind(super::socket_path()).unwrap();
         assert_eq!(super::live_socket_path(), super::socket_path());
         drop((old, new));
+        match before {
+            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+            None => std::env::remove_var("XDG_RUNTIME_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The running service also answers at the old path (a symbolic link), so a program built before the rename still reaches it.
+    #[test]
+    fn the_new_service_is_reachable_at_the_old_socket_path() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("zo-rt2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let before = std::env::var_os("XDG_RUNTIME_DIR");
+        std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        super::start().unwrap();
+        assert!(std::os::unix::net::UnixStream::connect(super::socket_path()).is_ok());
+        assert!(std::os::unix::net::UnixStream::connect(super::old_socket_path()).is_ok(), "a client that only knows the old path connects");
         match before {
             Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
             None => std::env::remove_var("XDG_RUNTIME_DIR"),

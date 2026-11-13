@@ -113,7 +113,7 @@ The product used to be called ZO-AI. The terminal command is still `zo`. What ch
 | package `zohara-ai` | `zohara-chat` | the package `replaces`, `conflicts` with and `provides` `zohara-ai`, so pacman upgrades in place |
 | `~/.config/zo-ai/`, `~/.local/share/zo-ai/` | `~/.config/zohara-chat/`, `~/.local/share/zohara-chat/` | copied once on the first start; the old folders are kept (the AI's file tools refuse both) |
 | keyring service `zo-ai` | `zohara-chat` | a key found under the old service is copied to the new one when first used; forgetting a key clears both |
-| sockets `$XDG_RUNTIME_DIR/zo-ai/agent.sock`, `zo-ai-approve.sock` | `.../zohara-chat/agent.sock`, `zohara-chat-approve.sock` | clients try the new socket, then the old one |
+| sockets `$XDG_RUNTIME_DIR/zo-ai/agent.sock`, `zo-ai-approve.sock` | `.../zohara-chat/agent.sock`, `zohara-chat-approve.sock` | clients try the new socket, then the old one; the new service also leaves a symbolic link at the old socket path, so programs built before the rename (zohara-linkd) still reach it |
 | `ZOAI_KEY_<PROVIDER>`, `ZOAI_CLAUDE_BIN`, `ZO_AI_*` | `ZOHARA_CHAT_KEY_<PROVIDER>`, `ZOHARA_CHAT_CLAUDE_BIN`, `ZOHARA_CHAT_*` | both are read, the new name wins; programs the AI starts get neither |
 | app id `org.zohara.ZoAi` | `org.zohara.Chat` | a hidden `org.zohara.ZoAi.desktop` is still installed so panel pins keep working |
 | shortcut component `zo-ai` (Plasma) | `zohara-chat` | the keys chosen under the old name are used once |
