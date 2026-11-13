@@ -2,7 +2,7 @@
 
 Owner's request (2026-11-13): the web version must be able to take FULL control of the person's desktop version (the same
 power the desktop app has), the mobile app must have the same, and everything must stay in sync. This file is the
-specification. Status: specified, not built (the link foundation exists: see docs/LINK.md).
+specification. Status: phase 1 built (read-only: system status, file browsing and reading, screenshot; see the end of docs/LINK.md); everything else is specified, not built (the link foundation exists: see docs/LINK.md).
 
 ## What exists today
 

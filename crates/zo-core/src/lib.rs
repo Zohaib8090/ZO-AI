@@ -6,6 +6,7 @@ pub mod ai;
 pub mod approval;
 pub mod attach;
 pub mod audit;
+pub mod control;
 pub mod exec;
 pub mod link;
 pub mod login;

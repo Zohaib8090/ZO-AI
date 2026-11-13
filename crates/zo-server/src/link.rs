@@ -59,7 +59,14 @@ pub const PENDING_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_TEXT_CHARS: usize = 100_000;
 
 /// The settings questions the web page may ask a desktop (everything else is refused here, and again on the desktop).
-pub const OPS: [&str; 7] = ["status", "providers", "profiles", "profile_use", "models", "select", "mode"];
+/// The last four are the read-only control operations of docs/FULL-CONTROL.md phase 1 (the desktop asks its person before the first
+/// three of them run); they take one argument, a path.
+pub const OPS: [&str; 11] = ["status", "providers", "profiles", "profile_use", "models", "select", "mode", "sys_info", "fs_list", "fs_read", "screenshot"];
+/// The control operations wait for a person to answer a dialog on their computer, so the page's question waits longer for them.
+pub fn is_control(op: &str) -> bool {
+    matches!(op, "sys_info" | "fs_list" | "fs_read" | "screenshot")
+}
+pub const MAX_PATH_CHARS: usize = 1024;
 
 pub const OFFLINE_MESSAGE: &str = "Your computer is not reachable. Start ZO-AI on your computer (it can run in the tray) and turn on Settings > Account and sync > Control this computer from the web.";
 
@@ -587,9 +594,10 @@ impl Link {
     }
 
     /// The desktop's answer to a settings question (the job is removed afterwards, answered or not).
-    pub fn wait_result(&self, job: &str) -> Result<Value, (&'static str, String)> {
+    pub fn wait_result(&self, job: &str, control: bool) -> Result<Value, (&'static str, String)> {
         let mut g = self.lock();
-        let end = Instant::now() + self.cfg.op_wait;
+        // a control question waits for a person's answer on the computer (90 s there), so it waits a little longer than that
+        let end = Instant::now() + if control { self.cfg.op_wait * 2 + Duration::from_secs(10) } else { self.cfg.op_wait };
         let r = loop {
             let now = Instant::now();
             let inner = &mut *g;
@@ -766,6 +774,13 @@ pub fn clean_inner(inner: &Value) -> Result<Value, &'static str> {
             put("model", 200);
             put("effort", 20);
         }
+        "fs_list" | "fs_read" => match inner.get("path") {
+            None | Some(Value::Null) => {}
+            Some(Value::String(p)) if p.chars().count() <= MAX_PATH_CHARS && !p.chars().any(char::is_control) => {
+                out.insert("path".into(), json!(p));
+            }
+            _ => return Err("The path is not valid."),
+        },
         "mode" => {
             if let Some(m) = inner.get("set") {
                 // the web page may switch between Auto and Manual; Bypass is never set from the web
@@ -789,6 +804,8 @@ pub fn op_http(app: &App, who: &Who, v: &Value) -> (u16, Value) {
         Err(m) => return (400, err_body("not_allowed", m)),
     };
     let want = v.get("device").and_then(Value::as_str).filter(|d| !d.is_empty() && d.len() <= 64);
+    let inner_op = inner.get("op").and_then(Value::as_str).unwrap_or("").to_string();
+    let inner_op = inner_op.as_str();
     let job = match app.link.submit_op(&who.tenant, want, inner) {
         Ok(j) => j,
         Err(e) => {
@@ -796,7 +813,8 @@ pub fn op_http(app: &App, who: &Who, v: &Value) -> (u16, Value) {
             return (if code == "limit" { 429 } else { 503 }, err_body(code, &msg));
         }
     };
-    match app.link.wait_result(&job) {
+    let control = is_control(inner_op);
+    match app.link.wait_result(&job, control) {
         Ok(r) => (200, json!({"ok": true, "result": r})),
         Err((code, msg)) => (503, err_body(code, &msg)),
     }

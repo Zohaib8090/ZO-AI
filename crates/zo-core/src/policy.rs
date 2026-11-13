@@ -78,6 +78,11 @@ const READ_ONLY: &[&str] = &[
 /// Pieces of a path that hold secrets. A read-only command that names one still asks.
 const SECRET_PARTS: &[&str] = &["/proc", "environ", ".ssh", "zo-ai", "keys", "secret", "token", "credential", "shadow", ".gnupg", ".aws", ".kube", "id_rsa", "id_ed25519", "password", "passwd", "api_key", "apikey", "api-key", ".npmrc", ".netrc", ".docker", "rclone", ".claude", "_history", "git-credentials", ".pypirc", "keyring", "hosts.yml", ".mozilla", "google-chrome", "chromium", ".config/gh", ".git/config"];
 
+/// True when a (lower case) path names a place of secrets: the web's file browser refuses these and leaves them out of listings.
+pub fn path_has_secret_part(path_lower: &str) -> bool {
+    SECRET_PARTS.iter().any(|p| path_lower.contains(p))
+}
+
 /// True when `cmd` is a single read-only command: no `;` `&` `|` `>` `<` backticks, `$` or wildcards, and no secret file named.
 pub fn shell_is_read_only(cmd: &str) -> bool {
     let c = cmd.trim();
