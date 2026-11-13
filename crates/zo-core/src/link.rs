@@ -953,7 +953,7 @@ fn start_job(sh: &Arc<Shared>, base: &str, cred: &str, job: Job) {
                 });
                 return;
             }
-            let ctl = Arc::new(Ctl { stop: AtomicBool::new(false), waiting: Mutex::new(HashMap::new()), approvals_from_web: false });
+            let ctl = Arc::new(Ctl { stop: AtomicBool::new(false), waiting: Mutex::new(HashMap::new()), approvals_from_web: false, questions: Mutex::new(Default::default()), service: Mutex::new(None) });
             sh.terms.lock().unwrap_or_else(|e| e.into_inner()).insert(job.id.clone(), ctl.clone());
             let sh2 = sh.clone();
             std::thread::spawn(move || {
