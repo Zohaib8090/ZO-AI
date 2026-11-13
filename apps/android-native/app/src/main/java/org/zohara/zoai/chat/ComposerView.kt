@@ -89,6 +89,7 @@ fun Composer(text: String, onText: (String) -> Unit, m: ComposerModel, modifier:
   val enabled = !m.busy && !m.questionOpen
   val canSend = enabled && (text.isNotBlank() || hasAttachments)
   val send = { if (canSend) m.onSend(text) }
+  val body: @Composable () -> Unit = {
   Column(modifier.fillMaxWidth().widthIn(max = 760.dp), horizontalAlignment = Alignment.CenterHorizontally) {
     Column(
       Modifier.fillMaxWidth().shadow(3.dp, ZoTheme.shapes.composer, ambientColor = c.shadow, spotColor = c.shadow)
@@ -97,12 +98,13 @@ fun Composer(text: String, onText: (String) -> Unit, m: ComposerModel, modifier:
     ) {
       ChatHooks.attachmentChips?.invoke()
       Box(Modifier.fillMaxWidth().heightIn(min = 36.dp, max = 220.dp), contentAlignment = Alignment.CenterStart) {
+        val fieldExtra: Modifier = ChatHooks.fieldModifier?.invoke() ?: Modifier
         BasicTextField(
-          value = text, onValueChange = onText, enabled = enabled,
+          value = text, onValueChange = { v -> onText(ChatHooks.textEdited?.invoke(text, v) ?: v) }, enabled = enabled,
           textStyle = t.message.copy(color = c.text),
           cursorBrush = SolidColor(c.accent),
           keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-          modifier = Modifier.fillMaxWidth().testTag("message-field").semantics { contentDescription = "Message to ZO-AI" }.onPreviewKeyEvent {
+          modifier = Modifier.fillMaxWidth().then(fieldExtra).testTag("message-field").semantics { contentDescription = "Message to ZO-AI" }.onPreviewKeyEvent {
             // COMP-03: Enter sends and Shift+Enter is a new line on a hardware keyboard; the on-screen Enter is always a new line
             if (it.type == KeyEventType.KeyDown && it.key == Key.Enter && !it.isShiftPressed) { send(); true } else false
           },
@@ -135,6 +137,10 @@ fun Composer(text: String, onText: (String) -> Unit, m: ComposerModel, modifier:
       Text(it, style = t.fieldHint.copy(fontSize = 11.5.sp), color = c.dimmer, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 4.dp))
     }
   }
+  }
+  // the media module wraps the card once and shares its controller with the slots inside (attachments, "+", microphone, paste and drop)
+  val host = ChatHooks.composerHost
+  if (host != null) host(text, onText, send, m.busy, body) else body()
 }
 
 @Composable

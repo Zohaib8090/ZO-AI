@@ -115,7 +115,7 @@ fun UserBubble(item: UserItem, actions: MessageActions, busy: Boolean, editing: 
 @Composable
 private fun AttachmentRow(a: AttachInfo, onPicture: (AttachInfo) -> Unit) {
   val c = ZoTheme.colors
-  val bmp = remember(a.thumb) { if (a.kind == "image") decodeThumb(a.thumb) else null }
+  val bmp = remember(a.thumb) { if (a.kind == "image" && org.zohara.zoai.media.MediaRules.safeThumb(a.thumb)) decodeThumb(a.thumb) else null } // ATT-23: only a small data URI of a picture is drawn
   if (bmp != null) {
     Image(
       bmp, contentDescription = "Picture ${a.name}", contentScale = ContentScale.Crop,
@@ -123,7 +123,7 @@ private fun AttachmentRow(a: AttachInfo, onPicture: (AttachInfo) -> Unit) {
     )
   } else {
     Row(
-      Modifier.padding(bottom = 6.dp).clip(ZoTheme.shapes.field).background(c.line8).padding(horizontal = 10.dp, vertical = 6.dp).semantics { contentDescription = "Attachment ${a.name}" },
+      Modifier.padding(bottom = 6.dp).clip(ZoTheme.shapes.field).background(c.line8).clickable(role = androidx.compose.ui.semantics.Role.Button) { onPicture(a) }.padding(horizontal = 10.dp, vertical = 6.dp).semantics { contentDescription = "Attachment ${a.name}" },
       verticalAlignment = Alignment.CenterVertically,
     ) {
       ZoIcon(if (a.kind == "image") ZoIcons.Image else ZoIcons.File, size = 16.dp)
@@ -204,7 +204,8 @@ fun AiActionRow(text: String, actions: MessageActions, showRetry: Boolean) {
       "Try again", style = ZoTheme.type.cardMeta, color = ZoTheme.colors.dim,
       modifier = Modifier.heightIn(min = 44.dp).clip(ZoTheme.shapes.button).clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = actions.onRetry).padding(horizontal = 10.dp, vertical = 12.dp),
     )
-    actions.onReadAloud?.let { ZoIconButton(ZoIcons.Speaker, "Read aloud", { it(text) }, size = 44.dp, iconSize = 17.dp) }
+    val speaker = ChatHooks.readAloudButton
+    if (speaker != null) speaker(text) else actions.onReadAloud?.let { ZoIconButton(ZoIcons.Speaker, "Read aloud", { it(text) }, size = 44.dp, iconSize = 17.dp) }
   }
 }
 

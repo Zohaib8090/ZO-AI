@@ -5,6 +5,19 @@
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+  <!-- MEDIA-LINK-BEGIN (permissions, features, queries) -->
+  <!-- the microphone is asked at run time, with an explanation, only when the person starts dictating (VOICE-08) -->
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <!-- a camera is optional: "Take a photo" is only offered when there is a camera app; the photo goes into the app cache through a FileProvider, so no CAMERA permission -->
+  <uses-feature android:name="android.hardware.camera" android:required="false" />
+  <uses-feature android:name="android.hardware.microphone" android:required="false" />
+  <queries>
+    <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
+    <intent><action android:name="android.speech.RecognitionService" /></intent>
+    <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+  </queries>
+  <!-- MEDIA-LINK-END -->
+
   <application
     android:name=".ZoApplication"
     android:allowBackup="false"
@@ -33,5 +46,53 @@
         <data android:scheme="zoai" android:host="chat" />
       </intent-filter>
     </activity>
+
+    <!-- MEDIA-LINK-BEGIN (share target, camera files, push, notification buttons) -->
+    <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="answers" />
+    <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_zo" />
+
+    <!-- ATT-22, PHN-08: text, links, pictures and files shared from other apps open a new message -->
+    <activity
+      android:name=".media.ShareActivity"
+      android:exported="true"
+      android:excludeFromRecents="true"
+      android:taskAffinity=""
+      android:theme="@style/Theme.ZoAi.Share">
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="text/*" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="application/pdf" />
+        <data android:mimeType="application/zip" />
+        <data android:mimeType="application/json" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.SEND_MULTIPLE" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="text/*" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="application/pdf" />
+        <data android:mimeType="application/zip" />
+        <data android:mimeType="application/json" />
+      </intent-filter>
+    </activity>
+
+    <provider
+      android:name="androidx.core.content.FileProvider"
+      android:authorities="${applicationId}.media.fileprovider"
+      android:exported="false"
+      android:grantUriPermissions="true">
+      <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/zo_media_paths" />
+    </provider>
+
+    <service android:name=".media.notify.ZoMessagingService" android:exported="false">
+      <intent-filter>
+        <action android:name="com.google.firebase.MESSAGING_EVENT" />
+      </intent-filter>
+    </service>
+
+    <receiver android:name=".media.notify.ApprovalReceiver" android:exported="false" />
+    <!-- MEDIA-LINK-END -->
   </application>
 </manifest>

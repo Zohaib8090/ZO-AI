@@ -141,12 +141,38 @@ object ZoIcons {
   private val tag = Regex("""<(path|circle|rect|polyline|line)\b([^>]*?)/?>""")
   private val attr = Regex("""([a-z0-9]+)="([^"]*)"""")
 
+  private val number = Regex("""[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?""")
+
+  /**
+   * SVG lets the two flags of an arc be written without separators ("a7 7 0 0014 0"); Compose's path parser reads that wrongly and drops the arc.
+   * This writes every number of the path with a space, flags as single digits, so the arcs of the web's icons (mic, link, chat bubble...) are drawn.
+   */
+  fun expandArcFlags(d: String): String {
+    val out = StringBuilder()
+    var i = 0
+    var cmd = ' '
+    var idx = 0
+    while (i < d.length) {
+      val ch = d[i]
+      when {
+        ch.isWhitespace() || ch == ',' -> i++
+        ch.isLetter() -> { cmd = ch; idx = 0; out.append(ch); i++ }
+        (cmd == 'a' || cmd == 'A') && idx % 7 in 3..4 && (ch == '0' || ch == '1') -> { out.append(' ').append(ch); i++; idx++ }
+        else -> {
+          val m = number.matchAt(d, i) ?: return d // not understood: leave it alone
+          out.append(' ').append(m.value); i += m.value.length; idx++
+        }
+      }
+    }
+    return out.toString()
+  }
+
   /** Turns the elements of an SVG fragment (path, circle, rect, polyline, line) into SVG path data strings. */
   fun svgFragmentToPaths(fragment: String): List<String> = tag.findAll(fragment).map { m ->
     val a = attr.findAll(m.groupValues[2]).associate { it.groupValues[1] to it.groupValues[2] }
     fun f(k: String, d: Float = 0f) = a[k]?.toFloatOrNull() ?: d
     when (m.groupValues[1]) {
-      "path" -> a["d"].orEmpty()
+      "path" -> expandArcFlags(a["d"].orEmpty())
       "circle" -> {
         val cx = f("cx"); val cy = f("cy"); val r = f("r")
         "M${cx - r} ${cy}a$r $r 0 1 0 ${2 * r} 0a$r $r 0 1 0 ${-2 * r} 0z"

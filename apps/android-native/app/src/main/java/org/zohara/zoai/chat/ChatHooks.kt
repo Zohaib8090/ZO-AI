@@ -24,6 +24,17 @@ object ChatHooks {
   var attachButton by mutableStateOf<(@Composable () -> Unit)?>(null)
   var runOnPill by mutableStateOf<(@Composable () -> Unit)?>(null)
   var micButton by mutableStateOf<(@Composable (appendText: (String) -> Unit, send: () -> Unit) -> Unit)?>(null)
+  /**
+   * Wraps the whole composer card once: gets the text of the box, a function that replaces it, send, and whether an answer is being written, and draws [content].
+   * The media module makes its one controller here (attachments, dictation, sheets) and hands it to the other slots, which are drawn inside [content].
+   */
+  var composerHost by mutableStateOf<(@Composable (text: String, setText: (String) -> Unit, send: () -> Unit, busy: Boolean, content: @Composable () -> Unit) -> Unit)?>(null)
+  /** called by the box on every edit with the text before and after; returns the text to show (a pasted address becomes a chip and is taken out, typing stops dictation) */
+  var textEdited: ((old: String, new: String) -> String)? = null
+  /** extra modifier for the text box: keyboard pictures and paste, drag and drop, Esc and Ctrl+Shift+M on a hardware keyboard */
+  var fieldModifier by mutableStateOf<(@Composable () -> androidx.compose.ui.Modifier)?>(null)
+  /** the speaker button under an answer (draws Read aloud / Stop reading); when set it is used instead of the plain [readAloud] action */
+  var readAloudButton by mutableStateOf<(@Composable (text: String) -> Unit)?>(null)
   var readAloud by mutableStateOf<((String) -> Unit)?>(null)
   val chatsChanged = MutableSharedFlow<Long>(extraBufferCapacity = 8)
   val prefill = MutableStateFlow<String?>(null)

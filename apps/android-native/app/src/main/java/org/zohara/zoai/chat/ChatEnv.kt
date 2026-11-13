@@ -31,4 +31,12 @@ interface ChatEnv {
   /** that approval or question was answered or is over */
   fun needsYouDone(chatId: String?, kind: NeedsKind, id: Long)
   fun desktopOffline()
+  /** COMP-19: attachments are still being read; a send must wait (the strip shows spinners) */
+  val attachmentsBusy: Boolean get() = false
+  /** COMP-20: true when [beforeSend] must be asked before a message goes to My computer */
+  val checksBeforeSend: Boolean get() = false
+  /** COMP-20: looks at the linked computer before a send; a sentence means do not send (the text stays in the box) */
+  suspend fun beforeSend(): String? = null
+  /** NOTIF-01, VOICE-11: an answer finished ([answer] is its text); a notification when the app is in the background, read aloud when that setting is on */
+  fun answerFinished(chatId: String?, title: String, answer: String) {}
 }

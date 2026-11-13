@@ -61,6 +61,8 @@ import org.zohara.zoai.core.design.DarkZoColors
 fun ZoApp(container: AppContainer, pendingChat: MutableStateFlow<String?>) {
   val theme by container.prefs.theme.collectAsState(initial = ThemeChoice.System)
   val dark = isDarkFor(theme)
+  // media-link: the attachment strip, the "+" button, the microphone, Run on and read aloud in the chat's composer slots (once)
+  remember(container) { org.zohara.zoai.media.ChatPlug.install(container); true }
   CompositionLocalProvider(LocalAppContainer provides container) {
     ZoAiTheme(dark) {
       SystemBars(dark)
@@ -121,6 +123,10 @@ private fun MainShell(container: AppContainer, auth: AuthState.SignedIn, pending
     val id = DeepLinks.validChatId(pending)
     if (id != null) { navigator.openChat(id); pendingChat.value = null }
   }
+  // ATT-22: something shared from another app opens a new message
+  org.zohara.zoai.media.ShareNavigation { navigator.home() }
+  // INTER-15: asked once, with an explanation, whether to tell the person when an answer is ready
+  org.zohara.zoai.media.notify.NotificationAskOnce()
   // NAV-21: back at the first screen minimizes the app, it never ends a running answer
   BackHandler(enabled = route == Routes.HOME && !drawer.isOpen) { activity?.moveTaskToBack(true) }
 

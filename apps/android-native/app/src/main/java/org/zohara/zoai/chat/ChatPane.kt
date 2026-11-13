@@ -81,7 +81,11 @@ fun ChatPane(session: ChatSession, hub: ChatHub.Instance, greetingText: String?,
     )
   }
   val readAloud = ChatHooks.readAloud
-  val actionsNow = if (readAloud != null) MessageActions(actions.canRetry, actions.onCopy, actions.onShare, actions.onEdit, actions.onRetry, actions.onSwitchTake, actions.onChooseModel, readAloud) else actions
+  // CHAT-04: a tap on a picture or file of a bubble opens the preview (the media module's sheet)
+  var preview by remember { mutableStateOf<org.zohara.zoai.media.PreviewTarget?>(null) }
+  val onPicture: (org.zohara.zoai.core.net.AttachInfo) -> Unit = { a -> preview = org.zohara.zoai.media.MediaModule.of(container).attachments.previewForSent(a.kind, a.name, a.size, a.thumb) }
+  val actionsNow = MessageActions(actions.canRetry, actions.onCopy, actions.onShare, actions.onEdit, actions.onRetry, actions.onSwitchTake, actions.onChooseModel, readAloud, onPicture)
+  preview?.let { org.zohara.zoai.media.PreviewSheet(it) { preview = null } }
 
   val cb = ThreadCallbacks(
     messages = actionsNow,
@@ -128,13 +132,17 @@ fun ChatPane(session: ChatSession, hub: ChatHub.Instance, greetingText: String?,
     }
 
     when (sheet) {
-      "model" -> ModelSheet(
+      // MODEL-32: on My computer the model controls act on that computer (desktop_op), so the sheet is the link module's
+      "model" -> if (!hub.env.runOn().isCloud) org.zohara.zoai.link.DesktopModelSheet(org.zohara.zoai.link.LinkModule.of(container).desktop, onDismiss = { sheet = ""; hub.pills.refresh() }) else ModelSheet(
         pills, { sheet = "" },
         onPickModel = { p, m -> hub.pills.chooseModel(p, m) { err -> if (err != null) toast(err) }; sheet = "" },
         onPickProfile = { id -> hub.pills.chooseProfile(id) { err -> if (err != null) toast(err) }; sheet = "" },
         onMore = { sheet = ""; nav.navigate(Routes.SETTINGS_MODEL) },
       )
-      "mode" -> ModeSheet(pills.mode, hub.pills.bypassAllowed(), { sheet = "" }, onPick = { m -> hub.pills.setMode(m) { err -> if (err != null) toast(err) }; sheet = "" })
+      "mode" -> if (!hub.env.runOn().isCloud) org.zohara.zoai.core.design.ZoBottomSheet("What ZO-AI may do", { sheet = "" }) {
+        // PERM-03, LINK-11: only Manual and Auto on a computer, Bypass is shown as Auto, and a note says the computer may limit it
+        org.zohara.zoai.link.ModeRows(org.zohara.zoai.link.LinkModes.available(true, container.session.restricted), pills.mode.api, true) { m -> hub.pills.setMode(PermMode.parse(m)) { err -> if (err != null) toast(err) }; sheet = "" }
+      } else ModeSheet(pills.mode, hub.pills.bypassAllowed(), { sheet = "" }, onPick = { m -> hub.pills.setMode(m) { err -> if (err != null) toast(err) }; sheet = "" })
       "context" -> if (wide && pinnedPanel) sheet = "" else ContextSheet(
         contextView, { sheet = "" }, onRefresh = refresh, onCompact = compact,
         onPin = if (wide) ({ pinnedPanel = true; sheet = "" }) else null,

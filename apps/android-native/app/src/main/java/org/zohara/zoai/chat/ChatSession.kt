@@ -46,6 +46,10 @@ class ChatSession(
   private var lastOpenMs = 0L
   /** the approval or question whose notification is up; any later event of the answer means it was answered somewhere else (INTER-14) */
   private var needsOpen: Pair<NeedsKind, Long>? = null
+  /** COMP-20: the look at the computer before a send is running */
+  @Volatile private var checking = false
+  /** the stream ended with `done` (an answer finished: NOTIF-01) */
+  private var answered = false
 
   val chatId: String? get() = _state.value.chatId
 
@@ -101,8 +105,25 @@ class ChatSession(
   /** The composer's Send. Returns true when the message went out (the caller then clears its box). */
   fun submit(text: String): Boolean {
     if (_state.value.busy) { env.toast("Wait for the current answer to finish."); return false }
-    if (_state.value.questionOpen) return false
+    if (_state.value.questionOpen || checking) return false
     if (text.isBlank() && env.attachmentCount.value == 0) return false
+    if (env.attachmentsBusy) { env.toast("Still reading your attachments. One moment."); return false } // COMP-19
+    if (env.checksBeforeSend && !env.runOn().isCloud) {
+      // COMP-20: look at the computer first; the text stays in the box until the message really goes out
+      checking = true
+      scope.launch {
+        val stop = try { env.beforeSend() } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+        checking = false
+        if (stop != null) { env.toast(stop); return@launch }
+        if (_state.value.busy) return@launch
+        if (submitNow(text) && draft.value == text) draft.value = ""
+      }
+      return false
+    }
+    return submitNow(text)
+  }
+
+  private fun submitNow(text: String): Boolean {
     val taken = env.takeForSend(text)
     val t = taken.text
     val limit = if (env.runOn().isCloud) env.messageLimit else minOf(env.messageLimit ?: Int.MAX_VALUE, 100_000).takeIf { it != Int.MAX_VALUE }
@@ -140,6 +161,7 @@ class ChatSession(
     val runOn = env.runOn()
     val before = _state.value
     stepHasDeltas = false
+    answered = false
     chatBegan = before.chatId != null
     activeGroup = null
     _state.update { st ->
@@ -264,7 +286,8 @@ class ChatSession(
         mutate { dropTransient(); finalizeLive(); endGroup(); expireCards(); add(ErrorItem(key(), CONNECTION_LOST_TEXT(_state.value.computerName != null), code = "lost", retry = false)) }
         return true
       }
-      SendEvent.Done, SendEvent.Ping, is SendEvent.Unknown -> Unit
+      SendEvent.Done -> answered = true
+      SendEvent.Ping, is SendEvent.Unknown -> Unit
     }
     return false
   }
@@ -277,6 +300,7 @@ class ChatSession(
     val id = _state.value.chatId
     env.chatsChanged()
     if (!env.runOn().isCloud) env.chatsChanged(6000)
+    if (answered && id != null) env.answerFinished(id, _state.value.title, _state.value.items.filterIsInstance<AiItem>().lastOrNull()?.text.orEmpty())
     if (id != null) {
       // the takes numbers (and, after a lost connection, the whole chat) come from the server
       try {

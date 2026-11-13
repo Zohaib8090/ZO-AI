@@ -106,9 +106,15 @@ class Session(
   val restricted: Boolean get() = account?.restricted ?: true
   val admin: Boolean get() = account?.admin ?: false
 
+  /** Things to do while the person is still signed in, before the sign-out (the media-link module removes the push registration here). Each gets 3 s. */
+  val beforeSignOut = java.util.concurrent.CopyOnWriteArrayList<suspend () -> Unit>()
+
   fun signOut(message: String? = null) {
     scope.launch {
       _loginMessage.value = message
+      for (hook in beforeSignOut) {
+        try { kotlinx.coroutines.withTimeoutOrNull(3000) { hook() } } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
+      }
       prefs.clearAccountData()
       auth.signOut()
     }
