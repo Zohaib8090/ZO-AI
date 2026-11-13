@@ -125,7 +125,9 @@ fn restricted_refusal(op: &str, req: &Value) -> Option<&'static str> {
         return Some("Bypass mode is not available to this account.");
     }
     let claude = |k: &str| req.get(k).and_then(Value::as_str) == Some("claude-code");
-    if matches!(op, "select" | "set_key" | "models" | "model_test") && claude("provider") {
+    // Claude Code: only where the operator allows this person to sign in to it (admins, or everybody with ZO_CLAUDE_CODE_USERS=all);
+    // it has no key to set and nothing to test with a key
+    if matches!(op, "select" | "set_key" | "models" | "model_test") && claude("provider") && (matches!(op, "set_key" | "model_test") || !crate::ai::claude_code::allowed_here()) {
         return Some("Claude Code is not available to this account.");
     }
     None
@@ -248,25 +250,6 @@ fn handle(op: &str, req: &Value) -> Result<Value, String> {
                 Mode::parse(m).save();
             }
             Ok(json!({"mode": Mode::load().name()}))
-        }
-        "terminal_run" => {
-            let cmd = s(req, "cmd");
-            if cmd.trim().is_empty() {
-                return Err("No command provided.".into());
-            }
-            if tenant::is_restricted() {
-                return Err("Terminal command execution on the cloud server requires an admin account. The web terminal is only for the cloud server of an admin account. To work on your own computer, choose \"My computer\" under the chat box and ask in the chat: your desktop asks you to approve every change.".into());
-            }
-            // the same permission rules as every other shell run: this op has no one to ask, so what would ask is refused
-            // (only Bypass, which the admin switched on, or a read-only command in Auto, runs)
-            if crate::policy::decide(Mode::load(), crate::policy::Risk::Shell, Some(cmd)) != crate::policy::Decision::Allow {
-                return Err("This command needs approval, and the web terminal has no one to ask. Only read-only commands run in Auto mode; set the mode to Bypass (as an admin) to run anything, or use \"My computer\" so your desktop asks.".into());
-            }
-            let out = match crate::tools::call("zohara_shell", &json!({"cmd": cmd, "timeout": 60})) {
-                Ok(s) => s,
-                Err(e) => e,
-            };
-            Ok(json!({"output": out}))
         }
         "providers" => {
             let sel = Selection::load();
@@ -705,7 +688,7 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
         }
     }
     let sel = Selection::load();
-    if restricted && sel.provider == "claude-code" {
+    if restricted && sel.provider == "claude-code" && !claude_code::allowed_here() {
         line(&out, &json!({"event": "error", "error": "Claude Code is not available to this account. Choose another model."}));
         line(&out, &json!({"event": "done"}));
         return;
@@ -1286,11 +1269,13 @@ mod tenant_tests {
         // an admin sees Claude Code on the server only once their own token is stored
         let r = talk(with_tenant(json!({"op": "providers"}), &admin), true);
         assert!(r[0]["providers"].as_array().unwrap().iter().all(|p| p["id"] != "claude-code"), "no token, no Claude Code");
+        crate::tenant::test_multi(true);
         crate::tenant::scope(&admin, || crate::ai::claude_code::store_token("sk-ant-oat01-test-token-0123456789abcdefghijklmnop").unwrap());
         let r = talk(with_tenant(json!({"op": "providers"}), &admin), true);
         let cc = r[0]["providers"].as_array().unwrap().iter().find(|p| p["id"] == "claude-code").cloned().expect("listed with a token");
         assert_eq!(cc["name"], "Claude Code (your subscription)");
         crate::tenant::scope(&admin, || crate::ai::claude_code::clear_token().unwrap());
+        crate::tenant::test_multi(false);
     }
 
     #[test]
@@ -1749,26 +1734,13 @@ mod tenant_tests {
     }
 
     #[test]
-    fn the_web_terminal_follows_the_permission_mode_and_a_key_only_goes_to_its_own_address() {
+    fn a_key_only_goes_to_its_own_address_and_the_one_shot_terminal_op_is_gone() {
         let _g = lock();
         let admin = fresh(false);
         let ask = |v: Value| talk(with_tenant(v, &admin), true).remove(0);
-        let mark = std::env::temp_dir().join(format!("zo-term-{}", std::process::id()));
-        let _ = std::fs::remove_file(&mark);
-        let cmd = format!("touch {}", mark.display());
-        for m in ["Manual", "Auto"] {
-            ask(json!({"op": "mode", "set": m}));
-            let r = ask(json!({"op": "terminal_run", "cmd": cmd}));
-            assert!(r["error"].as_str().unwrap_or("").contains("needs approval"), "{m}: {r}");
-            assert!(!mark.exists(), "{m}: the command ran without approval");
-        }
-        // a read-only command is fine in Auto; anything runs only in Bypass
-        assert!(ask(json!({"op": "terminal_run", "cmd": "echo hi"}))["output"].as_str().unwrap().contains("hi"));
-        ask(json!({"op": "mode", "set": "Bypass"}));
-        assert!(ask(json!({"op": "terminal_run", "cmd": cmd}))["error"].is_null());
-        assert!(mark.exists());
-        let _ = std::fs::remove_file(&mark);
-        ask(json!({"op": "mode", "set": "Auto"}));
+        // the command box was replaced by a real terminal (zo-server's /api/term): the service has no op that runs a command for a page
+        let r = ask(json!({"op": "terminal_run", "cmd": "echo hi"}));
+        assert!(r["error"].as_str().unwrap_or("").to_lowercase().contains("unknown"), "{r}");
         // a provider's key is never sent to another address: not saved, not tried with the key, not through a profile
         crate::tenant::scope(&admin, || crate::ai::keys::set("openai", "sk-real").unwrap());
         for op in ["select", "profile_update"] {

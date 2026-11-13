@@ -425,6 +425,9 @@ pub fn models_sheet(ui: &Rc<Ui>) {
     status.set_wrap(true);
     status.set_xalign(0.0);
     body.append(&status);
+    // Claude Code: who is logged in, with Log in and Log out (shown only for that provider)
+    let (cc_block, cc_refresh) = crate::claude_ui::block(ui);
+    body.append(&cc_block);
 
     let current = {
         let shown = shown.clone();
@@ -540,6 +543,10 @@ pub fn models_sheet(ui: &Rc<Ui>) {
             status.set_text(if p.protocol == Protocol::ClaudeCode {
                 if zo_core::ai::claude_code::binary().is_some() { "Uses the Claude Code program you installed and signed in to yourself (claude auth login). ZO-AI never sees your login. Experimental. The full model list is read with an Anthropic API key (add one under the Anthropic provider or in a profile); without one you get Claude Code's own names for the newest models." } else { "Claude Code is not installed. Install it with: npm install -g @anthropic-ai/claude-code, then sign in with: claude auth login" }
             } else if p.local { "Runs on this computer. No key, and nothing leaves it." } else if keys::available() { "The key is stored in the system keyring." } else { "The keyring tool (secret-tool) is missing, so keys cannot be saved." });
+            cc_block.set_visible(p.protocol == Protocol::ClaudeCode);
+            if p.protocol == Protocol::ClaudeCode {
+                cc_refresh();
+            }
             ml.mark_current(&model.text());
             load(false);
         }

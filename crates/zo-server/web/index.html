@@ -279,6 +279,27 @@ select optgroup{background:var(--card);color:var(--accent);font-size:11px;font-w
 .term-prompt-wrap .prompt-sym{color:var(--accent);font-family:monospace;font-weight:700;font-size:14px;user-select:none}
 .term-input{flex:1;background:transparent;border:none;color:var(--text);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:13px;outline:none}
 .term-input::placeholder{color:var(--dimmer)}
+/* ---- terminals (xterm.js) ---- */
+.tm{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--input)}
+.tm-bar{display:flex;align-items:center;gap:4px;padding:6px 8px;background:var(--card2);border-bottom:1px solid var(--line);flex:none}
+.tm-tabs{display:flex;gap:4px;overflow-x:auto;min-width:0;flex:0 1 auto}
+.tm-tab{display:inline-flex;align-items:center;gap:6px;padding:4px 4px 4px 10px;border-radius:8px;font-size:12.5px;color:var(--dim);border:1px solid transparent;cursor:pointer;white-space:nowrap;min-height:32px;outline-offset:2px}
+.tm-tab.on{background:var(--card);color:var(--text);border-color:var(--line2)}
+.tm-tab:focus-visible{outline:2px solid var(--accent)}
+.tm-tab>span:nth-child(2){max-width:150px;overflow:hidden;text-overflow:ellipsis}.tm-tab{flex:none}
+.tm-tab .x{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;color:var(--dim)}.tm-tab .x:hover{background:var(--raise);color:var(--text)}.tm-tab .x svg{width:12px;height:12px}
+.tm-tools{margin-left:auto;display:flex;gap:2px;flex:none}
+.tm-tools .icon-btn{min-width:32px;min-height:32px;font-size:12px}
+.tm-note{padding:8px 12px;font-size:12.5px;background:var(--card);border-bottom:1px solid var(--line);color:var(--text2);display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex:none}.tm-note .btn{padding:3px 10px;font-size:12px}
+.tm-stage{flex:1;min-height:0;position:relative;overflow:hidden}
+.tm-pane{position:absolute;inset:6px 0 0 8px}.tm-pane.hide{display:none}.tm-pane.bell{box-shadow:inset 0 0 0 2px var(--accent)}
+.tm-pane .xterm{height:100%;font-family:"JetBrains Mono","Cascadia Mono","DejaVu Sans Mono","Liberation Mono","Noto Sans Mono","Droid Sans Mono","SF Mono",Menlo,Consolas,"Courier New",monospace}
+/* the page sets a font on every element (the universal rule above): the terminal draws with the one it was given */
+.tm-pane .xterm *{font-family:inherit}.tm-pane .xterm-viewport{background:transparent!important}
+.tm-keys{display:none;gap:4px;padding:6px 8px;background:var(--card2);border-top:1px solid var(--line);overflow-x:auto;flex:none}
+.tm-key{min-width:44px;min-height:44px;padding:0 10px;border-radius:10px;border:1px solid var(--line2);background:var(--card);color:var(--text);font-size:13px;font-family:inherit;cursor:pointer;flex:none;touch-action:manipulation}
+.tm-key.on{background:var(--accent);color:var(--onaccent);border-color:var(--accent)}
+@media(hover:none),(max-width:860px){.tm-keys{display:flex}.tm-tab,.tm-tools .icon-btn,.tm-plus{min-height:44px}.tm-tools .icon-btn,.tm-plus,.tm-tab .x{min-width:44px}.tm-tab .x{min-height:44px}.tm-bar{padding:4px 6px}}
 .msg-actions button[data-retry]:hover{color:var(--accent)}
 .retry-btn{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 11px;margin-top:6px;border-radius:7px}
 .retry-btn svg{width:13px;height:13px}
@@ -308,7 +329,7 @@ select optgroup{background:var(--card);color:var(--accent);font-size:11px;font-w
 @keyframes scrimin{from{opacity:0}to{opacity:1}}
 /* the side dock is a 440px column: beside a pinned sidebar it leaves the chat too narrow below about 1100px, so it floats over the page instead (with a dim backdrop) */
 @media(max-width:1100px){
-  .dock{position:fixed;right:0;top:0;bottom:0;width:min(440px,94vw);z-index:35;box-shadow:0 0 0 100vmax rgba(0,0,0,.35),-8px 0 28px rgba(0,0,0,.5)}
+  .dock{position:fixed;right:0;top:0;bottom:auto;height:var(--vvh,100%);width:min(440px,94vw);z-index:35;box-shadow:0 0 0 100vmax rgba(0,0,0,.35),-8px 0 28px rgba(0,0,0,.5)}
 }
 @media(max-width:860px){
   .sidebar{max-width:86vw}
@@ -456,18 +477,7 @@ select optgroup{background:var(--card);color:var(--accent);font-size:11px;font-w
       </button>
     </div>
     <div class="dock-body">
-      <div class="dock-page" id="dockPageTerm">
-        <div class="dock-subhead">
-          <div class="t-target"><span class="pdot" id="dockTermDot"></span><span id="dockTermTarget">Cloud session</span></div>
-          <button class="btn" id="dockTermClr" style="padding:2px 10px;font-size:11.5px">Clear</button>
-        </div>
-        <div class="dock-term-log" id="dockTermLog">ZO-AI Terminal&#10;Connected. Type a shell command below (e.g. ls, pwd, df -h, uname -a).&#10;&#10;</div>
-        <div class="term-prompt-wrap">
-          <span class="prompt-sym">$</span>
-          <input type="text" class="term-input" id="dockTermIn" placeholder="Type a shell command..." autocomplete="off" autocapitalize="off" spellcheck="false">
-          <button class="btn primary" id="dockTermRun" style="padding:6px 14px;font-size:12px">Run</button>
-        </div>
-      </div>
+      <div class="dock-page" id="dockPageTerm"><div id="dockTermHost" style="display:flex;flex-direction:column;flex:1;min-height:0"></div></div>
       <div class="dock-page hide" id="dockPageCtx">
         <div class="dock-ctx-scroll" id="dockCtxScroll"></div>
       </div>
@@ -500,6 +510,7 @@ const P = {
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/>', speaker: '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11"/>',
   out: '<path d="M14 5h4a1 1 0 011 1v12a1 1 0 01-1 1h-4M10 8l-4 4 4 4M6 12h10"/>', stop: '<rect x="7" y="7" width="10" height="10" rx="2"/>', check: '<path d="M5 12l5 5 9-10"/>', pin: '<path d="M9 4h6l-1 6 3 3H7l3-3-1-6zM12 13v7"/>',
 };
+P.paste = '<rect x="6" y="5" width="12" height="15" rx="2"/><path d="M9 5V4h6v1M9 11h6M9 15h6"/>';
 P.star = '<path d="M12 4l2.4 5 5.4.7-4 3.8 1 5.4L12 16.3 7.2 18.9l1-5.4-4-3.8 5.4-.7z"/>';
 const icon = n => `<svg viewBox="0 0 24 24">${P[n] || ""}</svg>`;
 const MARK = '<circle cx="60" cy="60" r="48" fill="none" stroke="currentColor" stroke-width="8" mask="url(#zoGap)"/><path d="M60 30Q60 60 90 60Q60 60 60 90Q60 60 30 60Q60 60 60 30Z" fill="var(--accent2)" stroke="none"/><path d="M94 14Q94 26 106 26Q94 26 94 38Q94 26 82 26Q94 26 94 14Z" fill="#F2B84B" stroke="none"/>'; // the exact shapes of crates/zo-ai/data/zo-ai-mark.svg
@@ -597,6 +608,7 @@ function composerHTML() {
     <button class="tool-btn mic" id="mic" data-i="mic" aria-pressed="false"></button>
     <button class="tool-btn send" id="send" title="Send" data-i="up"></button><button class="tool-btn stop hide" id="stop" title="Stop" data-i="stop"></button></div></div>
     <div class="runnote hide" id="runNote" role="status" aria-live="polite"></div>
+    <div class="runnote hide" id="ccBanner" role="status" aria-live="polite"></div>
     <div class="pills"><button class="pill pill-run" id="pRun" aria-haspopup="menu" title="Where ZO-AI runs"><span class="pdot" id="pRunDot"></span><span class="pt" id="pRunT">Cloud</span><i data-i="down"></i></button><button class="pill" id="pModel"><span id="pModelT">…</span><i data-i="down"></i></button><button class="pill pill-muted" id="pMode">${esc(mode)}</button><button class="pill" id="pContext" title="Context usage and token breakdown"><i data-i="context"></i><span id="pContextT">Context</span></button><button class="pill" id="pTerminal" title="Interactive terminal"><i data-i="terminal"></i><span id="pTerminalT">Terminal</span></button></div>
     <div class="foot-note" id="footNote">ZO-AI can make mistakes. Check what it did.</div>`;
 }
@@ -630,6 +642,7 @@ async function refreshModel() {
   try { status = await op("status"); mode = status.mode || mode; } catch {}
   if ($("pModelT")) $("pModelT").textContent = status.ready ? (status.model || status.provider) : "Choose a model";
   if ($("pMode")) $("pMode").textContent = mode;
+  ccBanner();
 }
 
 /* ===== LINK-BEGIN: run on my own computer (the desktop link) and the owner's Claude subscription =====
@@ -708,10 +721,6 @@ function waitApproval(summary) {
   d.innerHTML = '<span class="spin"></span><span></span>'; d.lastChild.textContent = "Waiting for your approval on your computer" + (summary ? ": " + String(summary).slice(0, 300) : ".");
   thread().appendChild(d); waitNode = d; scrollEnd();
 }
-function claudeLine(cc) {
-  if (!cc || !cc.present) return "Send your Claude sign-in from the desktop app (Settings > Account and sync) to use your Claude subscription here.";
-  return "Claude Code (your subscription) is ready on the server. Sign-in sent " + (cc.set_at ? when(secs(+cc.set_at)) : "earlier") + ". It lasts about a year; send a new one from the desktop app before then.";
-}
 /* Settings > My computers */
 async function pageComputers(b) {
   await linkRefresh(); b.innerHTML = "";
@@ -732,13 +741,6 @@ async function pageComputers(b) {
   b.appendChild(head("Linked computers"));
   b.appendChild(cardOf(...(rows.length ? rows : [row("No computer is linked", "Open ZO-AI on your computer and sign in with this account. Then turn on Settings > Account and sync > Control this computer from the web. The app can run in the tray.")]),
     row("Presence", "A computer counts as online when ZO-AI on it checked in within the last 40 seconds.", btn("Check again", "", () => settingsPage("computers")))));
-}
-async function claudeCard(b) {
-  if (restricted()) return;
-  let cc = null; try { cc = await acctOp("claude_status"); } catch { return; }
-  if (!cc || !cc.admin) return;
-  b.appendChild(head("Claude Code (your subscription)"));
-  b.appendChild(cardOf(row(cc.present ? "Ready on the server" : "Not set up", claudeLine(cc))));
 }
 setInterval(() => { if (!document.hidden && !$("app").classList.contains("hide") && ($("pRun") || nav === "settings")) linkRefresh().then(() => { if ($("pModelT") && onDesktop() && links.ok) refreshModel(); }); }, 20000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !$("app").classList.contains("hide") && $("pRun")) linkRefresh(); });
@@ -1659,7 +1661,7 @@ async function setHidden(list) {
 const isLocalProv = p => p.local || /^(ollama|lmstudio|llamacpp|vllm|sglang|claude-code)$/.test(p.id);
 /* providers that may be offered: restricted people get no local providers and no Claude Code; hidden ones are left out, except the one in use */
 function shownProviders(prov, hidden, keep) {
-  return prov.providers.filter(p => !(restricted() && isLocalProv(p)) && (p.id === keep || !(hidden || []).includes(p.id)));
+  return prov.providers.filter(p => !(restricted() && isLocalProv(p) && !(p.id === "claude-code" && ccAllowed(CCS.v))) && (p.id === keep || !(hidden || []).includes(p.id)));
 }
 function validAddr(u, needs) {
   u = (u || "").trim();
@@ -1707,10 +1709,13 @@ async function modelSheet() {
     [prov, prof, st] = await Promise.all([getProviders(true), getProfiles(true), mop("status")]);
     if (!Array.isArray(prov.providers)) prov.providers = []; if (!Array.isArray(prof.profiles)) prof.profiles = [];
     hidden = dsk ? { hidden_providers: prov.hidden_providers || [] } : await getSettings();
-    if (!dsk && !restricted()) { try { cc = await acctOp("claude_status"); } catch { cc = null; } }
+    if (!dsk) cc = await ccStatus(true);
   } catch (e) { wrap.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; return; }
   let list = shownProviders(prov, hidden.hidden_providers, prov.current);
-  if (!dsk && !restricted() && !(cc && cc.admin && cc.present)) list = list.filter(p => p.id !== "claude-code");
+  if (!dsk) {
+    if (!ccAllowed(cc)) list = list.filter(p => p.id !== "claude-code");
+    else if (!list.some(p => p.id === "claude-code")) { const cp = { id: "claude-code", name: "Claude Code (your subscription)", local: false, has_key: false, needs_url: false, synthetic: true }; prov.providers.push(cp); list.push(cp); }
+  }
   wrap.innerHTML = `<div class="field-label">Provider</div><select id="mProv"></select><div class="field-hint hide" id="mCC"></div>
     <details class="adv" id="mAdv"${dsk ? " hidden" : ""}><summary id="mAdvT">Advanced: address</summary>
       <div class="field-label" id="mUrlL" style="margin-top:8px">Address (endpoint URL)</div><input class="field-input" id="mUrl" type="url" inputmode="url" spellcheck="false" autocomplete="off" autocapitalize="off">
@@ -1725,9 +1730,17 @@ async function modelSheet() {
     <div id="mEffBox" class="hide"><div class="field-label">Effort</div><select id="mEff"></select></div>`;
   const $$ = id => wrap.querySelector("#" + id);
   const sp = $$("mProv"), url = $$("mUrl");
-  if (cc && cc.admin) { const h = $$("mCC"); h.classList.remove("hide"); h.textContent = claudeLine(cc); }
+  /* the line under the provider list: what Claude Code needs, with the Log in button */
+  const ccHint = () => {
+    const h = $$("mCC"), p = cur(); h.innerHTML = "";
+    if (!p || p.id !== "claude-code") { h.classList.add("hide"); return; }
+    h.classList.remove("hide");
+    const t = document.createElement("span"); t.textContent = (dsk ? "Claude Code runs on your computer with the login you made there. " : ccLine(cc) + " "); h.appendChild(t);
+    if (dsk) { const b = btn("Log in on my computer", "mini", () => { sh.close(); claudeLogin(); }); h.appendChild(b); }
+    else { const b = btn(cc && cc.present && cc.source === "own" ? "Log in again" : "Log in", cc && cc.present ? "mini" : "mini primary", () => claudeLogin(() => { sh.close(); modelSheet(); })); h.appendChild(b); }
+  };
   const majorIds = new Set(["anthropic", "openai", "gemini"]), opt = p => `<option value="${esc(p.id)}"${p.id === prov.current ? " selected" : ""}>${esc(p.name)}${p.has_key || p.local ? " ✓" : ""}</option>`;
-  const groups = [["Popular Providers", p => majorIds.has(p.id)], ["Cloud & Open-Weight", p => !majorIds.has(p.id) && p.id !== "custom" && !isLocalProv(p)], ["Local Models (This Computer)", p => p.id !== "custom" && !majorIds.has(p.id) && isLocalProv(p)], ["Custom Endpoint", p => p.id === "custom"]];
+  const groups = [["Your subscription", p => p.id === "claude-code"], ["Popular Providers", p => majorIds.has(p.id)], ["Cloud & Open-Weight", p => !majorIds.has(p.id) && p.id !== "custom" && !isLocalProv(p)], ["Local Models (This Computer)", p => p.id !== "custom" && p.id !== "claude-code" && !majorIds.has(p.id) && isLocalProv(p)], ["Custom Endpoint", p => p.id === "custom"]];
   if (!prov.current) sp.insertAdjacentHTML("afterbegin", '<option value="" selected>Choose…</option>');
   groups.forEach(([lbl, f]) => { const g = list.filter(f); if (g.length) sp.insertAdjacentHTML("beforeend", `<optgroup label="${lbl}">${g.map(opt).join("")}</optgroup>`); });
   let models = [], chosen = st.model || "", effort = "", loading = false, error = "", seq = 0, dirty = false, filter = "";
@@ -1745,6 +1758,7 @@ async function modelSheet() {
     $$("mKeyBox").classList.toggle("hide", !p || isLocalProv(p));
     const has = p && (p.has_key || isLocalProv(p)); const k = $$("mKeySt"); k.textContent = has ? "Key saved" : "No key yet"; k.className = "chip " + (has ? "ok" : "warn");
     $$("mTest").textContent = ""; $$("mTest").className = "field-hint";
+    ccHint();
   }
   function renderList() {
     const box = $$("mList"), q = filter.trim().toLowerCase(), pins = pinned();
@@ -1760,10 +1774,12 @@ async function modelSheet() {
     const s = $$("mState"); s.className = "field-hint";
     if (error) { s.innerHTML = `<span class="bad">${esc(error)}</span> <button class="btn mini" id="mRetry">Try again</button>`; $$("mRetry").onclick = fetchModels; }
     else s.textContent = models.length ? `${models.length} models. Tap the star to pin one to the quick list.` : "";
-    useBtn.disabled = !chosen || !sp.value;
+    useBtn.disabled = !chosen || !sp.value || !!(cur() && cur().synthetic && !(cc && cc.present));
   }
   async function fetchModels() {
     const p = cur(); if (!p) { models = []; renderList(); return; }
+    // Claude Code before the login: there is nothing to ask yet (the Log in button is under the provider)
+    if (p.synthetic && !(cc && cc.present)) { models = []; error = ""; loading = false; renderList(); $$("mState").textContent = "Log in to Claude Code first, then choose a model."; return; }
     const my = ++seq, bad = (dsk ? () => "" : validAddr)(url.value, p.needs_url);
     if (bad) { models = []; error = bad; loading = false; renderList(); return; }
     loading = true; error = ""; renderList();
@@ -1878,22 +1894,383 @@ async function showScheduled() {
   } catch (e) { b.innerHTML = `<div class="msg-error">${esc(e.message)}</div>`; }
 }
 
+/* ===== CLAUDE-LOGIN-BEGIN: one-click Claude Code login. The person sees steps (a link, a place for the code, a status), never a token. =====
+   On the cloud server the server runs Claude's own sign-in for them (/api/claude/*, see claude_api.rs); on My computer a terminal opens there
+   (its owner is asked on that computer) and `claude auth login` is typed into it. */
+const CCS = { at: 0, v: null };
+async function ccStatus(force) {
+  if (!force && CCS.v && Date.now() - CCS.at < 15000) return CCS.v;
+  try { CCS.v = await api("/api/claude/status", {}); CCS.at = Date.now(); } catch { CCS.v = null; }
+  return CCS.v;
+}
+const ccAllowed = cc => !!(cc && cc.allowed);
+function ccLine(cc) {
+  if (!cc) return "Could not check the Claude Code login.";
+  if (!cc.allowed) return "Claude Code on this server is only for the owner's account. Sign in to Claude Code on your own computer and use it through My computer.";
+  if (!cc.present) return "Not logged in. Press Log in: you sign in to Claude in your browser and paste the code back here. Nothing is typed into a terminal.";
+  if (cc.source === "server") return "Using the server's own Claude sign-in. Press Log in to use your own subscription instead.";
+  return "Logged in with your Claude subscription" + (cc.set_at ? " " + when(secs(+cc.set_at)) : "") + ". The sign-in lasts about a year; ZO-AI keeps it encrypted and never shows it.";
+}
+/* only Anthropic's sign-in pages may be opened from the link the server hands over */
+function ccSafeUrl(u) {
+  try { const x = new URL(String(u)); const h = x.hostname.toLowerCase(); return x.protocol === "https:" && !x.username && !x.port && /(^|\.)(claude\.com|claude\.ai|anthropic\.com)$/.test(h) ? x.href : ""; } catch { return ""; }
+}
+async function claudeLogin(after) {
+  if (onDesktop()) return claudeLoginDesktop(after);
+  const cc = await ccStatus(true);
+  if (!ccAllowed(cc)) { const s = sheet("Log in to Claude Code", `<div class="pc-meta">${esc(ccLine(cc))}</div>`, []); const c = btn("Close", "", () => s.close()); s.el.querySelector(".sheet-foot").appendChild(c); return; }
+  const body = document.createElement("div");
+  let sh, timer = 0, busy = false, view = { state: "idle" };
+  const stop = () => { clearInterval(timer); timer = 0; };
+  const cancel = btn("Cancel", "", async () => { stop(); try { if (["starting", "link", "working"].includes(view.state)) await api("/api/claude/cancel", {}); } catch {} sh.close(); });
+  sh = sheet("Log in to Claude Code", body, [cancel]);
+  const paintView = () => {
+    body.innerHTML = "";
+    const st = view.state, add = h => { const d = document.createElement("div"); d.innerHTML = h; body.appendChild(d); return d; };
+    if (st === "idle" || st === "cancelled" || st === "failed") {
+      if (st === "failed") add(`<div class="msg-error" role="alert">${esc(view.message || "The sign-in failed.")}</div>`);
+      add('<div class="pc-meta">You sign in to Claude in your browser, copy the code it shows and paste it here. ZO-AI keeps the long sign-in it gets back, encrypted, only for your account, and never shows it. You can log out any time. Anthropic\'s own terms for Claude apply to how you use your subscription.</div>');
+      const go = btn(st === "failed" ? "Try again" : "Start", "primary", start); go.style.marginTop = "12px"; body.appendChild(go);
+    } else if (st === "starting") add('<div class="inline"><span class="spin"></span> Starting the sign-in…</div>');
+    else if (st === "link") {
+      const url = ccSafeUrl(view.url);
+      add('<div class="field-label">1. Open the sign-in page</div>');
+      const a = document.createElement("a"); a.className = "btn primary"; a.textContent = "Open Claude sign-in"; a.target = "_blank"; a.rel = "noopener noreferrer"; if (url) a.href = url; else a.setAttribute("aria-disabled", "true"); a.style.cssText = "display:inline-flex;text-decoration:none"; body.appendChild(a);
+      add('<div class="field-label" style="margin-top:14px">2. Sign in, then copy the code the page shows</div><div class="field-hint">It is a short text with letters, numbers and a # in it.</div>');
+      add('<div class="field-label" style="margin-top:14px">3. Paste the code here</div>');
+      const w = document.createElement("div"); w.className = "inline"; const inp = document.createElement("input"); inp.className = "field-input"; inp.placeholder = "Paste the code"; inp.autocomplete = "off"; inp.spellcheck = false; inp.autocapitalize = "off"; inp.maxLength = 400; inp.setAttribute("aria-label", "Code from the Claude sign-in page");
+      const ok = btn("Continue", "primary", () => sendCode(inp.value, ok)); w.append(inp, ok); body.appendChild(w); inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); sendCode(inp.value, ok); } };
+      add(`<div class="field-hint" id="ccLeft">${view.secs_left ? "This sign-in waits about " + Math.ceil(view.secs_left / 60) + " more minute" + (view.secs_left > 90 ? "s" : "") + "." : ""}</div>`);
+      setTimeout(() => inp.focus(), 30);
+    } else if (st === "working") add('<div class="inline"><span class="spin"></span> Checking the code…</div>');
+    else if (st === "done") {
+      add('<div class="msg-ok" role="status" style="color:#3FB950">You are signed in to Claude Code.</div>');
+      const c = btn(after ? "Continue" : "Close", "primary", () => { sh.close(); if (after) after(); }); c.style.marginTop = "12px"; body.appendChild(c);
+    }
+  };
+  async function sendCode(v, b) { b.disabled = true; try { view = await api("/api/claude/code", { code: v }); } catch (e) { toast(e.message); b.disabled = false; return; } paintView(); tick(); }
+  async function poll() {
+    if (busy) return; busy = true;
+    try { const v = await api("/api/claude/poll", {}); const was = view.state; view = v; if (v.state !== was || v.state === "link") { if (!(v.state === "link" && was === "link" && body.querySelector("input"))) paintView(); else { const l = body.querySelector("#ccLeft"); if (l) l.textContent = v.secs_left ? "This sign-in waits about " + Math.ceil(v.secs_left / 60) + " more minute" + (v.secs_left > 90 ? "s" : "") + "." : ""; } } }
+    catch (e) { if (e.status === 401 || e.status === 403) stop(); }
+    busy = false;
+    if (view.state === "done") { stop(); CCS.at = 0; dropCache("providers"); refreshModel(); }
+    if (["failed", "cancelled", "idle"].includes(view.state)) stop();
+  }
+  function tick() { stop(); timer = setInterval(() => { if (!document.body.contains(sh.el)) return stop(); poll(); }, 1200); poll(); }
+  async function start() { view = { state: "starting" }; paintView(); try { view = await api("/api/claude/start", {}); } catch (e) { view = { state: "failed", message: e.message }; paintView(); return; } paintView(); tick(); }
+  view = cc.flow || { state: "idle" }; paintView();
+  if (["starting", "link", "working"].includes(view.state)) tick();
+}
+/* My computer: the sign-in is the program's own, run in a terminal there; its owner is asked first on that computer */
+function claudeLoginDesktop(after, logout) {
+  const w = document.createElement("div");
+  w.innerHTML = `<div class="pc-meta">${logout ? "A terminal opens on your computer and runs <b>claude auth logout</b>." : "A terminal opens on your computer and runs <b>claude auth login</b>. Open the link it prints (you can click it), sign in to Claude and paste the code into the terminal."} <b>Your computer asks you first</b>, on its own screen, before the terminal opens: the web page cannot answer that question.</div>`;
+  const sh = sheet(logout ? "Log out of Claude Code" : "Log in to Claude Code", w, [btn("Cancel", "", () => sh.close()), btn(logout ? "Open terminal and log out" : "Open terminal and log in", "primary", async () => { sh.close(); dockOpen("terminal"); await tOpen({ target: "desktop", fresh: true, autoType: logout ? "claude auth logout\n" : "claude auth login --claudeai\n", name: "Claude" }); if (after) after(); })]);
+}
+async function claudeLogout() {
+  if (onDesktop()) return claudeLoginDesktop(null, true);
+  confirmBox("Log out of Claude Code?", "Your Claude sign-in is removed from the server. You can log in again any time.", "Log out", async () => {
+    try { await api("/api/claude/logout", {}); CCS.at = 0; dropCache("providers"); toast("Logged out of Claude Code"); refreshModel(); if (nav === "settings") settingsPage("model"); } catch (e) { toast(e.message); }
+  });
+}
+/* a hint above the message box when Claude Code is chosen but nobody is logged in */
+async function ccBanner() {
+  const n = $("ccBanner"); if (!n) return;
+  n.classList.add("hide");
+  if (onDesktop() || !status || status.provider !== "claude-code") return;
+  const cc = await ccStatus(); if (!cc || !cc.allowed || cc.present) return;
+  n.innerHTML = ""; const s = document.createElement("span"); s.textContent = "Claude Code is chosen, but you are not logged in."; n.appendChild(s); n.appendChild(btn("Log in", "primary", () => claudeLogin(() => refreshModel()))); n.classList.remove("hide");
+}
+async function claudeCard(b) {
+  const dsk = onDesktop(), cc = await ccStatus(true);
+  if (!dsk && !ccAllowed(cc)) return;
+  b.appendChild(head("Claude Code (your subscription)"));
+  if (dsk) {
+    const two = document.createElement("div"); two.style.cssText = "display:flex;gap:6px;flex-wrap:wrap"; two.append(btn("Log in on my computer", "primary", () => claudeLogin()), btn("Log out", "", () => claudeLogout()));
+    b.appendChild(cardOf(row("On your computer", "Claude Code uses the login you made on that computer. Logging in opens a terminal there; your computer asks you first.", two)));
+    return;
+  }
+  const two = document.createElement("div"); two.style.cssText = "display:flex;gap:6px;flex-wrap:wrap";
+  two.appendChild(btn(cc && cc.present && cc.source === "own" ? "Log in again" : "Log in", "primary", () => claudeLogin(() => settingsPage("model"))));
+  if (cc && cc.present && cc.source === "own") two.appendChild(btn("Log out", "", () => claudeLogout()));
+  two.appendChild(btn("Check", "", async () => { await ccStatus(true); settingsPage("model"); }));
+  const cap = !cc ? "Could not check" : !cc.installed ? "Claude Code is not installed on this server" : cc.present ? (cc.source === "server" ? "Using the server's sign-in" : "Logged in") : "Not logged in";
+  b.appendChild(cardOf(row(cap, ccLine(cc), two)));
+}
+/* ===== CLAUDE-LOGIN-END ===== */
+
+/* ===== TERM-BEGIN: real terminals (xterm.js from cdnjs, pinned and checksummed). One page-wide manager with tabs. =====
+   The server speaks NDJSON (no WebSocket): /api/term/open streams the output, /api/term/input, resize and close are small posts.
+   A cloud terminal is the owner's only; "My computer" goes through the desktop link and its owner is asked ON that computer. */
+const T_CDN = {
+  css: { href: "https://cdnjs.cloudflare.com/ajax/libs/xterm/6.0.0/xterm.min.css", sri: "sha512-xos4zaD4xiLA4Y3REtnCRqZx2icS1XdZdLBjXUmgqhflDB7tUtnOwKNMHuVIxnBnDUsbuJhlMIuV+exytqZYTA==" },
+  js: { src: "https://cdnjs.cloudflare.com/ajax/libs/xterm/6.0.0/xterm.js", sri: "sha512-uizNIcrofW9tvPxCDN2zy3RKGesFPi8nwV0SEE480G+qUpyDaWEI9ia9lnwTitiU1DbW4wLQcA/vFrVzjgVkdw==" },
+};
+const TM = { tabs: [], cur: null, lib: null, root: null, ctrl: false, alt: false, n: 0, started: false };
+const tFontGet = () => { try { const n = parseInt(localStorage.getItem("zo-term-font") || "", 10); return n >= 9 && n <= 24 ? n : 13; } catch { return 13; } };
+let tFont = tFontGet();
+const tFontSet = n => { tFont = Math.max(9, Math.min(24, n)); try { localStorage.setItem("zo-term-font", String(tFont)); } catch {} TM.tabs.forEach(t => { if (t.term) t.term.options.fontSize = tFont; }); setTimeout(() => tFit(tCur()), 30); };
+const tCur = () => TM.tabs.find(t => t.id === TM.cur) || null;
+const tIsAdmin = () => !!acct && !acct.restricted;
+
+function tLoad() {
+  if (window.Terminal) return Promise.resolve();
+  return TM.lib || (TM.lib = new Promise((res, rej) => {
+    const fail = () => { TM.lib = null; rej(new Error("The terminal could not be loaded. Check your connection and try again.")); };
+    const l = document.createElement("link"); l.rel = "stylesheet"; l.href = T_CDN.css.href; l.integrity = T_CDN.css.sri; l.crossOrigin = "anonymous"; l.referrerPolicy = "no-referrer"; l.onerror = fail;
+    const s = document.createElement("script"); s.src = T_CDN.js.src; s.integrity = T_CDN.js.sri; s.crossOrigin = "anonymous"; s.referrerPolicy = "no-referrer";
+    s.onload = () => window.Terminal ? res() : fail(); s.onerror = fail;
+    document.head.append(l, s);
+  }));
+}
+/* colours follow the page's light/dark choice */
+function tTheme() {
+  const light = document.documentElement.dataset.theme === "light", css = getComputedStyle(document.documentElement), v = n => css.getPropertyValue(n).trim();
+  const base = { background: v("--input") || (light ? "#F1EFE8" : "#171717"), foreground: v("--text") || (light ? "#1F1E1D" : "#ECECEC"), cursor: v("--accent") || "#5FD4D4", cursorAccent: v("--input") || "#171717", selectionBackground: light ? "rgba(31,165,165,.28)" : "rgba(95,212,212,.30)" };
+  return light
+    ? { ...base, black: "#3D3C39", red: "#C2362C", green: "#2E8B3E", yellow: "#9A6B00", blue: "#1F5FBF", magenta: "#8E3FA8", cyan: "#13808A", white: "#8A877F", brightBlack: "#6B6963", brightRed: "#D9483D", brightGreen: "#3AA24C", brightYellow: "#B07B00", brightBlue: "#3374D6", brightMagenta: "#A653C0", brightCyan: "#1FA5A5", brightWhite: "#1F1E1D" }
+    : { ...base, black: "#2E2E2E", red: "#E5736A", green: "#7FD28A", yellow: "#E6C46B", blue: "#6CA6F2", magenta: "#C79BE8", cyan: "#5FD4D4", white: "#D0D0D0", brightBlack: "#7C7C7C", brightRed: "#F28C84", brightGreen: "#98E3A1", brightYellow: "#F2D88A", brightBlue: "#8DBAF7", brightMagenta: "#D8B4F0", brightCyan: "#7EE0E0", brightWhite: "#FFFFFF" };
+}
+new MutationObserver(() => TM.tabs.forEach(t => { if (t.term) t.term.options.theme = tTheme(); })).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+async function tPost(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify(body) });
+  return r;
+}
+
+/* ---- the manager's own screen ---- */
+function tMount(host) {
+  if (TM.root && TM.root.parentNode === host) return;
+  host.innerHTML = '<div class="tm"><div class="tm-bar" role="tablist" aria-label="Terminals"><div class="tm-tabs"></div><button class="icon-btn tm-plus" title="New terminal" aria-label="New terminal">' + icon("plus") + '</button><span class="tm-tools"><button class="icon-btn" data-a="smaller" title="Smaller text" aria-label="Smaller text">A-</button><button class="icon-btn" data-a="bigger" title="Bigger text" aria-label="Bigger text">A+</button><button class="icon-btn" data-a="copy" title="Copy the selection" aria-label="Copy the selection">' + icon("copy") + '</button><button class="icon-btn" data-a="paste" title="Paste" aria-label="Paste">' + icon("paste") + '</button></span></div><div class="tm-note hide" role="status" aria-live="polite"></div><div class="tm-stage"></div><div class="tm-keys" aria-label="Extra keys"></div></div>';
+  TM.root = host.firstChild;
+  const q = s => TM.root.querySelector(s);
+  q(".tm-plus").onclick = () => tNew();
+  TM.root.querySelectorAll("[data-a]").forEach(b => b.onclick = async () => {
+    const t = tCur(), a = b.dataset.a;
+    if (a === "smaller") tFontSet(tFont - 1); else if (a === "bigger") tFontSet(tFont + 1);
+    else if (a === "copy" && t && t.term) { const s = t.term.getSelection(); if (!s) return toast("Select some text first."); try { await navigator.clipboard.writeText(s); toast("Copied"); } catch { toast("The browser did not allow copying."); } }
+    else if (a === "paste" && t && t.term) { try { t.term.paste(await navigator.clipboard.readText()); } catch { toast("The browser did not allow pasting. Use Ctrl+Shift+V."); } }
+    if (t && t.term) t.term.focus();
+  });
+  const keys = [["Esc", "\x1b"], ["Tab", "\t"], ["Ctrl", "ctrl"], ["Alt", "alt"], ["↑", "up"], ["↓", "down"], ["←", "left"], ["→", "right"], ["Home", "\x1b[H"], ["End", "\x1b[F"], ["|", "|"], ["~", "~"], ["/", "/"], ["-", "-"], ["PgUp", "\x1b[5~"], ["PgDn", "\x1b[6~"]];
+  const kr = q(".tm-keys");
+  keys.forEach(([label, v]) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = label; b.className = "tm-key"; b.dataset.k = v; b.setAttribute("aria-label", label === "↑" ? "Up" : label === "↓" ? "Down" : label === "←" ? "Left" : label === "→" ? "Right" : label);
+    b.onpointerdown = e => e.preventDefault(); /* keep the keyboard open */
+    b.onclick = () => {
+      const t = tCur(); if (!t) return;
+      if (v === "ctrl" || v === "alt") { TM[v] = !TM[v]; kr.querySelectorAll("[data-k=ctrl]").forEach(x => x.classList.toggle("on", TM.ctrl)); kr.querySelectorAll("[data-k=alt]").forEach(x => x.classList.toggle("on", TM.alt)); }
+      else { const app = t.term && t.term.modes && t.term.modes.applicationCursorKeysMode; const m = { up: "A", down: "B", right: "C", left: "D" }[v]; tSend(t, m ? (app ? "\x1bO" : "\x1b[") + m : v); }
+      if (t.term) t.term.focus();
+    };
+    kr.appendChild(b);
+  });
+  if (window.ResizeObserver) new ResizeObserver(() => tFit(tCur())).observe(q(".tm-stage"));
+  addEventListener("resize", () => tFit(tCur()));
+}
+function tTabsPaint() {
+  const box = TM.root && TM.root.querySelector(".tm-tabs"); if (!box) return;
+  box.innerHTML = "";
+  TM.tabs.forEach(t => {
+    const b = document.createElement("div"); b.className = "tm-tab" + (t.id === TM.cur ? " on" : ""); b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(t.id === TM.cur)); b.tabIndex = 0;
+    const dot = document.createElement("span"); dot.className = "pdot" + (t.state === "open" ? " on" : ""); dot.style.background = t.state === "open" ? (t.target === "desktop" ? "#5FD4D4" : "#4C9AFF") : ""; b.appendChild(dot);
+    const n = document.createElement("span"); n.textContent = (t.target === "desktop" ? "My computer" : "Cloud") + " · " + t.name; b.appendChild(n);
+    const x = document.createElement("button"); x.className = "x"; x.type = "button"; x.title = "Close this terminal"; x.setAttribute("aria-label", "Close " + t.name); x.innerHTML = icon("plus").replace('d="M12 5v14M5 12h14"', 'd="M6 6l12 12M18 6L6 18"'); x.onclick = e => { e.stopPropagation(); tClose(t); }; b.appendChild(x);
+    b.onclick = () => tSelect(t.id); b.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); tSelect(t.id); } };
+    box.appendChild(b);
+  });
+}
+function tNote(text, actions) {
+  const n = TM.root && TM.root.querySelector(".tm-note"); if (!n) return;
+  n.innerHTML = ""; n.classList.toggle("hide", !text);
+  if (!text) return;
+  const s = document.createElement("span"); s.textContent = text; n.appendChild(s);
+  (actions || []).forEach(a => n.appendChild(btn(a[0], a[2] || "", a[1])));
+}
+/* what to say about the selected terminal */
+function tPaint() {
+  tTabsPaint();
+  const t = tCur();
+  if (!t) { tNote(tIsAdmin() || onDesktop() ? "" : "A terminal on the cloud server is only for the owner's account. Choose My computer under the chat box to get one on your own computer.", onDesktop() || tIsAdmin() ? [] : []); return; }
+  const m = t.state;
+  if (m === "waiting") tNote("Waiting for you to allow it on your computer. A question is on its screen.");
+  else if (m === "connecting") tNote("Connecting…");
+  else if (m === "reconnecting") tNote("Connection lost. Reconnecting…");
+  else if (m === "ended") tNote(t.why || "This terminal has ended.", [["New terminal", () => { tClose(t); tNew(); }, "primary"]]);
+  else tNote("");
+}
+function tSelect(id) {
+  TM.cur = id;
+  TM.tabs.forEach(t => t.pane && t.pane.classList.toggle("hide", t.id !== id));
+  tPaint();
+  const t = tCur();
+  if (t && t.term) setTimeout(() => { tFit(t); t.term.focus(); }, 20);
+}
+
+/* ---- one terminal ---- */
+async function tNew(opts) {
+  opts = opts || {};
+  const desktop = opts.target ? opts.target === "desktop" : onDesktop();
+  if (!desktop && !tIsAdmin()) { TM.cur = null; tPaint(); return null; }
+  if (desktop && !runOn && !opts.device) { toast("Choose My computer under the chat box first."); return null; }
+  try { await tLoad(); } catch (e) { toast(e.message); tNote(e.message, [["Try again", () => tNew(opts), "primary"]]); return null; }
+  if (TM.tabs.length >= 8) { toast("That is enough terminals. Close one first."); return null; }
+  const stage = TM.root.querySelector(".tm-stage"), pane = document.createElement("div"); pane.className = "tm-pane hide"; stage.appendChild(pane);
+  const term = new window.Terminal({ fontSize: tFont, fontFamily: '"JetBrains Mono", "Cascadia Mono", "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", "Droid Sans Mono", "SF Mono", Menlo, Consolas, "Courier New", monospace', cursorBlink: true, scrollback: 5000, allowProposedApi: true, theme: tTheme(), macOptionIsMeta: true, convertEol: false });
+  const t = { id: "t" + (++TM.n), sid: opts.sid || null, target: desktop ? "desktop" : "cloud", device: desktop ? (opts.device || runOn) : "", name: opts.name || "Terminal " + TM.n, term, pane, next: opts.next || 0, state: "connecting", q: "", sending: false, closed: false, retry: 0, why: "", auto: opts.autoType || "", rz: null, ac: null };
+  TM.tabs.push(t);
+  term.open(pane);
+  term.onData(d => {
+    if (TM.ctrl && d.length === 1) { const c = d.toUpperCase().charCodeAt(0); if (c >= 64 && c <= 95) d = String.fromCharCode(c & 31); TM.ctrl = false; TM.root.querySelectorAll("[data-k=ctrl]").forEach(x => x.classList.remove("on")); }
+    else if (TM.alt && d.length === 1) { d = "\x1b" + d; TM.alt = false; TM.root.querySelectorAll("[data-k=alt]").forEach(x => x.classList.remove("on")); }
+    tSend(t, d);
+  });
+  term.onResize(() => { clearTimeout(t.rz); t.rz = setTimeout(() => { if (t.sid && t.state === "open") tPost("/api/term/resize", { session: t.sid, rows: term.rows, cols: term.cols }).catch(() => {}); }, 150); });
+  term.onBell(() => { pane.classList.add("bell"); setTimeout(() => pane.classList.remove("bell"), 180); });
+  tLinks(term);
+  tSelect(t.id);
+  tFit(t);
+  tRun(t, !!t.sid);
+  return t;
+}
+/* web addresses in the output are clickable, also when the program wrapped them over several lines (the sign-in link is long) */
+function tLinks(term) {
+  term.registerLinkProvider({ provideLinks(y, cb) {
+    const buf = term.buffer.active; let top = y - 1;
+    while (top > 0 && buf.getLine(top) && buf.getLine(top).isWrapped) top--;
+    const rows = []; let k = top;
+    for (;;) { const l = buf.getLine(k); if (!l) break; rows.push(l); k++; const nx = buf.getLine(k); if (!nx || !nx.isWrapped) break; }
+    if (!rows.length || y - 1 < top || y - 1 > top + rows.length - 1) return cb(undefined);
+    const text = rows.map((l, i) => l.translateToString(i === rows.length - 1)).join(""), cols = term.cols, out = [];
+    const re = /https?:\/\/[^\s<>"'`\x1b\x07]+/g; let m;
+    while ((m = re.exec(text))) {
+      const s = m.index, e = m.index + m[0].length - 1, sy = top + Math.floor(s / cols) + 1, ey = top + Math.floor(e / cols) + 1;
+      if (ey < y || sy > y) continue;
+      const url = m[0];
+      out.push({ range: { start: { x: s % cols + 1, y: sy }, end: { x: e % cols + 1, y: ey } }, text: url, activate: (ev, u) => { try { const x = new URL(u); if (/^https?:$/.test(x.protocol)) window.open(x.href, "_blank", "noopener,noreferrer"); } catch {} } });
+    }
+    cb(out.length ? out : undefined);
+  } });
+}
+function tFit(t) {
+  if (!t || !t.term || !t.pane || t.pane.classList.contains("hide")) return;
+  const scr = t.term.element && t.term.element.querySelector(".xterm-screen");
+  const w = t.pane.clientWidth - 14 /* the scrollbar */, h = t.pane.clientHeight;
+  if (!scr || w <= 0 || h <= 0 || !t.term.cols || !t.term.rows) return;
+  const cw = scr.clientWidth / t.term.cols, ch = scr.clientHeight / t.term.rows;
+  if (!(cw > 0 && ch > 0)) return;
+  const cols = Math.max(10, Math.floor(w / cw)), rows = Math.max(3, Math.floor(h / ch));
+  if (cols !== t.term.cols || rows !== t.term.rows) t.term.resize(cols, rows);
+}
+function tSend(t, d) {
+  if (t.state === "ended" || t.closed) return;
+  // typed text is held until the terminal is really open: on My computer nothing is typed before its owner said yes
+  if (t.q.length < 65536) t.q += d;
+  tFlush(t);
+}
+async function tFlush(t) {
+  if (t.sending || t.state !== "open" || !t.sid) return;
+  t.sending = true;
+  try {
+    while (t.q && t.sid && t.state === "open" && !t.closed) {
+      const chunk = t.q.slice(0, 16384);
+      let r; try { r = await tPost("/api/term/input", { session: t.sid, data: chunk }); } catch { await new Promise(r => setTimeout(r, 400)); continue; }
+      if (r.status === 429) { await new Promise(r => setTimeout(r, 400)); continue; }
+      if (r.status === 404 || r.status === 403) { tEnd(t, r.status === 403 ? "The server no longer lets you use a terminal." : "This terminal is gone."); break; }
+      t.q = t.q.slice(chunk.length);
+    }
+  } finally { t.sending = false; }
+}
+function tEnd(t, why) { t.state = "ended"; t.why = why || "This terminal has ended."; if (t.ac) try { t.ac.abort(); } catch {} if (TM.cur === t.id) tPaint(); else tTabsPaint(); }
+async function tClose(t) {
+  t.closed = true; if (t.ac) try { t.ac.abort(); } catch {}
+  if (t.sid && t.state !== "ended") tPost("/api/term/close", { session: t.sid }).catch(() => {});
+  try { t.term.dispose(); } catch {}
+  t.pane.remove(); TM.tabs = TM.tabs.filter(x => x !== t);
+  if (TM.cur === t.id) { const n = TM.tabs[TM.tabs.length - 1]; TM.cur = null; if (n) tSelect(n.id); else tPaint(); } else tTabsPaint();
+}
+function tLost(t) {
+  if (t.closed || t.state === "ended") return;
+  if (t.target === "cloud" && t.sid) {
+    t.state = "reconnecting"; if (TM.cur === t.id) tPaint(); else tTabsPaint();
+    const wait = Math.min(15000, 1000 * Math.pow(2, Math.min(t.retry++, 4)));
+    setTimeout(() => tRun(t, true), wait);
+  } else tEnd(t, t.target === "desktop" ? "The connection to your computer was lost, so its terminal was closed." : "The connection was lost.");
+}
+function tEvent(t, ev) {
+  switch (ev.event) {
+    case "term": t.sid = String(ev.id || ""); if (ev.name && t.target === "cloud") t.name = String(ev.name).slice(0, 40); t.retry = 0;
+      if (t.target === "cloud") { t.state = "open"; tFit(t); if (t.term.rows) tPost("/api/term/resize", { session: t.sid, rows: t.term.rows, cols: t.term.cols }).catch(() => {}); tFlush(t); }
+      else { t.state = "waiting"; if (ev.device) t.name = String(ev.device).slice(0, 40); }
+      break;
+    case "waiting": t.state = "waiting"; break;
+    case "opened": t.state = "open"; tFit(t); if (t.sid) tPost("/api/term/resize", { session: t.sid, rows: t.term.rows, cols: t.term.cols }).catch(() => {});
+      if (t.auto) { const a = t.auto; t.auto = ""; tSend(t, a); } tFlush(t); break;
+    case "out": { if (typeof ev.b !== "string") break; let bin; try { bin = atob(ev.b); } catch { break; } const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); t.term.write(u); if (t.target === "cloud" && typeof ev.seq === "number") t.next = ev.seq + u.length; break; }
+    case "lost": t.term.write("\r\n\x1b[33m[some output was dropped while you were away]\x1b[0m\r\n"); break;
+    case "exit": t.term.write("\r\n\x1b[2m[the shell ended with code " + (+ev.code) + "]\x1b[0m\r\n"); tEnd(t, "The shell ended (code " + (+ev.code) + ")."); return;
+    case "denied": tEnd(t, "It was not allowed on your computer."); return;
+    case "done": tEnd(t, t.why || "This terminal has ended."); return;
+    case "replaced": tEnd(t, "Another page took over this terminal. Open it again from there, or start a new one."); return;
+    case "error": tEnd(t, String(ev.message || ev.error || "The terminal stopped.").slice(0, 300)); return;
+    default: break;
+  }
+  if (TM.cur === t.id) tPaint(); else tTabsPaint();
+}
+async function tRun(t, resume) {
+  if (t.closed || t.state === "ended") return;
+  const ac = new AbortController(); t.ac = ac;
+  if (!resume) t.state = "connecting";
+  if (TM.cur === t.id) tPaint();
+  let r;
+  try {
+    const body = { target: t.target, rows: t.term.rows || 30, cols: t.term.cols || 110, name: t.name };
+    if (t.target === "desktop") body.device = t.device;
+    if (t.sid && t.target === "cloud") { body.session = t.sid; body.from = t.next; }
+    r = await fetch("/api/term/open", { method: "POST", headers: { "Content-Type": "application/json", "X-ZO-Local": "1", Authorization: "Bearer " + await token() }, body: JSON.stringify(body), signal: ac.signal });
+  } catch { return tLost(t); }
+  if (!r.ok || !r.body) { let j = {}; try { j = await r.json(); } catch {} if (j.terms_required) { showConsent(curUser, j.version); return tEnd(t, "Accept the terms first."); } return tEnd(t, j.error || (r.status === 401 ? "Sign in again." : "The server answered " + r.status + ".")); }
+  const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "";
+  for (;;) {
+    let c; try { c = await reader.read(); } catch { break; }
+    if (c.done) break;
+    buf += dec.decode(c.value, { stream: true });
+    let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); if (!line.trim()) continue; let ev; try { ev = JSON.parse(line); } catch { continue; } tEvent(t, ev); if (t.state === "ended") { try { ac.abort(); } catch {} return; } }
+  }
+  if (!t.closed && t.state !== "ended") tLost(t);
+}
+
+/* ---- opening the panel ---- */
+async function tOpen(opts) {
+  const host = $("dockTermHost"); if (!host) return;
+  tMount(host);
+  if (opts && (opts.fresh || opts.autoType)) { await tNew(opts); return; }
+  if (!TM.started) {
+    TM.started = true;
+    // cloud terminals that run on the server are picked up again (a reload or a lost connection does not end them)
+    if (tIsAdmin()) { try { const r = await api("/api/term/list", {}); for (const s of (r.sessions || []).filter(s => s.alive).slice(0, 4)) await tNew({ target: "cloud", sid: s.id, name: s.name, next: 0 }); } catch {} }
+  }
+  if (!TM.tabs.length) await tNew(); else { tPaint(); tFit(tCur()); }
+}
+/* sets the height of the panel from the visible part of the screen: the on-screen keyboard must not cover the terminal */
+function tViewport() {
+  const vv = window.visualViewport; if (!vv) return;
+  const set = () => document.documentElement.style.setProperty("--vvh", vv.height + "px");
+  vv.addEventListener("resize", () => { set(); setTimeout(() => tFit(tCur()), 50); }); vv.addEventListener("scroll", set); set();
+}
+tViewport();
+/* ===== TERM-END ===== */
+
 /* ---------- persistent dock: Terminal & Context (matching desktop dock.rs) ---------- */
 let dockCurTab = "terminal";
-let termHistory = [], termHistIdx = -1;
 
 function dockIsOpen() {
   const d = $("dock");
   return d && !d.classList.contains("hide");
 }
 
-function dockUpdateTermTarget() {
-  const dsk = onDesktop();
-  const dev = curDev();
-  const targetLabel = dsk ? (dev ? devName(dev) : "Connected computer") : "Cloud session";
-  if ($("dockTermTarget")) $("dockTermTarget").textContent = targetLabel;
-  if ($("dockTermDot")) $("dockTermDot").style.background = dsk ? "#5FD4D4" : "#4C9AFF";
-}
+function dockUpdateTermTarget() { if (typeof TM !== "undefined" && TM.root) tPaint(); }
 
 /* the size of a model's context window in tokens, only for models whose size is known (else 0: the page then shows no percentage) */
 function ctxWindowOf(name) {
@@ -1966,8 +2343,7 @@ function dockSelect(tab) {
   if ($("dockPageTerm")) $("dockPageTerm").classList.toggle("hide", tab !== "terminal");
   if ($("dockPageCtx")) $("dockPageCtx").classList.toggle("hide", tab !== "context");
   if (tab === "terminal") {
-    dockUpdateTermTarget();
-    setTimeout(() => $("dockTermIn")?.focus(), 50);
+    tOpen();
   } else if (tab === "context") {
     renderDockContext();
   }
@@ -1996,38 +2372,6 @@ function dockToggle(tab = "terminal") {
 function contextSheet() { dockOpen("context"); }
 function terminalSheet() { dockOpen("terminal"); }
 
-async function runDockTerminalCmd() {
-  const tIn = $("dockTermIn");
-  const tLog = $("dockTermLog");
-  const tRun = $("dockTermRun");
-  if (!tIn || !tLog) return;
-  const cmd = tIn.value.trim();
-  if (!cmd) return;
-  termHistory.push(cmd);
-  termHistIdx = termHistory.length;
-  tIn.value = "";
-  tLog.textContent += `$ ${cmd}\n`;
-  tLog.scrollTop = tLog.scrollHeight;
-  if (tRun) tRun.disabled = true;
-
-  try {
-    let r;
-    if (onDesktop()) {
-      throw new Error("Commands on your own computer need your approval there: choose My computer under the chat box and ask in the chat (the desktop app asks you first).");
-    } else {
-      r = await op("terminal_run", { cmd });
-    }
-    const out = (r && typeof r.output === "string") ? r.output : (r && r.error ? r.error : (r && r.ok === false ? r.error : JSON.stringify(r)));
-    tLog.textContent += (out ? out.trimEnd() : "") + "\n\n";
-  } catch (err) {
-    tLog.textContent += "Error: " + (err.message || String(err)) + "\n\n";
-  } finally {
-    if (tRun) tRun.disabled = false;
-  }
-  tLog.scrollTop = tLog.scrollHeight;
-  tIn.focus();
-}
-
 function wireDock() {
   const dClose = $("dockClose");
   if (dClose) dClose.onclick = dockHide;
@@ -2035,35 +2379,6 @@ function wireDock() {
   if (tTab) tTab.onclick = () => dockSelect("terminal");
   const cTab = $("dockTabCtx");
   if (cTab) cTab.onclick = () => dockSelect("context");
-
-  const tClr = $("dockTermClr");
-  if (tClr) tClr.onclick = () => { if ($("dockTermLog")) $("dockTermLog").textContent = ""; };
-
-  const tRun = $("dockTermRun");
-  if (tRun) tRun.onclick = runDockTerminalCmd;
-
-  const tIn = $("dockTermIn");
-  if (tIn) {
-    tIn.onkeydown = e => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        runDockTerminalCmd();
-      } else if (e.key === "ArrowUp") {
-        if (termHistIdx > 0) {
-          termHistIdx--;
-          tIn.value = termHistory[termHistIdx] || "";
-        }
-      } else if (e.key === "ArrowDown") {
-        if (termHistIdx < termHistory.length - 1) {
-          termHistIdx++;
-          tIn.value = termHistory[termHistIdx] || "";
-        } else {
-          termHistIdx = termHistory.length;
-          tIn.value = "";
-        }
-      }
-    };
-  }
 
   const topTerm = $("topTerm");
   if (topTerm) topTerm.onclick = () => dockToggle("terminal");
@@ -2100,40 +2415,9 @@ async function showActivity() {
       b.appendChild(cardOf(row("Nothing running", "No background tasks or answers currently generating.")));
     }
 
-    // 2. Interactive Terminal
-    b.appendChild(head("Interactive Terminal"));
-    const termDiv = document.createElement("div");
-    termDiv.className = "term-box";
-    termDiv.innerHTML = `<div class="term-head"><span>Terminal session ${onDesktop() ? "· " + esc(curDev() ? devName(curDev()) : "Your computer") : "· Cloud session"}</span><button class="btn" id="termClr" style="padding:2px 8px;font-size:11px">Clear</button></div>`
-      + `<div class="term-log" id="termLog">ZO-AI Interactive Terminal\nType a command or shell prompt below.\n${onDesktop() ? "Connected to " + esc(curDev() ? devName(curDev()) : "your computer") + " via desktop link." : "Cloud session active."}\n</div>`
-      + `<div class="term-prompt-wrap"><span>$</span><input type="text" class="term-input" id="termIn" placeholder="Type a shell command (e.g. ls, df -h, uname)..." autocomplete="off"><button class="btn primary" id="termRun" style="padding:4px 12px;font-size:12px">Run</button></div>`;
-    b.appendChild(termDiv);
-
-    const tLog = termDiv.querySelector("#termLog");
-    const tIn = termDiv.querySelector("#termIn");
-    const tRun = termDiv.querySelector("#termRun");
-    termDiv.querySelector("#termClr").onclick = () => { tLog.textContent = ""; };
-    const runCmd = async () => {
-      const cmd = tIn.value.trim(); if (!cmd) return;
-      tIn.value = "";
-      tLog.textContent += `\n$ ${cmd}\n`;
-      tLog.scrollTop = tLog.scrollHeight;
-      try {
-        let r;
-        if (onDesktop()) {
-          throw new Error("Commands on your own computer need your approval there: choose My computer under the chat box and ask in the chat (the desktop app asks you first).");
-        } else {
-          r = await op("terminal_run", { cmd });
-        }
-        const out = (r && typeof r.output === "string") ? r.output : (r && r.error ? r.error : (r && r.ok === false ? r.error : JSON.stringify(r)));
-        tLog.textContent += (out ? out.trimEnd() : "") + "\n";
-      } catch (err) {
-        tLog.textContent += "Error: " + (err.message || String(err)) + "\n";
-      }
-      tLog.scrollTop = tLog.scrollHeight;
-    };
-    tRun.onclick = runCmd;
-    tIn.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); runCmd(); } };
+    // 2. Terminal
+    b.appendChild(head("Terminal"));
+    b.appendChild(cardOf(row("A real terminal", onDesktop() ? "A shell on your own computer. Your computer asks you before it opens." : (tIsAdmin() ? "A shell on the cloud server, with tabs. It keeps running if you leave and come back." : "A terminal on the cloud server is only for the owner's account. Choose My computer under the chat box to get one on your own computer."), btn("Open terminal", "primary", () => dockOpen("terminal")))));
 
     // 3. Connected devices & clients
     b.appendChild(head("Connected devices"));

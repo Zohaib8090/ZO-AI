@@ -94,6 +94,15 @@ The link does not use the person's request allowance (the poll would eat it), ha
 * Hardening (`hardening.rs`): at the very start of `main`, before any thread, the server reads `FIREBASE_SERVICE_ACCOUNT`, `ZO_SERVER_SECRET` and `CLAUDE_CODE_OAUTH_TOKEN`, overwrites their values in the process's environment block with zeros (Linux keeps showing the start-up strings in `/proc/<pid>/environ` after `unsetenv`), and removes them. The values then live only in memory (`firestore.rs`, `zo_core::ai::keys::set_server_secret`, `claude_code::set_global_token`). The test starts the test binary as a child with those variables and checks, from inside it, its own environment, a child's environment and `/proc/<ppid>/environ`.
 * There is deliberately **no operator switch** that gives other people Claude Code on the server.
 
+## Terminals through the link (`term` job)
+
+Added with docs/TERMINAL-AND-CLAUDE-LOGIN.md. The web page opens a terminal on the person's own computer with `POST /api/term/open` `{"target":"desktop"}`. The server makes a job of
+type `term` (fields: `rows`, `cols`; nothing else is passed on) and the desktop validates it like every job. **The desktop asks its owner on its own screen, every time, before anything
+opens** (`Host::ask_local`, with a text that says that the terminal can run any command as the person); the web cannot answer, and no setting changes that. Output is posted as `out`
+events (`b`: base64, at most 64 KB each, at most every 120 ms); typed input, resizes and close come back as `term` items in the answer to the event post (`{"t":"in","data"}`,
+`{"t":"resize","rows","cols"}`, `{"t":"close"}`; anything else is ignored). The server rebuilds every event from checked fields and drops the rest. A terminal ends when the page closes it, the
+link switch is turned off or nobody is signed in, the shell exits, or about 20 posts in a row fail. At most 3 per person and 3 per computer; 8 hours at most.
+
 ## What was and was not tested
 
 Tested (`cargo test -p zo-server -p zo-core`, fake verifier, in-memory Firestore, a fake `claude` script): presence, job lifecycle (send, ordered relay, done, Stop and the 20 s grace, expiry, one job per device, lost device), tenant isolation, scope rules, the offline error, approvals routing, the op whitelist, size/rate/cap limits, account deletion and revocation, the Claude token (admin only, restricted refused, ciphertext only, not in export/sync/provider output, spawn environment and flags, error scrubbing), the environment hardening in a real child process.

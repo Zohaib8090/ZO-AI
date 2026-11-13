@@ -43,6 +43,26 @@ fn row(title: &str, sub: &str, control: Option<&impl IsA<gtk::Widget>>) -> gtk::
     r
 }
 
+/// The small text under a row's title (so it can be changed later).
+fn find_sub(r: &gtk::Box) -> gtk::Label {
+    let mut w = r.first_child();
+    while let Some(c) = w {
+        if let Some(col) = c.downcast_ref::<gtk::Box>() {
+            let mut x = col.first_child();
+            while let Some(l) = x {
+                if let Some(label) = l.downcast_ref::<gtk::Label>() {
+                    if label.has_css_class("pc-meta") {
+                        return label.clone();
+                    }
+                }
+                x = l.next_sibling();
+            }
+        }
+        w = c.next_sibling();
+    }
+    lbl("", "pc-meta")
+}
+
 fn no_control() -> Option<&'static gtk::Button> {
     None
 }
@@ -140,12 +160,16 @@ pub fn show(ui: &Rc<Ui>) {
     let ui2 = ui.clone();
     change.connect_clicked(move |_| chat::models_sheet(&ui2));
     card.append(&row("Provider and model", &current, Some(&change)));
-    let claude_state = if claude_code::binary().is_some() {
-        "Installed. Choose \"Claude Code\" as the provider to use your own Claude sign-in (claude auth login). ZO-AI never sees it."
-    } else {
-        "Not installed. Install it with: npm install -g @anthropic-ai/claude-code, then sign in with: claude auth login"
-    };
-    card.append(&row("Claude Code", claude_state, no_control()));
+    // Claude Code: the state of the login on this computer, with Log in (a sheet with the sign-in link) and Log out
+    {
+        let cc_row = row("Claude Code", "Checking…", no_control());
+        let state = find_sub(&cc_row);
+        let ui2 = ui.clone();
+        let (bar, refresh) = crate::claude_ui::buttons(ui, &state, move || show(&ui2));
+        cc_row.append(&bar);
+        refresh();
+        card.append(&cc_row);
+    }
     let keys_note = if zo_core::ai::keys::available() {
         "API keys are kept in the system keyring, never in a plain file."
     } else {

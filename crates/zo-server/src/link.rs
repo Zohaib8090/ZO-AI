@@ -87,7 +87,16 @@ impl Default for Config {
 enum Kind {
     Send,
     Op,
+    /// A terminal on the person's own computer (see term.rs): output comes back as events, input and resizing go to the computer in
+    /// the answers to its event posts.
+    Term,
 }
+
+/// Terminals one person may have open on their computers, and the longest one lives (a terminal is not a one-hour chat job).
+pub const MAX_TERMS_PER_TENANT: usize = 3;
+pub const TERM_MAX: Duration = Duration::from_secs(8 * 3600);
+/// Typed input waiting for the computer to fetch it, per terminal.
+pub const TERM_CONTROL_BYTES: usize = 256 * 1024;
 
 /// One thing waiting for a desktop's next poll: a job, or a control message (stop, an approval answer) about a job.
 struct QItem {
@@ -120,6 +129,9 @@ struct Job {
     events: VecDeque<Value>,
     pending: usize,
     total: usize,
+    /// Terminals: what the page typed or asked (`{"t":"in","data":..}`, `{"t":"resize",..}`, `{"t":"close"}`), for the computer's next post.
+    control: VecDeque<Value>,
+    control_bytes: usize,
     done: bool,
     cancel: bool,
     cancel_at: Option<Instant>,
@@ -190,6 +202,21 @@ fn new_id() -> String {
 
 fn short(v: &Value, k: &str, max: usize) -> String {
     strip_name(v.get(k).and_then(Value::as_str).unwrap_or("")).chars().take(max).collect()
+}
+
+/// The events of a terminal on a computer that are passed to the page, each rebuilt from its checked fields.
+pub fn clean_term_event(e: &Value) -> Option<Value> {
+    match e.get("event").and_then(Value::as_str)? {
+        "out" => {
+            let b = e.get("b").and_then(Value::as_str)?;
+            // standard base64 only, at most 64 KB of terminal output per event
+            (b.len() <= 90_000 && b.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/' | b'='))).then(|| json!({"event": "out", "b": b}))
+        }
+        ev @ ("opened" | "waiting" | "denied") => Some(json!({"event": ev})),
+        "exit" => Some(json!({"event": "exit", "code": e.get("code").and_then(Value::as_i64).unwrap_or(-1).clamp(-1, 255)})),
+        "error" => Some(json!({"event": "error", "error": "desktop_error", "message": strip_name(&e.get("error").or_else(|| e.get("message")).and_then(Value::as_str).unwrap_or("The terminal on your computer stopped.").chars().take(300).collect::<String>())})),
+        _ => None,
+    }
 }
 
 /// What a desktop says about itself, reduced to the fields that are known, with their types and sizes checked.
@@ -344,7 +371,8 @@ impl Link {
         j.delivered = true;
         j.last_activity = now;
         let size: usize = events.iter().map(|e| e.to_string().len()).sum();
-        if j.total + size > JOB_BYTES || j.pending + size > PENDING_BYTES {
+        // a terminal is a stream with no end: only what waits to be read is limited, not the total
+        if (j.kind != Kind::Term && j.total + size > JOB_BYTES) || j.pending + size > PENDING_BYTES {
             j.fail = Some(("too_much_output", "The job sent more than the server relays, so it was stopped.".into()));
             j.cancel = true;
             j.done = true;
@@ -361,6 +389,15 @@ impl Link {
                     }
                     j.pending += e.to_string().len();
                     j.events.push_back(e.clone());
+                }
+            }
+            Kind::Term => {
+                // only known events with checked fields travel on: whatever else the computer sent is dropped
+                for e in events {
+                    if let Some(c) = clean_term_event(e) {
+                        j.pending += c.to_string().len();
+                        j.events.push_back(c);
+                    }
                 }
             }
             Kind::Op => {
@@ -414,7 +451,7 @@ impl Link {
         p["id"] = json!(id);
         p["type"] = json!("send");
         d.queue.push_back(QItem { job: Some(id.clone()), payload: p, at: now });
-        inner.jobs.insert(id.clone(), Job { tenant: tenant.into(), device: dev, kind: Kind::Send, created: now, delivered: false, last_activity: now, events: VecDeque::new(), pending: 0, total: 0, done: false, cancel: false, cancel_at: None, fail: None, result: None });
+        inner.jobs.insert(id.clone(), Job { tenant: tenant.into(), device: dev, kind: Kind::Send, created: now, delivered: false, last_activity: now, events: VecDeque::new(), pending: 0, total: 0, control: VecDeque::new(), control_bytes: 0, done: false, cancel: false, cancel_at: None, fail: None, result: None });
         inner.streams.insert(stream, id.clone());
         self.pollers.notify_all();
         Ok((id, name))
@@ -447,7 +484,7 @@ impl Link {
                     j.fail = Some(("desktop_lost", "The connection to your computer was lost. The task may still be running there: check Running now on your computer.".into()));
                     j.cancel = true;
                     j.done = true;
-                } else if now.saturating_duration_since(j.created) >= self.cfg.job_max {
+                } else if now.saturating_duration_since(j.created) >= if j.kind == Kind::Term { TERM_MAX.max(self.cfg.job_max) } else { self.cfg.job_max } {
                     j.fail = Some(("job_timeout", "The request ran for an hour and was stopped.".into()));
                     j.cancel = true;
                     j.done = true;
@@ -563,6 +600,64 @@ impl Link {
         }
     }
 
+    /// Opens a terminal on one of the person's computers (the computer asks its owner first). Returns the job and the computer's name.
+    pub fn submit_term(&self, tenant: &str, want: Option<&str>, payload: Value, stream: u64) -> Result<(String, String), SendErr> {
+        let mut g = self.lock();
+        let now = Instant::now();
+        let dev = self.pick(&g, tenant, want, now).ok_or(SendErr::Offline)?;
+        let inner = &mut *g;
+        if inner.jobs.values().filter(|j| j.tenant == tenant && j.kind == Kind::Term && !j.done && j.fail.is_none()).count() >= MAX_TERMS_PER_TENANT {
+            return Err(SendErr::Limit("You have too many terminals open on your computers. Close one first."));
+        }
+        if inner.jobs.len() >= MAX_JOBS_ALL {
+            return Err(SendErr::Limit("The server is relaying as many requests as it can right now. Try again in a moment."));
+        }
+        let id = new_id();
+        let d = inner.devs.get_mut(&(tenant.to_string(), dev.clone())).expect("picked");
+        if d.queue.len() >= MAX_QUEUED_PER_DEVICE {
+            return Err(SendErr::Limit("Too many requests are waiting for this computer."));
+        }
+        let name = d.name.clone();
+        let mut p = payload;
+        p["id"] = json!(id);
+        p["type"] = json!("term");
+        d.queue.push_back(QItem { job: Some(id.clone()), payload: p, at: now });
+        inner.jobs.insert(id.clone(), Job { tenant: tenant.into(), device: dev, kind: Kind::Term, created: now, delivered: false, last_activity: now, events: VecDeque::new(), pending: 0, total: 0, control: VecDeque::new(), control_bytes: 0, done: false, cancel: false, cancel_at: None, fail: None, result: None });
+        inner.streams.insert(stream, id.clone());
+        self.pollers.notify_all();
+        Ok((id, name))
+    }
+
+    /// Is this job one of this person's terminals?
+    pub fn is_term(&self, tenant: &str, job: &str) -> bool {
+        self.lock().jobs.get(job).is_some_and(|j| j.tenant == tenant && j.kind == Kind::Term && !j.done)
+    }
+
+    /// What the page typed or asked, for a terminal on a computer. `item` is built by the caller from checked fields.
+    pub fn term_control(&self, tenant: &str, job: &str, item: Value) -> Result<(), &'static str> {
+        let mut g = self.lock();
+        let Some(j) = g.jobs.get_mut(job).filter(|j| j.tenant == tenant && j.kind == Kind::Term && !j.done) else { return Err("not_found") };
+        let size = item.to_string().len();
+        if j.control_bytes + size > TERM_CONTROL_BYTES {
+            return Err("too_much_input");
+        }
+        j.control_bytes += size;
+        j.control.push_back(item);
+        Ok(())
+    }
+
+    /// The computer collects what the page typed (the answer to its event post).
+    pub fn take_control(&self, tenant: &str, dev: &str, job: &str) -> Vec<Value> {
+        let mut g = self.lock();
+        match g.jobs.get_mut(job).filter(|j| j.tenant == tenant && j.device == dev && j.kind == Kind::Term) {
+            Some(j) => {
+                j.control_bytes = 0;
+                j.control.drain(..).collect()
+            }
+            None => Vec::new(),
+        }
+    }
+
     /// A whitelisted settings question for a desktop. Returns the job.
     pub fn submit_op(&self, tenant: &str, want: Option<&str>, inner_op: Value) -> Result<String, SendErr> {
         let mut g = self.lock();
@@ -581,7 +676,7 @@ impl Link {
             return Err(SendErr::Limit("Too many requests are waiting for this computer."));
         }
         d.queue.push_back(QItem { job: Some(id.clone()), payload: json!({"id": id, "type": "op", "inner": inner_op}), at: now });
-        inner.jobs.insert(id.clone(), Job { tenant: tenant.into(), device: dev, kind: Kind::Op, created: now, delivered: false, last_activity: now, events: VecDeque::new(), pending: 0, total: 0, done: false, cancel: false, cancel_at: None, fail: None, result: None });
+        inner.jobs.insert(id.clone(), Job { tenant: tenant.into(), device: dev, kind: Kind::Op, created: now, delivered: false, last_activity: now, events: VecDeque::new(), pending: 0, total: 0, control: VecDeque::new(), control_bytes: 0, done: false, cancel: false, cancel_at: None, fail: None, result: None });
         self.pollers.notify_all();
         Ok(id)
     }
@@ -717,7 +812,10 @@ pub fn events_http(app: &App, who: &Who, id: &str, v: &Value) -> Result<Value, F
     };
     let done = v.get("done").and_then(Value::as_bool).unwrap_or(false);
     match app.link.events(&who.tenant, id, job, events, done) {
-        Ok(cancel) => Ok(json!({"ok": true, "cancel": cancel})),
+        Ok(cancel) => {
+            let term = app.link.take_control(&who.tenant, id, job);
+            Ok(if term.is_empty() { json!({"ok": true, "cancel": cancel}) } else { json!({"ok": true, "cancel": cancel, "term": term}) })
+        }
         Err(f) if f.status == 404 => Err(Fail { status: 404, error: "unknown_job".into(), retry: None }),
         Err(f) => Err(f),
     }

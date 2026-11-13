@@ -58,7 +58,7 @@ pub fn export(t: &Tenant) -> Value {
 /// Whether the person has a Claude sign-in on the server (never the token itself).
 pub fn claude_status(who: &Who, me: &Tenant) -> Value {
     let (source, set_at) = tenant::scope(me, || (zo_core::ai::claude_code::token_source(), zo_core::ai::claude_code::token_set_at()));
-    json!({"ok": true, "present": source != "none", "source": source, "set_at": set_at, "admin": who.admin})
+    json!({"ok": true, "present": source != "none", "source": source, "set_at": set_at, "admin": who.admin, "allowed": who.admin || zo_core::ai::claude_code::users_all(), "users": if zo_core::ai::claude_code::users_all() { "all" } else { "admins" }})
 }
 
 /// /api/sync/claude_token (a desktop's credential): the owner's desktop sends the long-lived token of `claude setup-token`, or
@@ -66,7 +66,7 @@ pub fn claude_status(who: &Who, me: &Tenant) -> Value {
 /// `{"token": "..."}` (or `{"action": "set", "token": "..."}`), `{"delete": true}` (or `{"action": "delete"}`), `{"action": "status"}`.
 pub fn claude_token(v: &Value, who: &Who, me: &Tenant) -> (u16, Value) {
     let err = |status: u16, e: &str| (status, json!({"ok": false, "error": e}));
-    if !who.admin {
+    if !who.admin && !zo_core::ai::claude_code::users_all() {
         return err(403, "Only the owner's account can keep a Claude sign-in on the server. Everybody else signs in to Claude Code on their own computer and uses it from the web through My computer.");
     }
     let action = match (text(v, "action"), v.get("delete").and_then(Value::as_bool), v.get("token").is_some()) {
