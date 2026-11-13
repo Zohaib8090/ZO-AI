@@ -14,6 +14,7 @@ what the desktop app and the web app have; the list of everything, one row per f
   done once for the new package: add an Android app `org.zohara.agent` in project `zo-ai-144`, add the SHA-1/SHA-256 of the debug and release keys to it, download a new
   `google-services.json` into `apps/android-native/app/` and create/keep the Google sign-in Web client id. The old Firebase app for `org.zohara.zoai` is only needed while the
   legacy wrapper is still installed. Uninstall the old app when done.
+* Releases and Google Play: `docs/RELEASING.md` (a version tag builds the signed APK and AAB on GitHub; version code formula; secrets) and `docs/PLAY-STORE.md` (every step to publish; the store listing, data safety, permissions and content-rating answers are in `apps/android-native/play/`). The release build has R8 and resource shrinking on, no backup, no cleartext traffic, `targetSdk 36`, an adaptive and a themed (monochrome) icon.
 * Links: the app opens `zohara-agent://chat/<id>`, `zohara-agent://new` and `zohara-agent://device`; the older `zohara-chat://` and `zoai://` links are still accepted.
 * Verification so far is JVM only (JUnit, MockWebServer, Robolectric, Compose UI tests, Roborazzi screenshots in both themes); nothing was run on a device,
   with real Firebase or FCM, or with a real microphone. The README lists what is not verified.
@@ -82,7 +83,7 @@ Versions: Capacitor 7.6 (Java sources are compiled at the running JDK's level wh
    ./gradlew bundleRelease                   # app/build/outputs/bundle/release/app-release.aab (signed if step 2 is set)
    ```
    Icons and splash come from `crates/zohara-agent/data/zohara-agent.svg`; re-generate with `npm run assets` after a logo change.
-4. **Play Console (short).** Create the app, upload the `.aab` to Internal testing first, add testers. The store listing needs the privacy policy URL `<site>/privacy`, the Data safety form (account e-mail, chat content sent to the server, optional microphone audio for dictation handled by the phone's recognizer), content rating, and target audience. Also fill "App access" with a test account.
+4. **Play Console (short; the native app's full guide is `docs/PLAY-STORE.md`).** Create the app, upload the `.aab` to Internal testing first, add testers. The store listing needs the privacy policy URL `<site>/privacy`, the Data safety form (account e-mail, chat content sent to the server, optional microphone audio for dictation handled by the phone's recognizer), content rating, and target audience. Also fill "App access" with a test account.
 5. **Zohara Link** is a different app (Kotlin, own package and signing key). This app does not talk to it.
 
 ## Without google-services.json

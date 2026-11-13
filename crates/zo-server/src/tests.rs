@@ -605,7 +605,7 @@ fn the_web_page_the_policy_pages_and_the_headers() {
     assert_eq!(page.header("Referrer-Policy"), Some("no-referrer"));
     assert_eq!(page.header("Permissions-Policy"), Some("microphone=(self), camera=()"));
     assert!(page.into_string().unwrap().contains("<title>"));
-    for (p, word) in [("/privacy", "Privacy"), ("/terms", "Terms")] {
+    for (p, word) in [("/privacy", "Privacy"), ("/terms", "Terms"), ("/delete-account", "delete your account")] {
         let res = get(p);
         assert!(res.header("Content-Type").unwrap().starts_with("text/html"));
         assert_eq!(res.header("Content-Security-Policy"), Some(pages::PLAIN_CSP));

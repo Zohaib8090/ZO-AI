@@ -22,12 +22,12 @@ Needs JDK 17 and the Android SDK (`sdk.dir` in `local.properties`, git-ignored).
 
 Release signing is read from `~/.gradle/gradle.properties` or the environment, never from the repository:
 
-    ZO_STORE_FILE=/home/you/zo-ai-release.keystore
+    ZO_STORE_FILE=/home/you/zohara-agent-release.jks
     ZO_STORE_PASSWORD=...
-    ZO_KEY_ALIAS=zoai
+    ZO_KEY_ALIAS=zohara-agent
     ZO_KEY_PASSWORD=...            # optional, defaults to the store password
 
-`ZO_VERSION_CODE` (environment) sets `versionCode` and the patch number of `versionName` (`0.1.<code>`); Play needs a higher code for every upload.
+`ZO_VERSION_CODE` and `ZO_VERSION_NAME` (environment) set `versionCode` and `versionName` (default 1 and `0.1.0-dev`). The release workflow computes both from the tag (`packaging/release/version.py`, formula in `docs/RELEASING.md`); Play needs a higher code for every upload.
 Release builds use R8 with the rules in `app/proguard-rules.pro` (kotlinx.serialization serializers, Firebase, Credential Manager, PdfBox, OkHttp).
 `debuggable` is only true in debug. The debug build also allows plain `http://` to `localhost`, `127.0.0.1` and `10.0.2.2` (a development server,
 `src/debug/res/xml/network_security_config_debug.xml`); the release build allows no cleartext at all.
@@ -72,7 +72,7 @@ build", Google sign-in explains itself and push stays off. To turn it on:
 2. Add the SHA-1 and SHA-256 of every key the app is signed with:
 
        keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android | grep -E "SHA1|SHA256"
-       keytool -list -v -keystore ~/zo-ai-release.keystore -alias zoai | grep -E "SHA1|SHA256"
+       keytool -list -v -keystore ~/zohara-agent-release.jks -alias zohara-agent | grep -E "SHA1|SHA256"
 
    With Play App Signing also add the SHA-1/SHA-256 of the Play app-signing key (Play Console > App integrity).
 3. Download `google-services.json` into `apps/android-native/app/`. The google-services plugin is then applied automatically.
@@ -84,9 +84,9 @@ build", Google sign-in explains itself and push stays off. To turn it on:
 
 Release keystore (once, never commit, back it up):
 
-    keytool -genkeypair -v -keystore ~/zo-ai-release.keystore -alias zoai -keyalg RSA -keysize 4096 -validity 10000
+    keytool -genkeypair -v -keystore ~/zohara-agent-release.jks -alias zohara-agent -keyalg RSA -keysize 4096 -validity 10000
 
-Play Console, short: create the app, upload the signed `.aab` (`./gradlew bundleRelease`) or APK to Internal testing, add testers. The listing needs the
+Release builds on GitHub and Play Console: `docs/RELEASING.md` and `docs/PLAY-STORE.md` (store text, graphics and form answers are in `play/`). Short version: create the app, upload the signed `.aab` (`./gradlew bundleRelease`) or APK to Internal testing, add testers. The listing needs the
 privacy policy URL `<server>/privacy`, the Data safety form (account e-mail, chat content sent to the server, optional microphone audio for dictation handled by
 the phone's recognizer), the content rating and a test account under "App access".
 

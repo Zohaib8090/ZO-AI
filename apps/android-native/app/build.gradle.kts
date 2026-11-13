@@ -22,8 +22,9 @@ android {
     applicationId = "org.zohara.agent"
     minSdk = 26
     targetSdk = 36
+    // the release workflow sets both from the tag (packaging/release/version.py): ZO_VERSION_CODE=10099, ZO_VERSION_NAME=0.1.0. Without them a local build is 1 / 0.1.0-dev.
     versionCode = (System.getenv("ZO_VERSION_CODE") ?: "1").toInt()
-    versionName = "0.1.${System.getenv("ZO_VERSION_CODE") ?: "1"}"
+    versionName = System.getenv("ZO_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "0.1.0-dev"
     buildConfigField("String", "DEFAULT_SERVER_URL", "\"https://zohara-agent.duckdns.org\"")
     buildConfigField("boolean", "FIREBASE_CONFIGURED", hasGoogleServices.toString())
     // the Web client id of the Firebase project (Google sign-in): the owner puts it in local.properties as ZO_WEB_CLIENT_ID=... or the

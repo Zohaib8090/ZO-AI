@@ -11,10 +11,14 @@ The AI assistant built into Zohara OS. It chats with the model you choose and ca
 | `crates/zohara-agent` | The app: chat window, projects, quick popup, approval dialogs and the global shortcut |
 | `crates/zo-server` | The public cloud server: web app, Google or e-mail sign-in, per-user isolated data, sync with the desktop app |
 | `crates/zo-cli` | `zo`, the terminal client |
+| `apps/android-native` | The Android app (Kotlin + Jetpack Compose, package `org.zohara.agent`), also the source of the Google Play listing (`apps/android-native/play`) |
+| `apps/android-web` | The old Capacitor wrapper of the web page (legacy, kept as a reference) |
 
 ## Install
 
-On Zohara OS, install it from Settings, or:
+The web version is at https://zohara-agent.duckdns.org (sign in with Google or e-mail; it can be installed as an app). Android: the APK or AAB of a
+[GitHub Release](https://github.com/Zohaib8090/zohara-agent/releases) (Google Play is being prepared: [docs/PLAY-STORE.md](docs/PLAY-STORE.md)).
+Arch Linux packages and Linux tarballs are on the same release page. On Zohara OS, install it from Settings, or:
 
 ```bash
 sudo pacman -S zohara-agent
@@ -77,7 +81,7 @@ Each person has their own isolated data and **brings their own API key**; there 
 addresses (`ZO_ADMIN_EMAILS`) is **restricted**: web search, page fetch and memory only, with no access to any computer, shell, files or MCP servers
 (computer-control tools run only in a person's own desktop app, which syncs their chats). Devices sign in through the browser or with e-mail and password and get their own revocable credential (Account > signed-in devices, which also has Export and Delete). Operator settings: `ZO_ADMIN_EMAILS`, `ZO_PUBLIC_URL`, `ZO_BLOCKED_EMAILS`, `ZO_MAX_USERS`, `ZO_MAX_RUNS`, `ZO_TENANT_ROOT`.
 Design, threat model, limits and cost: [docs/PUBLIC.md](docs/PUBLIC.md); setup: [docs/DEPLOY.md](docs/DEPLOY.md), [docs/SERVER.md](docs/SERVER.md).
-Texts for the operator to review: [docs/PRIVACY.md](docs/PRIVACY.md), [docs/TERMS.md](docs/TERMS.md) (templates, not legal advice).
+Texts for the operator to review: [docs/PRIVACY.md](docs/PRIVACY.md), [docs/TERMS.md](docs/TERMS.md), [docs/DELETE-ACCOUNT.md](docs/DELETE-ACCOUNT.md) (templates, not legal advice); the server serves them at `/privacy`, `/terms` and `/delete-account`.
 
 ## Develop
 
@@ -87,9 +91,14 @@ cargo build --release
 cargo run -p zo-core --example mock-model   # a fake model server, to try the chat without an API key
 ```
 
-`packaging/PKGBUILD` builds the Arch package, and CI (`.github/workflows`) builds it on every push to `main`. `docs/design/zohara-agent-design.html` is the design reference.
+`packaging/PKGBUILD` builds the Arch package, and CI (`.github/workflows`) builds it on every push to `main` (the alpha channel). Pushing a version tag
+(`v1.2.3`, `v1.2.3-beta.1`) runs `release.yml`, which builds the package, the Linux tarball and the Android APK and AAB and creates a GitHub Release: see
+[docs/RELEASING.md](docs/RELEASING.md). The Android app builds with `cd apps/android-native && ./gradlew assembleDebug` (see its README).
+`docs/design/zohara-agent-design.html` is the design reference.
 
 ## Documentation
+
+[docs/README.md](docs/README.md) is the index of every document, one line each. The main ones:
 
 * [docs/ZOHARA-AGENT.md](docs/ZOHARA-AGENT.md): how the app, the model layer, context and compaction, profiles and storage work.
 * [docs/CLI.md](docs/CLI.md): the `zo` terminal client.
@@ -97,6 +106,8 @@ cargo run -p zo-core --example mock-model   # a fake model server, to try the ch
 * [docs/LOGIN.md](docs/LOGIN.md): signing in (desktop, terminal, web), the device flow and its security.
 * [docs/MCP.md](docs/MCP.md): MCP servers, sign-in and the redirect address.
 * [docs/PUBLIC.md](docs/PUBLIC.md), [docs/SERVER.md](docs/SERVER.md), [docs/SYNC.md](docs/SYNC.md), [docs/DEPLOY.md](docs/DEPLOY.md): the public server, sync and deployment.
+* [docs/ANDROID.md](docs/ANDROID.md), [docs/PLAY-STORE.md](docs/PLAY-STORE.md), [docs/RELEASING.md](docs/RELEASING.md): the Android app, Google Play, and GitHub Releases.
+* [docs/INTERACTION.md](docs/INTERACTION.md), [docs/LINK.md](docs/LINK.md): question cards, notifications and the desktop link.
 
 ## License
 
