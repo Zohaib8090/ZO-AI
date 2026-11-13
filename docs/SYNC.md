@@ -18,7 +18,7 @@ turns on sync with the web. Nobody copies or pastes a token (see `LOGIN.md` for 
 3. Behind the scenes the server issues this device a **device credential** (`zd_...`, only its hash is stored on the server). It is kept in the
    system keyring (key id `sync-token`), never in a file, never shown, and can be revoked on the web Account page under **signed-in devices** (a lost computer).
    The account's e-mail, the on/off switch and a server address chosen by hand are in `~/.config/zohara-agent/sync.json`.
-4. Server address: the default is `https://zo-ai-server.onrender.com`; the environment variable `ZO_SERVER_URL` or the `url` in `sync.json` overrides it. Only
+4. Server address: the default is `https://zohara-agent.duckdns.org`; the environment variable `ZO_SERVER_URL` or the `url` in `sync.json` overrides it. Only
    `https://` addresses are accepted (plain `http://` only for 127.0.0.1 / localhost), because the credential is sent with every call.
 
 ## How it works

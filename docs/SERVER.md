@@ -34,7 +34,7 @@ The same brain as the desktop app, on a server that is always on, behind a Fireb
 Sign-in through Firebase (Google, or e-mail and password; project `zo-ai-144`; the web config in the page is public by design) and the `/device` approval screen for the desktop app and `zo`. Chat with streaming answers,
 step approvals and Stop, chat list, delete; Settings page with provider, model, API key, permission mode, personality and the
 memory (add, pin, forget). **Firebase must know the server's address**: Authentication > Settings > Authorized domains > add the
-Render address (for example `zo-ai-server.onrender.com`), or the Google pop-up refuses.
+Render address (for example `zohara-agent.duckdns.org`), or the Google pop-up refuses.
 
 ## The API
 

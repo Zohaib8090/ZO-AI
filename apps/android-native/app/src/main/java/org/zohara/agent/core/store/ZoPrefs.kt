@@ -19,7 +19,7 @@ data class RunOn(val device: String?) {
 
 /**
  * The phone's own settings, in DataStore preferences (core.store). Nothing here is secret: no keys, no tokens.
- * Defaults: theme follows the system, server https://zo-ai-server.onrender.com, both notification channels on, details in notifications off.
+ * Defaults: theme follows the system, server https://zohara-agent.duckdns.org, both notification channels on, details in notifications off.
  */
 class ZoPrefs(private val store: DataStore<Preferences>, private val defaultServer: String) {
   private object K {

@@ -629,7 +629,7 @@ mod tests {
 
     #[test]
     fn public_base_addresses_are_checked() {
-        assert_eq!(parse_public_base("https://zo-ai-server.onrender.com"), Ok("https://zo-ai-server.onrender.com".into()));
+        assert_eq!(parse_public_base("https://zohara-agent.duckdns.org"), Ok("https://zohara-agent.duckdns.org".into()));
         assert_eq!(parse_public_base(" https://Zo-AI.example.com/ "), Ok("https://zo-ai.example.com".into()));
         assert_eq!(parse_public_base("https://zo.example.com:8443"), Ok("https://zo.example.com:8443".into()));
         for bad in [

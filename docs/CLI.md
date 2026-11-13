@@ -14,7 +14,7 @@ memory, model choice and permission mode with the app and the phone. Small on pu
 * **Signing in**: run **`zo login`**. It shows a short code (for example `ABCD-EFGH`) and a web address; open it in any browser, sign in with Google
   or e-mail and password, **type the code**, check the device name and approve. `zo` waits, then keeps the sign-in: nobody copies or pastes a token.
   `zo logout` signs out: the server revokes this device and `zo` forgets it. `zo`
-  uses the same sign-in as the desktop app on the same computer and the same default server (`https://zo-ai-server.onrender.com`, overridable with
+  uses the same sign-in as the desktop app on the same computer and the same default server (`https://zohara-agent.duckdns.org`, overridable with
   `ZO_SERVER_URL` or `--remote`). Flow, endpoints and security: `LOGIN.md`.
 * **The credential** behind it is a device credential with scope `full` that the server issued to this device (only a hash is stored there; revoke it
   in the web app under Account > signed-in devices, for example when a computer is lost; it only reaches your own data). It sits in the system key store,

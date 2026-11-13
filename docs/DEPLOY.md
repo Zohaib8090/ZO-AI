@@ -33,16 +33,16 @@ Render's `PORT` is read by the server. `zo-mcp` must sit next to `zo-server` (Cl
 3. Press Apply. The first build compiles Rust inside Docker: expect roughly 5 to 15 minutes (Render's build command limit is 120 minutes,
    so that is no problem; I could not find a documented memory or image size limit for builds).
 4. **First-deploy order (the address is only known after the service exists):**
-   1. Create the service (the steps above). `render.yaml` already sets `ZO_PUBLIC_URL` to the placeholder `https://zo-ai-server.onrender.com`. It wins over Render's own `RENDER_EXTERNAL_URL`
+   1. Create the service (the steps above). `render.yaml` already sets `ZO_PUBLIC_URL` to the placeholder `https://zohara-agent.duckdns.org`. It wins over Render's own `RENDER_EXTERNAL_URL`
       (the fallback when `ZO_PUBLIC_URL` is empty), so if your service gets a different address the approval links are wrong until you fix it in step 4.
       The server refuses to start (exit code 2) in login mode if neither value is a valid `https://host` address.
-   2. Read the address Render gives the service (for example `https://zo-ai-server.onrender.com`).
+   2. Read the address Render gives the service (for example `https://zohara-agent.duckdns.org`).
    3. Firebase console > Authentication > Settings > **Authorized domains** > Add domain: that address without `https://`
-      (for example `zo-ai-server.onrender.com`). Without this the Google pop-up refuses to open.
-   4. Render > the service > Environment > set `ZO_PUBLIC_URL` to the full address with `https://` and no path (`https://zo-ai-server.onrender.com`). It is not a secret.
+      (for example `zohara-agent.duckdns.org`). Without this the Google pop-up refuses to open.
+   4. Render > the service > Environment > set `ZO_PUBLIC_URL` to the full address with `https://` and no path (`https://zohara-agent.duckdns.org`). It is not a secret.
       It is the base of the approval link people open to sign in the desktop app and `zo` (`<address>/device`). On a custom domain use that domain, and add it to Authorized domains too.
    5. Redeploy (saving the variable does it; or Manual Deploy).
-   The desktop app and `zo` find the server by themselves: their default address is `https://zo-ai-server.onrender.com`. If your service has another
+   The desktop app and `zo` find the server by themselves: their default address is `https://zohara-agent.duckdns.org`. If your service has another
    address, people set `ZO_SERVER_URL` (or the address in the desktop Settings) to it, or change `DEFAULT_SERVER_URL` in `crates/zo-core/src/login.rs` before building.
 5. Check the sign-in: open `https://<address>/device` (it loads the web app); then on a computer run `zo login` or use the desktop app's Settings > Web sync > Sign in,
    and see that the web address it shows begins with the address you set in step 4.4.
@@ -136,3 +136,13 @@ want to be certain, use an API key.
 * `run` stores the Claude session id and next time starts `claude --resume <id>`. The sessions live in `/home/zo/.claude`, which is
   lost at every redeploy or sleep, so after that the resume fails. It should retry without `--resume` (sending the chat history as context).
 * `main.rs` only listens on `0.0.0.0` with the login on; `ZO_BIND` (planned in the sync branch) would allow testing the image from outside the container.
+
+## The public address (2026-11-14)
+
+The service answers at **https://zohara-agent.duckdns.org** (a free DuckDNS name pointed at Render: Render > the service > Settings > Custom Domains, and the A record DuckDNS holds for the name). All built-in defaults (desktop app, `zo`, web page, Android app, sitemap) now use it.
+
+- The old Render address `zo-ai-server.onrender.com` keeps working as long as it stays in Render and in Firebase > Authentication > Settings > Authorized domains. Installs made before this date saved or defaulted to it; remove it only after those have updated.
+- Set `ZO_PUBLIC_URL` to `https://zohara-agent.duckdns.org` in Render.
+- Add `zohara-agent.duckdns.org` to Firebase Authorized domains (host only).
+- The DuckDNS token is a secret: keep it in Render's environment, never in the repository.
+- A DuckDNS name is not owned by us: log in to DuckDNS now and then so the name is not released, and move to a real domain before promoting the service widely (point the new domain at Render, add it to Firebase, then change the defaults again).

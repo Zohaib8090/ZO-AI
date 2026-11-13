@@ -3,7 +3,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 // The app is a thin shell around the website: server.url points at the live
 // site, so the app updates whenever the site does. Override with ZO_WEB_URL
 // (for example a staging server) when syncing.
-const url = process.env.ZO_WEB_URL || 'https://zo-ai-server.onrender.com';
+const url = process.env.ZO_WEB_URL || 'https://zohara-agent.duckdns.org';
 const host = new URL(url).host;
 
 const config: CapacitorConfig = {

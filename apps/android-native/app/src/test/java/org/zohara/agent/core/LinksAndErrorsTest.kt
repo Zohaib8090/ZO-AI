@@ -21,11 +21,11 @@ class LinksAndErrorsTest {
 
   @Test fun anHttpsLinkOpensInACustomTab() {
     val activity = org.robolectric.Robolectric.buildActivity(androidx.activity.ComponentActivity::class.java).setup().get()
-    openInBrowser(activity, "https://zo-ai-server.onrender.com/privacy")
+    openInBrowser(activity, "https://zohara-agent.duckdns.org/privacy")
     val i = shadowOf(activity).nextStartedActivity
     assertNotNull(i)
     assertEquals(android.content.Intent.ACTION_VIEW, i.action)
-    assertEquals("https://zo-ai-server.onrender.com/privacy", i.data.toString())
+    assertEquals("https://zohara-agent.duckdns.org/privacy", i.data.toString())
     assertEquals("it is a Custom Tab, not a plain browser intent", true, i.extras!!.containsKey(androidx.browser.customtabs.CustomTabsIntent.EXTRA_SESSION))
   }
 

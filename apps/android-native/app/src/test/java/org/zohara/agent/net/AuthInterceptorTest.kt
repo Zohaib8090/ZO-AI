@@ -70,7 +70,7 @@ class AuthInterceptorTest {
   }
 
   @Test fun serverUrlRules() {
-    assertEquals(true, ZoHttp.isAcceptableServer("https://zo-ai-server.onrender.com", false))
+    assertEquals(true, ZoHttp.isAcceptableServer("https://zohara-agent.duckdns.org", false))
     assertEquals(false, ZoHttp.isAcceptableServer("http://example.com", true))
     assertEquals(false, ZoHttp.isAcceptableServer("http://localhost:8080", false))
     assertEquals(true, ZoHttp.isAcceptableServer("http://localhost:8080", true))

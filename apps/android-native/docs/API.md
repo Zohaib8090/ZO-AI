@@ -19,7 +19,7 @@ export/delete, push registration, device approval. Those are marked **code**.
 
 ## 1. Conventions
 
-* **Base URL**: `https://zo-ai-server.onrender.com` (default; a self-hosted server may differ, `https` only). Paths below are relative to it.
+* **Base URL**: `https://zohara-agent.duckdns.org` (default; a self-hosted server may differ, `https` only). Paths below are relative to it.
 * **Transport**: HTTPS, `POST`, `Content-Type: application/json`, UTF-8. Only `GET /healthz`, `GET /privacy`, `GET /terms` are `GET`.
 * **Auth**: every call except the three `GET` pages carries `Authorization: Bearer <Firebase ID token>` (`FirebaseUser.getIdToken(false)`; the SDK
   refreshes it before it expires, about hourly; on a 401 refresh once with `getIdToken(true)` and retry that one call, then sign out). The server

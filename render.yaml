@@ -19,7 +19,7 @@ services:
       - key: FIREBASE_SERVICE_ACCOUNT   # the whole service account key file (JSON), pasted as one value
         sync: false
       - key: ZO_PUBLIC_URL              # NOT a secret. The owner MUST change this to the real Render address after the first deploy
-        value: https://zo-ai-server.onrender.com   # (e.g. https://my-name.onrender.com, no path). It is the base of the sign-in approval link <address>/device.
+        value: https://zohara-agent.duckdns.org   # (e.g. https://my-name.onrender.com, no path). It is the base of the sign-in approval link <address>/device.
                                         # RENDER_EXTERNAL_URL (set by Render) is the fallback if this is empty; the server stops at start if neither is valid.
       - key: ZO_ADMIN_EMAILS            # YOUR Google address(es), comma separated: admins get every tool, everybody else is restricted
         sync: false

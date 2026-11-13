@@ -24,7 +24,7 @@ android {
     targetSdk = 36
     versionCode = (System.getenv("ZO_VERSION_CODE") ?: "1").toInt()
     versionName = "0.1.${System.getenv("ZO_VERSION_CODE") ?: "1"}"
-    buildConfigField("String", "DEFAULT_SERVER_URL", "\"https://zo-ai-server.onrender.com\"")
+    buildConfigField("String", "DEFAULT_SERVER_URL", "\"https://zohara-agent.duckdns.org\"")
     buildConfigField("boolean", "FIREBASE_CONFIGURED", hasGoogleServices.toString())
     // the Web client id of the Firebase project (Google sign-in): the owner puts it in local.properties as ZO_WEB_CLIENT_ID=... or the
     // environment; empty means Google sign-in says it is not set up.

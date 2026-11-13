@@ -92,7 +92,7 @@ the phone's recognizer), the content rating and a test account under "App access
 
 ## Server
 
-Default `https://zo-ai-server.onrender.com`; Settings > Account > Advanced overrides it (https only; plain http only for localhost and the emulator host in
+Default `https://zohara-agent.duckdns.org`; Settings > Account > Advanced overrides it (https only; plain http only for localhost and the emulator host in
 debug builds). No secrets, keys, tokens or message text are written to the log.
 
 ## Not verified (no device was used)

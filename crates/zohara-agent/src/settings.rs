@@ -1868,7 +1868,7 @@ mod account_tests {
 
     #[test]
     fn browser_only_opens_safe_addresses() {
-        assert!(browser_url_ok("https://zo-ai-server.onrender.com/device"));
+        assert!(browser_url_ok("https://zohara-agent.duckdns.org/device"));
         assert!(browser_url_ok("http://127.0.0.1:8080/device"));
         assert!(!browser_url_ok("http://evil.example/device"));
         assert!(!browser_url_ok("file:///etc/passwd"));

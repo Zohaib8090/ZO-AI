@@ -12,7 +12,7 @@ const SW: &str = include_str!("../web/sw.js");
 const MANIFEST: &str = include_str!("../web/manifest.webmanifest");
 /// The address the page files in the repository name (robots.txt, sitemap, canonical, og:url); the server swaps it for its own
 /// address (ZO_PUBLIC_URL / RENDER_EXTERNAL_URL) when that is set, so a move to another host does not leave the old one in every page.
-pub const DEFAULT_BASE: &str = "https://zo-ai-server.onrender.com";
+pub const DEFAULT_BASE: &str = "https://zohara-agent.duckdns.org";
 
 fn base_of(app: &App) -> &str {
     app.public_url.as_deref().map(|u| u.trim_end_matches('/')).filter(|u| !u.is_empty()).unwrap_or(DEFAULT_BASE)
@@ -111,7 +111,7 @@ mod tests {
     fn robots_points_to_sitemap_and_sitemap_has_key_urls() {
         let (r, s) = (robots(DEFAULT_BASE), sitemap(DEFAULT_BASE));
         assert!(r.contains("Sitemap:") && r.contains("sitemap.xml"));
-        assert!(s.contains("<loc>https://zo-ai-server.onrender.com/</loc>"));
+        assert!(s.contains("<loc>https://zohara-agent.duckdns.org/</loc>"));
         assert!(s.contains("/privacy") && s.contains("/terms"));
         // another host: nothing names the old one
         let (r, s) = (robots("https://ai.example.org"), sitemap("https://ai.example.org"));

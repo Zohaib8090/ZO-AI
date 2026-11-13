@@ -18,7 +18,7 @@
 //!   ZO_OPERATOR_COUNTRY        whose law the terms name (required)
 //!   ZO_SERVER_SECRET           a long random text: each person's API keys are encrypted with a key derived from it
 //!   ZO_TENANT_ROOT             where the people's folders live on the disk (default /tmp/zo-tenants; emptied at start, Firestore is the record)
-//!   ZO_PUBLIC_URL              the server's public address, https://host with no path (for example https://zo-ai-server.onrender.com):
+//!   ZO_PUBLIC_URL              the server's public address, https://host with no path (for example https://zohara-agent.duckdns.org):
 //!                              devices show people `<it>/device` to sign in. Else RENDER_EXTERNAL_URL is used. One of the two is
 //!                              required (the server does not start with the login on and neither set, or one that is not https://host)
 //!   RENDER_EXTERNAL_URL        the server's own address (Render sets it): it calls itself every few minutes so it is not put to sleep
@@ -929,7 +929,7 @@ fn main() {
                 }
             },
             None => {
-                eprintln!("zo-server: set ZO_PUBLIC_URL (for example https://zo-ai-server.onrender.com): devices send people to <it>/device to sign in.");
+                eprintln!("zo-server: set ZO_PUBLIC_URL (for example https://zohara-agent.duckdns.org): devices send people to <it>/device to sign in.");
                 std::process::exit(2);
             }
         }

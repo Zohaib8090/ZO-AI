@@ -20,7 +20,7 @@ use std::time::Duration;
 /// The Firebase web API key of project zo-ai-144. It is public (it is in the web app too); it only names the project.
 pub const FIREBASE_API_KEY: &str = "AIzaSyBU_nnDL5JKXwWHNTRMKYK2RCvNGXv4PaQ";
 pub const FIREBASE_BASE: &str = "https://identitytoolkit.googleapis.com/v1";
-pub const DEFAULT_SERVER_URL: &str = "https://zo-ai-server.onrender.com";
+pub const DEFAULT_SERVER_URL: &str = "https://zohara-agent.duckdns.org";
 /// The key store id of the credential (the same id sync.rs always used for its token).
 const CREDENTIAL_ID: &str = "sync-token";
 

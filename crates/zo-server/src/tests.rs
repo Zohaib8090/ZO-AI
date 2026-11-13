@@ -2253,6 +2253,8 @@ fn claude_code_runs_for_the_owner_on_the_server_with_the_owners_token_in_a_minim
 
 /// Tests that set ZOHARA_AGENT_CLAUDE_BIN / FIREBASE_SERVICE_ACCOUNT take this (the environment is shared by all tests).
 static CLAUDE_ENV: Mutex<()> = Mutex::new(());
+/// The operator's terminal switch (ZO_TERMINAL) is a process-wide variable: tests that open cloud terminals and the one that flips it take turns.
+static TERM_ENV: Mutex<()> = Mutex::new(());
 
 /// target/debug, found from the test binary itself.
 fn debug_dir() -> std::path::PathBuf {
@@ -2679,6 +2681,7 @@ fn until_output(rx: &std::sync::mpsc::Receiver<Option<Value>>, needle: &str, sec
 
 #[test]
 fn the_cloud_terminal_is_for_the_owner_only_runs_a_real_shell_with_no_server_secrets_and_belongs_to_one_person() {
+    let _g = TERM_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let (uo, ur, uo2) = (uniq("tm-o"), uniq("tm-r"), uniq("tm-o2"));
     let r = rig(&[("tok-o", &uo, "owner@x.test"), ("tok-r", &ur, "r@x.test"), ("tok-o2", &uo2, "second@x.test")], "owner@x.test,second@x.test", 200, 6000);
     // the restricted person never gets a shell, whatever they send
@@ -2773,6 +2776,7 @@ fn the_cloud_terminal_is_for_the_owner_only_runs_a_real_shell_with_no_server_sec
 
 #[test]
 fn terminals_are_limited_per_person_and_refused_from_other_websites_desktops_and_when_switched_off() {
+    let _g = TERM_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let uo = uniq("tm-lim");
     let r = rig(&[("tok-o", &uo, "owner@x.test")], "owner@x.test", 200, 6000);
     // another website's page: the browser's Origin does not match the host it called
