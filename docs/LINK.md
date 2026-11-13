@@ -12,7 +12,8 @@ Needs a signed-in app. **With the switch off, or signed out, there is no network
   25 s and answers `{jobs:[...]}`; the app polls again at once. Failures: 2, 4, 8, ... 60 s; 429 honours Retry-After; 401 waits a minute and says so on the page.
 * Job shapes the app understands (everything else is refused and reported as an error event, so the server can free the job):
   * `{id, type:"send", text, chat?, edit?, attachments?, mode?, age_ms?|created_ms?}`
-  * `{id, type:"op", op | inner:{op, id?, provider?, model?, effort?, set?}}`, only `status providers profiles profile_use models select mode`
+  * `{id, type:"op", op | inner:{op, id?, provider?, model?, effort?, set?}}`, only `status providers profiles profile_use models select mode`, and the read-only
+    **control operations** `sys_info fs_list fs_read screenshot` (docs/FULL-CONTROL.md phase 1; the only argument is `path`, up to 1024 characters, no control characters)
   * `{id, type:"stop", job_id?}`
   * `{id, type:"approval_reply", job_id, approval, yes}`
   * `{id, type:"answer_reply", job_id, question_id, answers|cancelled}`: the answer to a question card (`question` event) of a running web session; only for a card that job showed (docs/INTERACTION.md section 6)
@@ -117,3 +118,18 @@ Covered: offline error within 1 s, online with caps, B cannot see or reach A's c
 did not), the web's approve answered 409, Stop in the middle of an answer, the computer disappears and the next send fails within 1 s, an expired job is never run
 later; and the owner's token sent with `zo_core::link::send_claude_token_at` (a guest is refused), run through a fake `claude` with the minimal environment.
 Not covered: the GTK app itself, a real `claude`, real Render/Firebase.
+
+
+## Control operations, phase 1 (read-only look at the computer), 2026-11-13
+
+Code: `crates/zo-core/src/control.rs` (the operations), `link.rs` (`run_control`, `control_reply`), `crates/zo-server/src/link.rs` (`OPS`, `clean_inner`), web: Settings > My computers > "Look at <computer>".
+
+| Op | Arguments | Asks on the computer | Answer |
+|---|---|---|---|
+| `sys_info` | none | no (CPU, memory, disks, uptime only) | `{ok, text, uptime_secs, os}` |
+| `fs_list` | `path` (empty or `~` = home) | yes, every time ("A web session wants to: list the files in ~/docs") | `{ok, path, parent, entries:[{name, kind: dir/file/link/link-dir/other, size, mtime}], truncated}`, at most 500 entries, folders first |
+| `fs_read` | `path` | yes, every time | `{ok, path, size, truncated, text}`, UTF-8 text only, first 256 KB |
+| `screenshot` | none | yes, every time | `{ok, mime: image/jpeg or image/png, bytes, data: base64}`; JPEG at most 1280 px wide when ImageMagick is installed, else the PNG if it fits one relay post (700 000 base64 characters), else an error. The file made on the way is deleted. |
+
+Rules the desktop enforces (the server only checks the shape): the path is resolved with symbolic links followed and must stay inside the home folder (so a link out of home is refused); keys, sign-ins and the app's own settings are refused and left out of listings (`guard_read` plus the secret names of the permission policy, so `~/.ssh`, `~/.gnupg`, `~/.config/zo-ai`, `.claude`, `.aws`, shell histories, and any path containing `token`, `password`, `secret` and the like); refused paths never show a dialog; the dialog names the RESOLVED path, never the web's text; only one control request at a time (a second gets "already waiting for your answer"); an answer that comes more than 90 s after the request arrived is not acted on (the server's wait is 100 s); every request, answered or refused, is written to the audit log (path and outcome, never file contents). The dialog shows even when the permission mode is Bypass or the person turned on "Answer approvals from the web too": these questions are always answered on the computer.
+No trusted-session grant yet, so a folder tree needs one answer per folder. Not in this phase: writing, deleting, moving, uploads/downloads of binary files, terminal, apps, power, live view, other roots than home.

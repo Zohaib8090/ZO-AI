@@ -1950,6 +1950,40 @@ fn settings_questions_for_the_computer_are_whitelisted_cleaned_and_answered() {
         assert!(link::clean_inner(&json!({"op": op})).is_ok(), "{op}");
     }
     assert_eq!(link::clean_inner(&json!({"op": "mode", "set": "Manual"})).unwrap(), json!({"op": "mode", "set": "manual"}));
+    // the read-only control operations (docs/FULL-CONTROL.md phase 1): a path and nothing else gets through, and a bad path is refused here
+    assert_eq!(link::clean_inner(&json!({"op": "fs_list", "path": "~/docs", "cmd": "rm -rf /", "tenant": "x", "set": "auto"})).unwrap(), json!({"op": "fs_list", "path": "~/docs"}));
+    assert_eq!(link::clean_inner(&json!({"op": "fs_read", "path": "a.txt"})).unwrap(), json!({"op": "fs_read", "path": "a.txt"}));
+    assert_eq!(link::clean_inner(&json!({"op": "screenshot", "path": "/etc/passwd"})).unwrap(), json!({"op": "screenshot"}));
+    assert_eq!(link::clean_inner(&json!({"op": "sys_info"})).unwrap(), json!({"op": "sys_info"}));
+    assert_eq!(link::clean_inner(&json!({"op": "models", "provider": "p", "path": "/etc"})).unwrap(), json!({"op": "models", "provider": "p"}));
+    for bad in [json!({"op": "fs_list", "path": ["a"]}), json!({"op": "fs_read", "path": "a\u{0}b"}), json!({"op": "fs_read", "path": "x".repeat(2000)}), json!({"op": "fs_write", "path": "a"}), json!({"op": "fs_rm", "path": "a"}), json!({"op": "term_open"}), json!({"op": "power", "set": "off"}), json!({"op": "app_launch"})] {
+        let a = call(&r, "tok", "/api/op", json!({"op": "desktop_op", "inner": bad}));
+        assert_eq!((a.status, a.body["error"].as_str()), (400, Some("not_allowed")), "{bad}: {:?}", a.body);
+    }
+    {
+        // a folder listing goes to the computer as {op, path}, and the computer's answer comes back to the page
+        let base = r.base.clone();
+        let ask = std::thread::spawn(move || ureq::post(&format!("{base}/api/op")).set("Authorization", "Bearer tok").send_string(&json!({"op": "desktop_op", "inner": {"op": "fs_list", "path": "docs", "x": 1}}).to_string()).unwrap().into_string().unwrap());
+        let job = dpoll_for(&r, &cred, "Ops", caps(false), "op");
+        assert_eq!(job["inner"], json!({"op": "fs_list", "path": "docs"}));
+        post_events(&r, &cred, job["id"].as_str().unwrap(), json!([{"event": "op_result", "reply": {"ok": true, "path": "~/docs", "entries": []}}]), true);
+        assert_eq!(serde_json::from_str::<Value>(&ask.join().unwrap()).unwrap()["result"]["path"], "~/docs");
+        // a computer whose person said no: the page gets that as the error
+        let base = r.base.clone();
+        let ask = std::thread::spawn(move || {
+            let res = match ureq::post(&format!("{base}/api/op")).set("Authorization", "Bearer tok").send_string(&json!({"op": "desktop_op", "inner": {"op": "screenshot"}}).to_string()) {
+                Ok(r) => r,
+                Err(ureq::Error::Status(_, r)) => r,
+                Err(e) => panic!("{e}"),
+            };
+            (res.status(), serde_json::from_str::<Value>(&res.into_string().unwrap()).unwrap())
+        });
+        let job = dpoll_for(&r, &cred, "Ops", caps(false), "op");
+        post_events(&r, &cred, job["id"].as_str().unwrap(), json!([{"event": "error", "error": "You said no on your computer."}]), true);
+        let (status, body) = ask.join().unwrap();
+        assert_eq!((status, body["error"].as_str()), (503, Some("desktop_error")), "{body:?}");
+        assert!(body["message"].as_str().unwrap().contains("said no"), "{body:?}");
+    }
     // a desktop that never answers: the page is told, and the question is taken back so that it is not run later
     let t0 = Instant::now();
     let a = call(&r, "tok", "/api/op", json!({"op": "desktop_op", "inner": {"op": "providers"}}));

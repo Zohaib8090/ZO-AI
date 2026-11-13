@@ -232,11 +232,19 @@ pub fn parse_job(v: &Value, now_ms: u64) -> Result<Job, (Option<String>, String)
                 (None, Some(Value::Object(o))) => (o.get("op").and_then(Value::as_str).unwrap_or(""), Some(o)),
                 _ => ("", None),
             };
-            if !OPS.contains(&name) {
+            let control = crate::control::OPS.contains(&name);
+            if !OPS.contains(&name) && !control {
                 return bad("This operation is not allowed from the web.");
             }
             let mut args = Vec::new();
-            if let Some(o) = obj {
+            if let (Some(o), true) = (obj, control) {
+                // the control operations take one argument, a path, checked again when it is resolved
+                match o.get("path") {
+                    None | Some(Value::Null) => {}
+                    Some(Value::String(s)) if s.chars().count() <= crate::control::MAX_PATH_CHARS && !s.chars().any(char::is_control) => args.push(("path".to_string(), Value::String(s.clone()))),
+                    _ => return bad("The path is not valid."),
+                }
+            } else if let Some(o) = obj {
                 for key in ["id", "provider", "model", "effort", "set"] {
                     match o.get(key) {
                         None | Some(Value::Null) => {}
@@ -799,6 +807,87 @@ fn run_term(sh: &Shared, base: &str, cred: &str, id: &str, ctl: &Ctl, rows: u16,
     pty.close();
 }
 
+/// How long a control request may wait for the person's answer on this computer. The server gives up on the page's question a
+/// little later than this, so an answer that comes after it is never acted on ("never run late").
+pub const CONTROL_WAIT: Duration = Duration::from_secs(90);
+
+/// One control request (`sys_info`, `fs_list`, `fs_read`, `screenshot`; docs/FULL-CONTROL.md phase 1) at a time: a second one while a
+/// dialog is open is refused, so the person never faces a stack of dialogs.
+static CONTROL_BUSY: AtomicBool = AtomicBool::new(false);
+
+struct BusyGuard;
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        CONTROL_BUSY.store(false, Ordering::SeqCst);
+    }
+}
+
+/// What the dialog on this computer says about a control request (built from the RESOLVED path, never from the web's text).
+fn control_summary(op: &str, target: &str) -> String {
+    match op {
+        "fs_list" => format!("list the files in {target}"),
+        "fs_read" => format!("read the file {target}"),
+        "screenshot" => "take a picture of your screen and send it to the web page".to_string(),
+        _ => op.to_string(),
+    }
+}
+
+/// Runs a control request: the path is resolved and checked first (a refused path never shows a dialog), then the person is asked
+/// ON THIS COMPUTER when the operation shows personal content, then the thing is done. Every request, answered or refused, is
+/// written to the audit log.
+fn run_control(sh: &Shared, base: &str, cred: &str, id: &str, op: &str, args: &[(String, Value)], received: Instant) {
+    let reply = control_reply(&*sh.host, op, args, received);
+    let mut events = vec![match &reply {
+        Ok(v) => json!({"event": "op_result", "reply": v}),
+        Err(e) => json!({"event": "error", "error": e}),
+    }];
+    let _ = flush(base, cred, id, &mut events, true);
+}
+
+fn control_reply(host: &dyn Host, op: &str, args: &[(String, Value)], received: Instant) -> Result<Value, String> {
+    use crate::control as c;
+    let path_arg = args.iter().find(|(k, _)| k == "path").and_then(|(_, v)| v.as_str()).unwrap_or("");
+    let audit = |outcome: &str, shown: &str| crate::audit::log(&format!("web:{op}"), &json!({"path": shown}), outcome);
+    if CONTROL_BUSY.swap(true, Ordering::SeqCst) {
+        return Err("This computer is already waiting for your answer to another web request.".into());
+    }
+    let _busy = BusyGuard;
+    // 1. what it would touch, checked before anyone is asked
+    let target = match op {
+        "fs_list" | "fs_read" => match c::resolve(path_arg) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                audit("refused", &c::clean(path_arg, 200));
+                return Err(e);
+            }
+        },
+        _ => None,
+    };
+    let shown = target.as_deref().map(c::shown).unwrap_or_default();
+    // 2. the person, on this computer
+    if c::needs_approval(op) {
+        let yes = host.ask_local(&control_summary(op, &shown));
+        if !yes {
+            audit("denied on the computer", &shown);
+            return Err("You said no on your computer.".into());
+        }
+        if received.elapsed() >= CONTROL_WAIT {
+            audit("too late", &shown);
+            return Err("The answer came too late: the web page had given up. Ask again.".into());
+        }
+    }
+    // 3. the thing itself (read-only)
+    let r = match (op, target) {
+        ("sys_info", _) => c::sys_info(),
+        ("fs_list", Some(p)) => c::list_dir(&p),
+        ("fs_read", Some(p)) => c::read_text(&p),
+        ("screenshot", _) => c::screenshot(),
+        _ => Err("This operation is not allowed from the web.".into()),
+    };
+    audit(if r.is_ok() { "done" } else { "failed" }, &shown);
+    r
+}
+
 fn start_job(sh: &Arc<Shared>, base: &str, cred: &str, job: Job) {
     let (base, cred) = (base.to_string(), cred.to_string());
     match job.kind {
@@ -831,8 +920,13 @@ fn start_job(sh: &Arc<Shared>, base: &str, cred: &str, job: Job) {
         }
         Kind::Op { op, args } => {
             let sh2 = sh.clone();
+            let received = Instant::now();
             std::thread::spawn(move || {
-                run_op(&sh2, &base, &cred, &job.id, &op, &args);
+                if crate::control::OPS.contains(&op.as_str()) {
+                    run_control(&sh2, &base, &cred, &job.id, &op, &args, received);
+                } else {
+                    run_op(&sh2, &base, &cred, &job.id, &op, &args);
+                }
                 sh2.finished.fetch_add(1, Ordering::SeqCst);
             });
         }
@@ -1541,6 +1635,120 @@ mod tests {
         wait_until("done", || r.done.lock().unwrap().contains(&"j-v".to_string()));
         assert_eq!(*got.lock().unwrap(), Some(true));
         assert!(h.asked.lock().unwrap().is_empty(), "nothing was asked locally");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A real home folder with a few files for the control operations (HOME is process-global: callers hold the shared test lock).
+    fn with_home<T>(dir: &std::path::Path, f: impl FnOnce(&std::path::Path) -> T) -> T {
+        let home = dir.join("home");
+        std::fs::create_dir_all(home.join("docs")).unwrap();
+        std::fs::write(home.join("docs/a.txt"), "hello").unwrap();
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        std::fs::write(home.join(".ssh/id_ed25519"), "PRIVATE").unwrap();
+        let old = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home);
+        let r = f(&std::fs::canonicalize(&home).unwrap());
+        match old {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
+        r
+    }
+
+    #[test]
+    fn control_jobs_are_checked_like_every_other_job() {
+        let ok = |v: Value| parse_job(&v, 0).unwrap();
+        let args = |v: Value| match ok(v).kind {
+            Kind::Op { op, args } => (op, args),
+            k => panic!("{k:?}"),
+        };
+        assert_eq!(args(json!({"id": "c1", "type": "op", "inner": {"op": "fs_list", "path": "~/docs"}})), ("fs_list".into(), vec![("path".into(), json!("~/docs"))]));
+        // nothing but the path gets through to a control operation, and the settings operations never get a path
+        assert_eq!(args(json!({"id": "c2", "type": "op", "inner": {"op": "fs_read", "path": "x", "tenant": "t", "mode": "bypass", "provider": "p"}})).1, vec![("path".to_string(), json!("x"))]);
+        assert_eq!(args(json!({"id": "c3", "type": "op", "inner": {"op": "models", "provider": "p", "path": "/etc"}})).1, vec![("provider".to_string(), json!("p"))]);
+        assert_eq!(args(json!({"id": "c4", "type": "op", "inner": {"op": "screenshot"}})), ("screenshot".into(), vec![]));
+        let why = |v: Value| parse_job(&v, 0).unwrap_err().1;
+        assert!(why(json!({"id": "c5", "type": "op", "inner": {"op": "fs_list", "path": ["a"]}})).contains("path"));
+        assert!(why(json!({"id": "c6", "type": "op", "inner": {"op": "fs_list", "path": "a\nb"}})).contains("path"));
+        assert!(why(json!({"id": "c7", "type": "op", "inner": {"op": "fs_list", "path": "x".repeat(2000)}})).contains("path"));
+        // the ones phase 1 does not have are still refused
+        for op in ["fs_write", "fs_rm", "fs_mkdir", "fs_move", "term_open", "term_input", "app_launch", "power", "terminal_run"] {
+            assert!(why(json!({"id": "c8", "type": "op", "inner": {"op": op, "path": "x"}})).contains("not allowed"), "{op}");
+        }
+    }
+
+    #[test]
+    fn a_folder_is_listed_only_after_a_yes_on_this_computer() {
+        let (_g, dir) = sandbox("ctl_list");
+        with_home(&dir, |home| {
+            // yes
+            let h = host(true);
+            let r = control_reply(&*h, "fs_list", &[("path".into(), json!("~/docs"))], Instant::now()).unwrap();
+            assert_eq!(r["entries"][0]["name"], "a.txt");
+            assert_eq!(h.asked.lock().unwrap().len(), 1);
+            assert!(h.asked.lock().unwrap()[0].contains("~/docs"), "the dialog names the resolved folder: {:?}", h.asked.lock().unwrap());
+            // no: nothing is read, and the answer says so
+            let h = host(false);
+            let e = control_reply(&*h, "fs_read", &[("path".into(), json!("docs/a.txt"))], Instant::now()).unwrap_err();
+            assert!(e.contains("no on your computer"), "{e}");
+            assert_eq!(h.asked.lock().unwrap().len(), 1);
+            // a place of secrets or outside home: refused before anyone is asked
+            let h = host(true);
+            for bad in ["~/.ssh", ".ssh/id_ed25519", "/etc/passwd", "..", "~/docs/../.ssh"] {
+                assert!(control_reply(&*h, "fs_read", &[("path".into(), json!(bad))], Instant::now()).is_err(), "{bad}");
+                assert!(control_reply(&*h, "fs_list", &[("path".into(), json!(bad))], Instant::now()).is_err(), "{bad}");
+            }
+            assert!(h.asked.lock().unwrap().is_empty(), "refused paths never show a dialog: {:?}", h.asked.lock().unwrap());
+            // the person's yes that comes after the web page gave up is not acted on
+            let h = host(true);
+            let e = control_reply(&*h, "fs_list", &[("path".into(), json!("~"))], Instant::now() - CONTROL_WAIT - Duration::from_secs(1)).unwrap_err();
+            assert!(e.contains("too late"), "{e}");
+            // reading a file gives its text
+            let h = host(true);
+            let r = control_reply(&*h, "fs_read", &[("path".into(), json!(home.join("docs/a.txt").to_string_lossy()))], Instant::now()).unwrap();
+            assert_eq!(r["text"], "hello");
+            // the audit log has every request, answered or not
+            let log = std::fs::read_to_string(crate::audit::data_dir().join("audit.jsonl")).unwrap_or_default();
+            for want in ["web:fs_list", "web:fs_read", "denied on the computer", "refused", "too late", "done"] {
+                assert!(log.contains(want), "audit log lacks {want}: {log}");
+            }
+            assert!(!log.contains("PRIVATE"), "file contents are never logged");
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn system_status_runs_without_asking_and_only_one_control_request_waits_at_a_time() {
+        let (_g, dir) = sandbox("ctl_sys");
+        let h = host(false);
+        let r = control_reply(&*h, "sys_info", &[], Instant::now()).unwrap();
+        assert_eq!(r["ok"], true);
+        assert!(r["text"].as_str().unwrap().contains("CPU"));
+        assert!(h.asked.lock().unwrap().is_empty(), "system status shows no personal content: no dialog");
+        // a second request while one is busy is refused
+        CONTROL_BUSY.store(true, Ordering::SeqCst);
+        let e = control_reply(&*h, "sys_info", &[], Instant::now()).unwrap_err();
+        CONTROL_BUSY.store(false, Ordering::SeqCst);
+        assert!(e.contains("already waiting"), "{e}");
+        assert!(!CONTROL_BUSY.load(Ordering::SeqCst));
+        // and the flag is free again after a request that failed
+        assert!(control_reply(&*h, "bogus", &[], Instant::now()).is_err());
+        assert!(!CONTROL_BUSY.load(Ordering::SeqCst));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_control_op_job_is_answered_through_the_link() {
+        let (_g, dir) = sandbox("ctl_job");
+        with_home(&dir, |_| {
+            let h = host(true);
+            let r = rig(vec![json!({"id": "f1", "type": "op", "inner": {"op": "fs_list", "path": "docs"}})], fake_service(|_, _, _| panic!("the service is not involved")), h.clone(), None);
+            wait_until("done", || r.done.lock().unwrap().contains(&"f1".to_string()));
+            let ev = r.events.lock().unwrap().clone();
+            assert_eq!(ev[0]["event"], "op_result", "{ev:?}");
+            assert_eq!(ev[0]["reply"]["entries"][0]["name"], "a.txt");
+            assert_eq!(h.asked.lock().unwrap().len(), 1);
+        });
         let _ = std::fs::remove_dir_all(&dir);
     }
 

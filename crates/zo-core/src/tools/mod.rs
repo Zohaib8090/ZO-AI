@@ -7,7 +7,7 @@ mod android;
 mod app;
 mod fs;
 pub mod ssh;
-mod system;
+pub(crate) mod system;
 mod terminals;
 pub(crate) mod web;
 

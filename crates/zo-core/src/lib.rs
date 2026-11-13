@@ -8,6 +8,7 @@ pub mod question;
 pub mod attach;
 pub mod audit;
 pub mod claude_login;
+pub mod control;
 pub mod exec;
 pub mod link;
 pub mod login;
