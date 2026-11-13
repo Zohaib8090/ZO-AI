@@ -5,13 +5,13 @@
 -dontnote kotlinx.serialization.**
 -keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
 -keepclasseswithmembers class kotlinx.serialization.json.** { kotlinx.serialization.KSerializer serializer(...); }
--keep,includedescriptorclasses class org.zohara.chat.**$$serializer { *; }
--keepclassmembers class org.zohara.chat.** { *** Companion; }
--keepclasseswithmembers class org.zohara.chat.** { kotlinx.serialization.KSerializer serializer(...); }
+-keep,includedescriptorclasses class org.zohara.agent.**$$serializer { *; }
+-keepclassmembers class org.zohara.agent.** { *** Companion; }
+-keepclasseswithmembers class org.zohara.agent.** { kotlinx.serialization.KSerializer serializer(...); }
 
 # Firebase (Auth, Messaging) and Google Play services ship their own consumer rules; keep the messaging service and receiver by name
--keep class org.zohara.chat.media.notify.ZoMessagingService { *; }
--keep class org.zohara.chat.media.notify.ApprovalReceiver { *; }
+-keep class org.zohara.agent.media.notify.ZoMessagingService { *; }
+-keep class org.zohara.agent.media.notify.ApprovalReceiver { *; }
 -keep class com.google.firebase.** { *; }
 -dontwarn com.google.firebase.**
 -keep class androidx.credentials.** { *; }

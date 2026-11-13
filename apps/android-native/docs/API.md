@@ -1,4 +1,4 @@
-# Zohara Chat server API for the native Android client
+# Zohara Agent server API for the native Android client
 
 Written 2026-11-13 for `apps/android-native`. Everything the app calls, with request and response JSON. Sources: `crates/zo-server/src/main.rs`
 (routes, limits, errors), `crates/zo-core/src/service.rs` (`handle()` = the ops, `send()` = the stream), `account.rs`, `loginapi.rs`, `push.rs`,
@@ -59,8 +59,8 @@ no token gives `401` (test mode: `{"ok":false,"error":"The test mode only answer
 | 410 | "This account was deleted." | error body | sign out |
 | 413 | body too big (1 MB op/reply, 14 MB send, 20 MB sync): "The request is too big." | error body | restore the draft |
 | 429 | per-person limits (60 requests/minute; 2 answers at once; model-calling ops count as an answer), too many big sends at once (retry 5), device/code lookups | `{"ok":false,"error":"You are sending requests too fast. Wait a moment.","retry_after":N}` plus header `Retry-After: N` | section 9 |
-| 502 | the service socket answered garbage ("Zohara Chat gave no answer.") | `{"ok":false,"error":...}` | show; retry read-only calls once |
-| 503 | server full ("Zohara Chat has as many people as it can take right now. Try again later."), busy (`Retry-After: 5`), storage trouble, service not running (`Zohara Chat's service is not running: ...`) | error body | show, retry later |
+| 502 | the service socket answered garbage ("Zohara Agent gave no answer.") | `{"ok":false,"error":...}` | show; retry read-only calls once |
+| 503 | server full ("Zohara Agent has as many people as it can take right now. Try again later."), busy (`Retry-After: 5`), storage trouble, service not running (`Zohara Agent's service is not running: ...`) | error body | show, retry later |
 
 ## 2. Endpoint index
 
@@ -166,7 +166,7 @@ Picture sent to a model that cannot see pictures (**live**): the stream carries 
 Computer offline (**live**, `target:"desktop"` with no computer linked):
 
 ```json
-{"event":"error","error":"desktop_offline","message":"Your computer is not reachable. Start Zohara Chat on your computer (it can run in the tray) and turn on Settings > Account and sync > Control this computer from the web."}
+{"event":"error","error":"desktop_offline","message":"Your computer is not reachable. Start Zohara Agent on your computer (it can run in the tray) and turn on Settings > Account and sync > Control this computer from the web."}
 {"event":"done"}
 ```
 

@@ -1,4 +1,4 @@
-# Media and link module (org.zohara.chat.media, org.zohara.chat.link)
+# Media and link module (org.zohara.agent.media, org.zohara.agent.link)
 
 Attachments, paste, camera, share-in, voice in, read aloud, notifications and push, and the Run on control with linked computers.
 Matrix rows: module `media` and `link`, plus the NOTIF-* rows and INTER-15, BG-05 of the notifications work.
@@ -49,11 +49,11 @@ phrase unless auto-send is on, typing or Back or pause or a new answer cancels, 
 * `PushRegistrar`: `push_config` then `push_subscribe {kind:"fcm"}` after sign-in, `push_list` at every start, account switch drops the old registration, a new token
   replaces the old one (`ZoMessagingService.onNewToken`), sign-out and the switch off call `push_unsubscribe`. Device label "Android: <model>".
 * `NotificationAskOnce`: the one-time explanation after sign-in (INTER-15); "Turn on" asks Android for `POST_NOTIFICATIONS` and switches the closed-app notices on.
-* The notification tap opens `zohara-chat://chat/<id>` (the old `zoai://` is still accepted) (DeepLinks).
+* The notification tap opens `zohara-agent://chat/<id>` (the older `zohara-chat://` and `zoai://` are still accepted) (DeepLinks).
 
 ### Firebase (owner)
 
-`google-services.json` is not in the repo. Download it from the Firebase console for package `org.zohara.chat`, add the SHA-1 and SHA-256 of the signing key, and put it in
+`google-services.json` is not in the repo. Download it from the Firebase console for package `org.zohara.agent`, add the SHA-1 and SHA-256 of the signing key, and put it in
 `apps/android-native/app/`. The build applies the google-services plugin only when the file exists; without it push and Google sign-in are off (`BuildConfig.FIREBASE_CONFIGURED`).
 
 ## Link (link/)

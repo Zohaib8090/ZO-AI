@@ -1,0 +1,209 @@
+package org.zohara.agent.nav
+
+import android.app.Activity
+import androidx.activity.compose.LocalActivity
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import kotlinx.coroutines.flow.MutableStateFlow
+import org.zohara.agent.AppContainer
+import org.zohara.agent.LocalAppContainer
+import org.zohara.agent.core.auth.AuthState
+import org.zohara.agent.core.auth.ui.ConsentScreen
+import org.zohara.agent.core.auth.ui.LoginScreen
+import org.zohara.agent.core.auth.ui.VerifyScreen
+import org.zohara.agent.core.design.SecondaryButton
+import org.zohara.agent.core.design.ToastHost
+import org.zohara.agent.core.design.ZoAgentTheme
+import org.zohara.agent.core.design.ZoLogo
+import org.zohara.agent.core.design.ZoTheme
+import org.zohara.agent.core.design.isDarkFor
+import org.zohara.agent.core.session.Gate
+import org.zohara.agent.core.session.NetBanner
+import org.zohara.agent.core.design.ThemeChoice
+import org.zohara.agent.core.design.LightZoColors
+import org.zohara.agent.core.design.DarkZoColors
+
+/** Root of the UI: theme, then sign-in, consent, or the app with its drawer and navigation graph. */
+@Composable
+fun ZoApp(container: AppContainer, pendingChat: MutableStateFlow<String?>) {
+  val theme by container.prefs.theme.collectAsState(initial = ThemeChoice.System)
+  val dark = isDarkFor(theme)
+  // media-link: the attachment strip, the "+" button, the microphone, Run on and read aloud in the chat's composer slots (once)
+  remember(container) { org.zohara.agent.media.ChatPlug.install(container); true }
+  CompositionLocalProvider(LocalAppContainer provides container) {
+    ZoAgentTheme(dark) {
+      SystemBars(dark)
+      Box(Modifier.fillMaxSize().background(ZoTheme.colors.bg)) {
+        val auth by container.auth.state.collectAsState()
+        when (val a = auth) {
+          AuthState.Loading -> Splash()
+          AuthState.SignedOut, AuthState.NotConfigured -> LoginScreen()
+          is AuthState.NeedsVerification -> VerifyScreen(a.user.email)
+          is AuthState.SignedIn -> {
+            val gate by container.session.gate.collectAsState()
+            when (val g = gate) {
+              Gate.Loading -> Splash()
+              is Gate.Consent -> ConsentScreen(g)
+              is Gate.Ready -> MainShell(container, a, pendingChat)
+            }
+          }
+        }
+        ToastHost(container.toast, Modifier.align(Alignment.BottomCenter))
+      }
+    }
+  }
+}
+
+/** PHN-07: the mark on the app background while the session loads. */
+@Composable
+fun Splash() {
+  Box(Modifier.fillMaxSize().background(ZoTheme.colors.bg), contentAlignment = Alignment.Center) { ZoLogo(size = 64.dp) }
+}
+
+/** THEME-11: status and navigation bars follow the theme (edge to edge). */
+@Composable
+private fun SystemBars(dark: Boolean) {
+  val activity = LocalActivity.current as? ComponentActivity ?: return
+  val bg = (if (dark) DarkZoColors.bg else LightZoColors.bg).toArgb()
+  SideEffect {
+    val style = if (dark) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT) else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.argb(0x40, 0, 0, 0))
+    activity.enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+    activity.window.decorView.setBackgroundColor(bg)
+  }
+}
+
+@Composable
+private fun MainShell(container: AppContainer, auth: AuthState.SignedIn, pendingChat: MutableStateFlow<String?>) {
+  val nav = rememberNavController()
+  val drawer = rememberZoDrawerState()
+  val navigator = remember(nav, drawer) { ZoNavigator(nav, drawer) }
+  val topBar = remember { TopBarController() }
+  val backEntry by nav.currentBackStackEntryAsState()
+  val route = backEntry?.destination?.route
+  val running by container.runningCount.collectAsState()
+  // VOICE-11: which chat is on screen
+  val chatArg = backEntry?.arguments?.getString(Routes.ARG_ID)
+  LaunchedEffect(route, chatArg) { org.zohara.agent.chat.ChatHooks.screen.value = route to chatArg }
+  val banner by container.session.banner.collectAsState()
+  val activity = LocalActivity.current
+
+  // NAV-20: a notification or link opens a chat
+  val pending by pendingChat.collectAsState()
+  LaunchedEffect(pending) {
+    when {
+      pending == DeepLinks.NEW_CHAT -> { navigator.home(); pendingChat.value = null }
+      pending == DeepLinks.APPROVE -> { navigator.settings(Routes.SETTINGS_APPROVE); pendingChat.value = null }
+      DeepLinks.validChatId(pending) != null -> { navigator.openChat(pending!!); pendingChat.value = null }
+    }
+  }
+  // ATT-22: something shared from another app opens a new message
+  org.zohara.agent.media.ShareNavigation { navigator.home() }
+  // INTER-15: asked once, with an explanation, whether to tell the person when an answer is ready
+  org.zohara.agent.media.notify.NotificationAskOnce()
+  // NAV-21: back at the first screen minimizes the app, it never ends a running answer
+  BackHandler(enabled = route == Routes.HOME && !drawer.isOpen) { activity?.moveTaskToBack(true) }
+
+  // VOICE-09: "Listening" and "Stopped" are spoken by the screen reader
+  val view = androidx.compose.ui.platform.LocalView.current
+  val announce = remember(view) { screenReaderAnnouncer(view) }
+  CompositionLocalProvider(LocalNav provides navigator, LocalTopBar provides topBar, org.zohara.agent.media.LocalAnnounce provides announce) {
+    ZoDrawerLayout(
+      state = drawer,
+      drawerContent = {
+        DrawerContent(
+          currentRoute = route,
+          restricted = container.session.restricted,
+          userLabel = auth.user.label,
+          userInitial = auth.user.initial,
+          runningCount = running,
+          onNavigate = { r -> if (r == Routes.HOME) navigator.home() else navigator.navigate(r) },
+          onSettings = { navigator.settings() },
+          onSignOut = { container.session.signOut() },
+          onClose = if (drawer.isOpen) ({ drawer.close() }) else null,
+          activeChatId = backEntry?.arguments?.getString(Routes.ARG_ID),
+          onOpenChat = { navigator.openChat(it) },
+        )
+      },
+    ) { permanent ->
+      Column(Modifier.fillMaxSize().background(ZoTheme.colors.bg)) {
+        ZoTopBar(routeTitle = Routes.titleFor(route), showMenuButton = !permanent, onMenu = { drawer.open() })
+        NetBannerRow(banner, onSignInAgain = { container.session.signOut() })
+        // the keyboard or the navigation bar, whichever is taller (the composer must not add the bar a second time above the keyboard)
+        Box(Modifier.weight(1f).fillMaxWidth().windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))) {
+          NavHost(
+            navController = nav,
+            startDestination = Routes.HOME,
+            enterTransition = { fadeIn(tween(120)) },
+            exitTransition = { fadeOut(tween(120)) },
+            popEnterTransition = { fadeIn(tween(120)) },
+            popExitTransition = { fadeOut(tween(120)) },
+          ) {
+            for (def in Routes.all) {
+              composable(
+                def.pattern,
+                arguments = buildList {
+                  if (def.pattern.contains("{${Routes.ARG_ID}}")) add(navArgument(Routes.ARG_ID) { type = NavType.StringType })
+                  if (def.pattern.contains("{${Routes.ARG_INDEX}}")) add(navArgument(Routes.ARG_INDEX) { type = NavType.IntType })
+                },
+              ) { entry -> ScreenRegistry.screens.getValue(def.pattern)(entry) }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/** NET-03: "Offline. Retrying." and "Signed out or not allowed." with "Sign in again". */
+@Composable
+fun NetBannerRow(banner: NetBanner?, onSignInAgain: () -> Unit, modifier: Modifier = Modifier) {
+  if (banner == null) return
+  val c = ZoTheme.colors
+  Row(modifier.fillMaxWidth().background(c.card2).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Text(
+      if (banner == NetBanner.Offline) "Offline. Retrying." else "Signed out or not allowed.",
+      style = ZoTheme.type.cardMeta, color = c.text2, modifier = Modifier.weight(1f),
+    )
+    if (banner == NetBanner.SignedOut) SecondaryButton("Sign in again", onSignInAgain)
+  }
+}
+
+/** VOICE-09: a function that has a screen reader speak a short sentence ("Listening", "Stopped") without moving the focus. */
+fun screenReaderAnnouncer(view: android.view.View): (String) -> Unit = { text -> @Suppress("DEPRECATION") view.announceForAccessibility(text) }

@@ -20,6 +20,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Zohara Chat"
+rootProject.name = "Zohara Agent"
 
 include(":app")

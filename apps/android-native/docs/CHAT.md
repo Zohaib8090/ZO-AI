@@ -1,4 +1,4 @@
-# Chat module (package `org.zohara.chat.chat`)
+# Chat module (package `org.zohara.agent.chat`)
 
 Home, chat thread, composer, tool groups, approval and question cards, context sheet. Written 2026-11-13. Parity rows: CHAT-*, COMP-*, PERM-*,
 INTER-*, CTX-*, NAV-17..19, NET-07, NET-15, SRV-*, BG-01..03, PHN-15 (see `docs/ANDROID-NATIVE-PARITY.md`).

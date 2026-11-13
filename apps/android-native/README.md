@@ -1,12 +1,12 @@
-# Zohara Chat for Android (native)
+# Zohara Agent for Android (native)
 
-Kotlin + Jetpack Compose, no WebView. Package `org.zohara.chat`, minSdk 26, targetSdk 36. It replaces the Capacitor wrapper `apps/android-web`
+Kotlin + Jetpack Compose, no WebView. Package `org.zohara.agent`, minSdk 26, targetSdk 36. It replaces the Capacitor wrapper `apps/android-web`
 (legacy, kept as a reference). What the app has to contain is the parity matrix `docs/ANDROID-NATIVE-PARITY.md` (the contract: every row is
 implemented AND verified by a named test before it is ticked; `python3 -I apps/android-native/docs/check-parity.py` checks the file). The server API
 is `apps/android-native/docs/API.md`; the per-module notes are `docs/CHAT.md`, `docs/PAGES.md`, `docs/MEDIA-LINK.md`.
 
-Renamed from "ZO-AI" (package `org.zohara.zoai`). The new package is a different app to Android: it installs next to the old one, nothing is migrated (Android
-cannot move app data between packages; chats are on the server), and the Firebase app and `google-services.json` must be made again for `org.zohara.chat`.
+Renamed from "ZO-AI" (package `org.zohara.zoai`), then from "Zohara Chat" (package `org.zohara.chat`, never registered in Firebase and never released). The new package is a different app to Android: it installs next to the old one, nothing is migrated (Android
+cannot move app data between packages; chats are on the server), and the Firebase app and `google-services.json` must be made again for `org.zohara.agent`.
 Internal names that never showed the old product name (DataStore `zo_prefs`, SharedPreferences `zo_*`, notification channels `answers` and `needs_you`) are unchanged.
 
 ## Build, test, run
@@ -32,14 +32,14 @@ Release builds use R8 with the rules in `app/proguard-rules.pro` (kotlinx.serial
 `debuggable` is only true in debug. The debug build also allows plain `http://` to `localhost`, `127.0.0.1` and `10.0.2.2` (a development server,
 `src/debug/res/xml/network_security_config_debug.xml`); the release build allows no cleartext at all.
 
-## Architecture (`app/src/main/java/org/zohara/chat`)
+## Architecture (`app/src/main/java/org/zohara/agent`)
 
 One activity (`MainActivity`), everything else is Compose. `AppContainer` is the whole dependency graph (no DI framework): HTTP client, `ZoApi`,
 DataStore preferences, caches, `Session`, `AuthRepository`. Screens get it with `LocalAppContainer.current` and navigate with `LocalNav.current`.
 
 | Package | What |
 |---|---|
-| `core.design` | colour tokens (dark and light, from `crates/zohara-chat/src/theme.rs`), type (Inter, Source Serif 4 in `res/font`), shapes, the logo, icons, components (`ZoSwitch`, `SettingsRow`, `ZoBottomSheet`, `ZoTextField`, ...) |
+| `core.design` | colour tokens (dark and light, from `crates/zohara-agent/src/theme.rs`), type (Inter, Source Serif 4 in `res/font`), shapes, the logo, icons, components (`ZoSwitch`, `SettingsRow`, `ZoBottomSheet`, `ZoTextField`, ...) |
 | `core.net` | OkHttp client with the Firebase ID token interceptor, `ZoApi` (one function per op), NDJSON `send` as a `Flow<SendEvent>`, error mapping |
 | `core.auth` | Firebase sign-in (Google through Credential Manager, e-mail and password), verification, reset, consent, the login screens |
 | `core.store`, `core.session` | DataStore preferences and a 30 s TTL cache; the start sequence (`whoami`, consent gate, account state, global 401/403/410 handling) |
@@ -51,8 +51,8 @@ DataStore preferences, caches, `Session`, `AuthRepository`. Screens get it with 
 | `media`, `link` | attachments, paste, camera, share-in, voice in, read aloud, notifications and push (FCM), Run on and My computers; plugged into the chat composer by `ChatPlug.install` |
 
 Navigation: `ZoApp` (theme, sign-in gate, consent gate) -> `MainShell` (drawer + `NavHost`). The back stack is saved by `rememberNavController`; each chat
-keeps its draft in saved state. Back closes a sheet, then the drawer, then goes up, then minimizes the app (it never ends a running answer). `zohara-chat://chat/<id>`
-and the `chat` extra of a notification open a chat, `zohara-chat://new` is the launcher shortcut "New chat", `zohara-chat://device` opens "Approve a sign-in" (the old `zoai://` scheme is still accepted).
+keeps its draft in saved state. Back closes a sheet, then the drawer, then goes up, then minimizes the app (it never ends a running answer). `zohara-agent://chat/<id>`
+and the `chat` extra of a notification open a chat, `zohara-agent://new` is the launcher shortcut "New chat", `zohara-agent://device` opens "Approve a sign-in" (the older `zohara-chat://` and `zoai://` schemes are still accepted).
 Edge to edge: the window follows the theme (status and navigation bars), the content is padded by the keyboard or the navigation bar, whichever is taller.
 
 ### Tests
@@ -68,7 +68,7 @@ Screenshots (Roborazzi, both themes) are in `app/src/test/screenshots`; the name
 `google-services.json` is NOT in the repository (git-ignored). Without it the app builds and runs, e-mail sign-in says "Sign-in is not configured in this
 build", Google sign-in explains itself and push stays off. To turn it on:
 
-1. Firebase console > project `zo-ai-144` > Project settings > Add app > Android, package `org.zohara.chat`.
+1. Firebase console > project `zo-ai-144` > Project settings > Add app > Android, package `org.zohara.agent`.
 2. Add the SHA-1 and SHA-256 of every key the app is signed with:
 
        keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android | grep -E "SHA1|SHA256"
