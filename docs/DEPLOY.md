@@ -16,7 +16,7 @@ Render's `PORT` is read by the server. `zo-mcp` must sit next to `zo-server` (Cl
    * Authentication > Sign-in method > **Google: on** and **Email/Password: on** (without it nobody can create an e-mail account).
    * Firestore Database: create it (production mode). Rules can stay `allow read, write: if false;`, the server uses the service account.
    * Project settings > Service accounts > Generate new private key. This downloads a JSON file. **Never commit it**; you paste it into Render below.
-2. Render dashboard > New > Blueprint > connect the GitHub repository `Zohaib8090/ZO-AI` > branch `main`. Render reads `render.yaml`
+2. Render dashboard > New > Blueprint > connect the GitHub repository `Zohaib8090/zohara-agent` > branch `main`. Render reads `render.yaml`
    and asks for the values that are not in the file (they are marked secret there with `sync: false`):
 
    | Field | What to put | Secret? |
