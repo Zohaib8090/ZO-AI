@@ -480,6 +480,24 @@ class ChatInteractionTest {
     assertEquals(1, r.retries)
   }
 
+  @Test fun theStuckNoticeAsksAndStopsOnlyWhenPressed() {
+    val r = Rec(); var stops = 0
+    themed { ThreadView(state(UserItem(1, "q", 0), StuckItem(2, 8, "x"), busy = true), ThreadCallbacks(cb(r).messages, {}, { _, _ -> }, { _, _ -> }, { _, _ -> }, {}, { stops++ })) }
+    rule.onNodeWithText("Repeating the same step. Stop?").assertExists()
+    assertEquals(0, stops)
+    rule.onNodeWithText("Stop").performClick()
+    assertEquals(1, stops)
+  }
+
+  @Test fun theStepCounterShowsNextToStopOnlyWhileBusy() {
+    assertEquals("Step 7", stepLabel(true, 7))
+    assertEquals(null, stepLabel(true, 0))
+    assertEquals(null, stepLabel(false, 7))
+    themed { Composer("", {}, ComposerModel(true, false, "Opus 5.5", PermMode.Manual, null, false, null, false, false, {}, {}, {}, {}, {}, null, steps = 7)) }
+    rule.onNodeWithTag("step-counter").assertExists()
+    rule.onNodeWithText("Step 7").assertExists()
+  }
+
   @Test fun theWaitingForYourComputerStateSaysSo() { // CHAT-37
     themed { ThreadView(state(UserItem(1, "q", 0), WaitingItem(2, "zohara_shell cmd: rm x"), busy = true), cb(Rec())) }
     rule.onNodeWithText("Waiting for your approval on your computer: zohara_shell cmd: rm x").assertExists()

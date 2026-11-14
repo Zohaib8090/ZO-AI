@@ -175,7 +175,7 @@ class ChatSession(
         items = items + UserItem(key(), text, nth, taken.infos)
       }
       items = items + ThinkingItem(key())
-      st.copy(items = items, busy = true, streamId = null, usage = null, computerName = null, visibleFrom = 0.coerceAtLeast(items.size - windowSize))
+      st.copy(items = items, busy = true, steps = 0, streamId = null, usage = null, computerName = null, visibleFrom = 0.coerceAtLeast(items.size - windowSize))
     }
     val req = SendRequest(
       text = text, chat = before.chatId, edit = edit, attachments = atts, keepRunning = env.keepRunning(),
@@ -273,6 +273,13 @@ class ChatSession(
         needsOpen = NeedsKind.Question to ev.id
         env.needsYou(_state.value.chatId, NeedsKind.Question, _state.value.streamId, ev.id, ev.questions.firstOrNull()?.question.orEmpty())
       }
+      is SendEvent.Steps -> _state.update { it.copy(steps = ev.n) }
+      is SendEvent.Stuck -> mutate {
+        // shown at most once per run of repeats: a second notice only replaces the first (the server also limits them)
+        l.removeAll { it is StuckItem }
+        dropTransient(); finalizeLive()
+        add(StuckItem(key(), ev.n, ev.tool))
+      }
       is SendEvent.Usage -> _state.update { it.copy(usage = Usage(ev.input, ev.output)) }
       is SendEvent.Error -> {
         mutate {
@@ -313,8 +320,8 @@ class ChatSession(
   private fun endTurnState() {
     _state.update { st ->
       val l = st.items.toMutableList()
-      Edit(l).run { dropTransient(); finalizeLive(); endGroup(); expireCards() }
-      st.copy(items = l, busy = false, streamId = null)
+      Edit(l).run { dropTransient(); finalizeLive(); endGroup(); expireCards(); l.removeAll { it is StuckItem } }
+      st.copy(items = l, busy = false, steps = 0, streamId = null)
     }
   }
 

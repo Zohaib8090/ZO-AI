@@ -89,6 +89,36 @@ class ChatSessionTest {
     assertTrue(s.state.value.items.filterIsInstance<ToolGroupItem>().none { it.active })
   }
 
+  @Test fun stepsCountUpAndResetAndStuckAsksOnlyOnce() = runTest(UnconfinedTestDispatcher()) {
+    val (s, be, _) = make()
+    val ch = be.newStream()
+    s.submit("loop")
+    ch.send(SendEvent.Stream(3)); ch.send(SendEvent.Chat("c1", "loop"))
+    assertEquals(0, s.state.value.steps)
+    ch.send(SendEvent.ToolStart("read_file", "read_file\npath: a")); ch.send(SendEvent.Steps(1))
+    ch.send(SendEvent.ToolStart("read_file", "read_file\npath: a")); ch.send(SendEvent.Steps(2))
+    assertEquals(2, s.state.value.steps)
+    ch.send(SendEvent.Stuck(8, "read_file"))
+    ch.send(SendEvent.Stuck(18, "read_file"))
+    val stuck = s.state.value.items.filterIsInstance<StuckItem>().single()
+    assertEquals(18, stuck.n)
+    assertTrue(s.state.value.busy) // nothing stopped by itself
+    assertTrue(be.replies.isEmpty())
+    ch.send(SendEvent.Done); ch.close(); advanceUntilIdle()
+    assertEquals(0, s.state.value.steps)
+    assertTrue(s.state.value.items.none { it is StuckItem })
+    assertFalse(s.state.value.busy)
+  }
+
+  @Test fun stopFromTheStuckNoticeIsTheNormalStop() = runTest(UnconfinedTestDispatcher()) {
+    val (s, be, _) = make()
+    val ch = be.newStream()
+    s.submit("loop")
+    ch.send(SendEvent.Stream(4)); ch.send(SendEvent.Stuck(8, "x"))
+    s.stop()
+    assertEquals("stop 4", be.replies.single())
+  }
+
   @Test fun visionNoticeIsInlineAndTheAnswerStillComes() = runTest(UnconfinedTestDispatcher()) {
     val (s, be, _) = make()
     play(s, be, "look", SendEvent.Stream(1), SendEvent.Chat("c", "look"), SendEvent.ToolDone("vision", false, "The model m1 cannot look at pictures."), SendEvent.Delta("ok"), SendEvent.Done)

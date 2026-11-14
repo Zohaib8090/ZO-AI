@@ -243,6 +243,16 @@ fun NoticeRow(text: String, modifier: Modifier = Modifier) {
   Text(text, style = ZoTheme.type.fieldHint.copy(fontSize = 12.5.sp), color = ZoTheme.colors.dim, modifier = modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 2.dp))
 }
 
+/** The stuck-loop notice: only asks, never stops by itself. */
+@Composable
+fun StuckRow(onStop: () -> Unit, modifier: Modifier = Modifier) {
+  Row(modifier.fillMaxWidth().padding(vertical = 4.dp).semantics { liveRegion = LiveRegionMode.Polite }, verticalAlignment = Alignment.CenterVertically) {
+    Text("Repeating the same step. Stop?", style = ZoTheme.type.cardMeta, color = ZoTheme.colors.dim, modifier = Modifier.weight(1f, fill = false))
+    Spacer(Modifier.size(10.dp))
+    PillButton("Stop", onStop)
+  }
+}
+
 /** CHAT-10 */
 @Composable
 fun ThinkingRow(modifier: Modifier = Modifier) {

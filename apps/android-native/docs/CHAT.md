@@ -35,7 +35,7 @@ collect: the chat emits it after a send, after the answer, 6 s later for a compu
 `stream` -> remember the id; `chat` -> id and title; `delta` -> one live row; `text` is used only when no delta came for that step;
 `tool_start` / `tool_done` -> one active group (it survives an approval card between its lines); `approval` -> card, or the "waiting on your
 computer" row when `local`; `question` -> card; `usage`; `error` -> error row (+ "Choose a model" when no model is chosen, + link refresh for
-`desktop_offline`); `stopped`; `done`; `ping`, unknown events and lines that are not JSON are ignored. A stream that ends without `done` shows the
+`desktop_offline`); `steps` -> `ChatUiState.steps`, shown as "Step n" in the composer next to Stop while busy (reset at send and at the end); `stuck` -> one `StuckItem` row "Repeating the same step. Stop?" with a Stop button that is the normal stop (never stops by itself; one row at a time; removed when the answer ends); `stopped`; `done`; `ping`, unknown events and lines that are not JSON are ignored. A stream that ends without `done` shows the
 "connection was lost" sentence and reloads the chat.
 
 ## Not in this module

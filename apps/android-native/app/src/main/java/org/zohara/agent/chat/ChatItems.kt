@@ -33,6 +33,8 @@ data class ErrorItem(override val key: Long, val text: String, val code: String 
 data class StoppedItem(override val key: Long) : ChatItem
 /** A grey inline row: vision notice, "summarized", "Running on your computer (x)". */
 data class NoticeItem(override val key: Long, val text: String) : ChatItem
+/** "Repeating the same step. Stop?" with a Stop button: shown while the answer runs, never saved, gone when it ends. */
+data class StuckItem(override val key: Long, val n: Int, val tool: String) : ChatItem
 data class ThinkingItem(override val key: Long) : ChatItem
 /** "Waiting for your approval on your computer: <summary>" with a spinner (CHAT-37). */
 data class WaitingItem(override val key: Long, val summary: String) : ChatItem
@@ -85,6 +87,8 @@ data class ChatUiState(
   val items: List<ChatItem> = emptyList(),
   val loading: Boolean = false,
   val busy: Boolean = false,
+  /** tool calls made so far in the running answer (0 = none yet) */
+  val steps: Int = 0,
   val streamId: Long? = null,
   val usage: Usage? = null,
   /** takes of the loaded chat: user message number -> info */

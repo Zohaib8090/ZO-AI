@@ -69,7 +69,12 @@ class ComposerModel(
   val onContext: () -> Unit,
   /** the Terminal pill (COMP-12): admin accounts on the cloud only */
   val onTerminal: (() -> Unit)? = null,
+  /** tool calls made so far in the running answer; "Step n" shows next to Stop while busy */
+  val steps: Int = 0,
 )
+
+/** The text of the live step counter, or null when it should not show. */
+fun stepLabel(busy: Boolean, steps: Int): String? = if (busy && steps > 0) "Step $steps" else null
 
 const val PLACEHOLDER = "How can I help you today?"
 const val FOOT_NOTE = "Zohara Agent can make mistakes. Check what it did."
@@ -124,6 +129,9 @@ fun Composer(text: String, onText: (String) -> Unit, m: ComposerModel, modifier:
           Text("${text.length} / ${m.limit}", style = t.fieldHint, color = if (text.length > (m.limit ?: Int.MAX_VALUE)) c.danger else c.dim, modifier = Modifier.padding(end = 8.dp))
         }
         ChatHooks.micButton?.invoke({ extra -> onText((text + (if (text.isEmpty() || text.endsWith(" ")) "" else " ") + extra)) }, send)
+        stepLabel(m.busy, m.steps)?.let { l ->
+          Text(l, style = t.fieldHint, color = c.dim, modifier = Modifier.padding(end = 8.dp).testTag("step-counter").semantics { contentDescription = l })
+        }
         SendButton(busy = m.busy, canSend = canSend, onSend = send, onStop = m.onStop)
       }
     }

@@ -94,6 +94,7 @@ fun ChatPane(session: ChatSession, hub: ChatHub.Instance, greetingText: String?,
     onApprove = { k, yes -> session.approve(k, yes) },
     onAnswer = { k, a -> session.answer(k, a) },
     onSkip = { k -> session.skip(k) },
+    onStop = { session.stop() },
   )
   val model = ComposerModel(
     busy = state.busy, questionOpen = state.questionOpen, modelText = pills.modelText, mode = pills.mode, runsOnComputer = state.computerName,
@@ -104,6 +105,7 @@ fun ChatPane(session: ChatSession, hub: ChatHub.Instance, greetingText: String?,
     onMode = { sheet = "mode" },
     onContext = { sheet = "context" },
     onTerminal = if (container.session.admin && hub.env.runOn().isCloud) ({ nav.terminal() }) else null,
+    steps = state.steps,
   )
 
   var pinnedPanel by rememberSaveable { mutableStateOf(false) }

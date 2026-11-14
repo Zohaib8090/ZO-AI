@@ -68,6 +68,7 @@ class ThreadCallbacks(
   val onApprove: (key: Long, yes: Boolean) -> Unit,
   val onAnswer: (key: Long, answers: List<QuestionAnswer>) -> Unit,
   val onSkip: (key: Long) -> Unit,
+  val onStop: () -> Unit = {},
 )
 
 /**
@@ -133,6 +134,7 @@ fun ThreadView(state: ChatUiState, cb: ThreadCallbacks, modifier: Modifier = Mod
           is StoppedItem -> StoppedRow(canRetry, cb.messages)
           is NoticeItem -> NoticeRow(item.text)
           is ThinkingItem -> ThinkingRow()
+          is StuckItem -> StuckRow(onStop = cb.onStop)
           is WaitingItem -> WaitingRow(item.summary)
           is ApprovalItem -> ApprovalCard(item, onAnswer = { yes -> cb.onApprove(item.key, yes) })
           is QuestionItem -> QuestionCard(item, onSend = { cb.onAnswer(item.key, it) }, onSkip = { cb.onSkip(item.key) })
