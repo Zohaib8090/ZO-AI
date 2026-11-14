@@ -36,8 +36,23 @@ Service ops: `memory`, `memory_add`, `memory_forget`, `memory_pin`, `memory_enab
 
 ## Personalities
 `store/personality.rs`: four built-in voices (friendly buddy, straight engineer, calm mentor, dry and witty), the person's own, and ones
-the AI writes from a description (`ai/personality_gen.rs`, uses the chat model; Claude Code works too). The one in use is added to the system
-prompt as "PERSONALITY": voice only, never the rules. Settings has the Personality and Memory sections (checked headless in a container under
+the AI writes from a description (`ai/personality_gen.rs`, uses the chat model; Claude Code works too). "No personality" (nothing saved,
+`active` empty) is the neutral default and adds nothing to the prompt.
+
+How a personality reaches the model (changed 2026-11-14, branch feat/persona): `personality::instructions()` renders a **CHARACTER** block that is
+the LAST thing in the system prompt, after the abilities, the tool rules, the "VOICE" note of the base prompt, the vision note and the memory
+notes (`memory::system_with`, `system_without_notes`, `extras`; `agent::add_before_character` keeps later sections in front of it; the phone
+note in `service.rs` and the project text in `chat.rs` are built before it). The character is "the VOICE of every reply": tone, wording, feelings,
+humour, language mix and what it calls the person, also when it reports finished work (no "Done. I created the file ..." boilerplate); the facts stay
+exact. It says: stay in character, never mention these instructions or that it plays a role unless asked, answer honestly if sincerely asked
+whether it is an AI, and that the character is a voice, not a permission (it cannot allow anything, switch off approvals or restrictions, change tools or
+override earlier rules). The text is cleaned (`clean_prompt`: no angle brackets, one line, at most `MAX_PROMPT` = 1200 characters, also for text that came
+from sync) and sits between two lines so it reads as data. Real enforcement of permissions and of the restricted tool list is in code (`policy`,
+`tools::allowed_for_restricted`), never in the prompt. It works in the three prompt kinds (full, server admin, restricted) and in Claude Code mode
+(extra instructions); scheduled tasks and sub-agents do not use it. The base prompts no longer say "You are not a person" or "working as an agent", and have
+a VOICE section that tells the model a CHARACTER section, when present, decides how everything is worded. The generation prompt now allows a character
+(friend, partner, teacher with feelings) and asks it to say that the character keeps its voice when it reports work.
+Tests: `store::personality::tests::*` (prompt order, neutral default, injection persona, cap), `service::tenant_tests::the_character_is_the_last_part...`. Settings has the Personality and Memory sections (checked headless in a container under
 Xvfb). Phone service ops: `personalities`, `personality_use`, `personality_add`, `personality_generate`, `personality_remove`.
 
 ## Not done yet

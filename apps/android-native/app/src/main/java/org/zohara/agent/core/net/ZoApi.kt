@@ -51,8 +51,8 @@ data class SendRequest(
   val device: String? = null,
 )
 
-/** One answer to a question card: the labels picked and an optional free text (`other`, at most 2000 characters). */
-data class QuestionAnswer(val selected: List<String>, val other: String? = null)
+/** One answer to a question card: the labels picked and an optional free text (`other`, at most 2000 characters), or [decide]: "You decide", Zohara Agent picks itself (then nothing else is set). */
+data class QuestionAnswer(val selected: List<String>, val other: String? = null, val decide: Boolean = false)
 
 /**
  * The typed client of the Zohara Agent server: one function per op of API.md. Every failure is an [ApiException] with a sentence for the person.
@@ -299,6 +299,7 @@ class ZoApi(
         add(buildJsonObject {
           putJsonArray("selected") { a.selected.forEach { add(JsonPrimitive(it)) } }
           put("other", a.other?.let { JsonPrimitive(sanitizeOther(it)) } ?: JsonNull)
+          if (a.decide) put("decide", true)
         })
       }
     }

@@ -232,8 +232,8 @@ pub fn definitions() -> &'static [ToolDef] {
             params: &[("machine", "string", "The machine name", true), ("path", "string", "Path on the machine (~ is the home folder there)", true), ("content", "string", "Text to write", true), ("append", "boolean", "Add to the end instead of replacing", false)] },
         ToolDef { name: "zohara_waydroid_shell", description: "Run a command inside Waydroid (asks for your password).", risk: Change,
             params: &[("cmds", "string", "Command line", true)] },
-        ToolDef { name: "zohara_ask_user", description: "Ask the person a question with ready-made options. Use it only when the answer changes what you do and a sensible default does not exist; never for yes/no confirmations of actions (those are approvals); keep questions short; at most one call per turn.", risk: Read,
-            params: &[("questions", "array", "1 to 4 questions, each: {question (string, <=300 chars), header (string, <=24 chars, shown as a chip), multi_select (bool), options: [{label (string, <=60), description (string, <=200)}] (2 to 6 options)}. The client adds an Other choice; do not add one.", true)] },
+        ToolDef { name: "zohara_ask_user", description: "Ask the person a question with ready-made options, like a menu. Use it only for a real fork: the answer changes what you do and a sensible default does not exist. Give 2 to 4 concrete options, put the one you recommend FIRST and end its label with \"(Recommended)\". Never for yes/no confirmations of actions (those are approvals); keep questions short; at most one call per turn. The person can also pick Other (free text), \"You decide\" or Skip. If they choose You decide, the result says so: pick the best option yourself, say which one and why, and do not ask again.", risk: Read,
+            params: &[("questions", "array", "1 to 4 questions, each: {question (string, <=300 chars), header (string, <=24 chars, shown as a chip), multi_select (bool), options: [{label (string, <=60), description (string, <=200)}] (2 to 6 options, 2 to 4 is best)}. The client adds Other, You decide and Skip; do not add them.", true)] },
     ]
 }
 

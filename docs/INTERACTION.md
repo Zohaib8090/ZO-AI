@@ -12,10 +12,16 @@ because it only returns what the person typed or chose).
 
 Parameters: `questions`: 1 to 4 items, each
 `{question: string (<= 300 chars), header: string (<= 24 chars, shown as a chip), multi_select: bool, options: [{label (<= 60), description (<= 200)}] (2 to 6 options)}`.
-The client ALWAYS adds an "Other" choice with a text box; the model must not add one itself.
+The client ALWAYS adds three more choices, like Claude's question menu: **Other** (a text box), **You decide** (Zohara Agent answers that
+question itself with its best judgement and says what it chose) and **Skip**; the model must not add any of them itself.
+Tool description (what the model is told): use it only for a real fork, 2 to 4 concrete options, the recommended one FIRST with its label
+ending in "(Recommended)"; never for "may I do this?" (approvals do that) and never when a sensible default settles it. Validation still
+accepts 2 to 6 options.
 
 The tool result given back to the model is plain text: one block per question,
-`Q: <question>\nA: <chosen labels joined by ", "> [Other: <text>]`, or `The person declined to answer.`
+`Q: <question>\nA: <chosen labels joined by ", "> [Other: <text>]`, `Q: <question>\nA: The person asked you to decide: pick the best option and
+say which and why. Do not ask this question again; go on with your choice.` for "You decide" (the system prompt also tells the model to say
+which option it took and why in one sentence), or `The person declined to answer.`
 
 System prompt rule: use it only when the answer changes what you do and a sensible default does not exist; never for
 yes/no confirmations of actions (that is what approvals are for); keep questions short; at most one call per turn.
@@ -28,11 +34,14 @@ Server or service to client (one JSON object per line on the `send` stream, same
 
 Client to server, on the same connection (desktop socket/phone) or `POST /api/reply` (web, mobile native):
 
-    {"op":"answer","id":<u64>,"answers":[{"selected":["label",...],"other":"text or null"}, ...]}   // one entry per question, same order
+    {"op":"answer","id":<u64>,"answers":[{"selected":["label",...],"other":"text or null","decide":false}, ...]}   // one entry per question, same order
+    {"op":"answer","id":<u64>,"answers":[{"decide":true}, ...]}   // "You decide" for that question: selected and other must be empty/absent
     {"op":"answer","id":<u64>,"cancelled":true}
 
 Rules for every implementation: validate that `id` is open, that `answers.length` equals the question count, that each
 selected label is one of the offered labels, `other` <= 2000 chars; strip control characters; unknown ids are ignored.
+`decide` must be a boolean when present; `decide:true` cannot be combined with a choice or text (the answer is refused and the question stays
+open), and counts as an answer for that question (so a multi-question card can mix decided and answered questions).
 Waiting time: 10 minutes (3 minutes when no notification channel exists); on timeout, Stop or disconnect the tool returns
 "The person did not answer." and the model carries on without.
 Desktop link: the desktop forwards `question` events to the web and accepts `{"op":"answer_reply"}` jobs exactly like
@@ -58,11 +67,13 @@ Privacy: the payload of a push never contains the command, file path or question
 
 * A **question card** appears in the chat where the model asked: the header chip, the question, the options as selectable
   rows (radio for single, checkboxes for multi) each with its description underneath, an "Other" row with a text field,
-  and Send / Skip buttons. After sending, the card collapses to "You answered: ...".
+  a "You decide" row ("Zohara Agent picks the best option and tells you which and why"; it stands alone: choosing it clears the other choices
+  and choosing anything else clears it) and Send / Skip buttons. After sending, the card collapses to "You answered: ...".
 * Several questions: shown one after another inside one card with Back / Next (like the Claude app), one Send at the end.
 * **Approval card** (existing) gets the same look: what Zohara Agent wants to do, Allow / Deny, and a switch "Always allow this kind
   of action in this chat" is NOT added now (policy stays in Settings > Permissions).
-* Keyboard (desktop and web): arrow keys and Enter, number keys 1-6 pick an option, Esc skips.
+* Keyboard (desktop, web, Android with a keyboard): arrow keys and Enter, number keys 1-6 pick an option, D toggles "You decide" (optional
+  shortcut), Esc skips. The summary line after sending says "you left it to Zohara Agent" for a decided question.
 * Accessibility: labels, focus order, screen-reader announcements for "Zohara Agent is asking you a question".
 * The composer is disabled while a question card is open for that chat (the person answers the card).
 
@@ -108,6 +119,13 @@ Rules as built (they refine section 2):
 * NOT built: Web Push for a closed tab (a `keep_running` answer cannot take an answer after the tab left: the service refuses approvals and
   questions after `detached`, so a "needs you" push would only lead to a card that cannot be answered; it needs resumable streams first); the native
   Android notification channel and screens; the CLI `zo` does not show cards (it does not say `can_ask`); Claude Code mode has no question tool.
+
+Added 2026-11-14 (branch feat/persona): "You decide" in `approval::QuestionAnswer.decide`, `question::validate_answers` / `format_result` (`DECIDE_TEXT`),
+`link::clean_answers`, the tool text in `tools/mod.rs` and the system prompts, the GTK card (`questioncard.rs`, key D), the web card (key D) and the Android card
+(`QuestionDraft.decide`, `QuestionLogic`, `QuestionCard`, `ZoApi.replyAnswer`). Tests: `question::tests::you_decide_is_a_third_kind_of_answer`,
+`service::tenant_tests::you_decide_reaches_the_model...`, `link::tests::an_answer_job_is_checked...`, the zo-server relay test, the GTK card test (ignored, needs a
+display), `QuestionLogicTest.youDecideStandsAloneAndIsAnAnswer`, `ChatInteractionTest.youDecideIsARowAndSendsDecide`, `ZoApiTest`. The web card was driven in
+the in-app browser against a sandbox zo-server (no login, admin) with a stub model.
 
 Tests: `cargo test -p zo-core question` and `ask_user`, `-p zo-core link::`, `-p zo-server -- question` (relay and the real link end to end with
 the mock model), and in a display container `xvfb-run -a cargo test -p zohara-agent -- --ignored the_card` (the GTK card).

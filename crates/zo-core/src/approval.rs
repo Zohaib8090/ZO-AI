@@ -45,6 +45,9 @@ pub struct Question {
 pub struct QuestionAnswer {
     pub selected: Vec<String>,
     pub other: Option<String>,
+    /// "You decide": the person leaves this question to Zohara Agent (`selected` and `other` are then empty).
+    #[serde(default)]
+    pub decide: bool,
 }
 
 /// What came of asking.

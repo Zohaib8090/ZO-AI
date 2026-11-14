@@ -766,10 +766,10 @@ impl Ctl {
             let t: String = text.chars().take(48).collect();
             *self.title.borrow_mut() = t;
         }
-        let brief = zo_core::store::memory::extras(&text);
-        let system = format!("{}\n\n{}\n\n{}", agent::SYSTEM_PROMPT, brief, self.extra.borrow());
-        // Claude Code gets the same notes about the person, as extra instructions
-        let extra = format!("{}\n\n{}", self.extra.borrow(), brief);
+        // the notes about the person, then the character LAST (after the abilities, tool rules and project text)
+        let system = zo_core::store::memory::system_with(&format!("{}\n\n{}", agent::SYSTEM_PROMPT, self.extra.borrow()), &text);
+        // Claude Code gets the same notes and character, as extra instructions
+        let extra = format!("{}\n\n{}", self.extra.borrow(), zo_core::store::memory::extras(&text));
 
         let claude = sel.provider == "claude-code";
         let cfg = if claude {

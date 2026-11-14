@@ -2,7 +2,7 @@
 //! and connects it to `zo-mcp`, so Claude does the thinking with its own login and Zohara Agent only supplies the
 //! computer controls and the approvals. Zohara Agent never reads, copies or stores any Claude credential.
 
-use super::agent::{Event, SYSTEM_PROMPT};
+use super::agent::Event;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
@@ -305,9 +305,9 @@ fn tools_env(tenant: Option<&crate::tenant::Tenant>, mode: Option<crate::policy:
 #[allow(clippy::too_many_arguments)]
 fn run_once(mode: Option<crate::policy::Mode>, model: &str, effort: Option<&str>, session: &mut Option<String>, prompt: &str, system_extra: &str, cancel: &Arc<AtomicBool>, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
     let base = super::agent::system_prompt();
-    let system = if system_extra.trim().is_empty() { base.to_string() } else { format!("{base}\n\n{system_extra}") };
-    // Claude can look at what the tools return as pictures (a screenshot comes back as an image)
-    let system = format!("{system}\n\n{}", super::agent::VISION_YES);
+    // Claude can look at what the tools return as pictures (a screenshot comes back as an image); the extras (notes, then the character) come last
+    let system = format!("{base}\n\n{}", super::agent::VISION_YES);
+    let system = if system_extra.trim().is_empty() { system } else { format!("{system}\n\n{system_extra}") };
     let bin = binary().ok_or("Claude Code is not installed. Install it (npm install -g @anthropic-ai/claude-code), then sign in with: claude auth login")?;
     let env = tools_env(crate::tenant::current().as_ref(), mode, std::env::var("ZO_TENANT_ROOT").ok());
     let config = json!({ "mcpServers": { "zohara": { "command": mcp_binary(), "env": env } } }).to_string();

@@ -1930,6 +1930,10 @@ fn a_question_card_of_a_desktop_session_is_relayed_and_its_answer_is_forwarded_c
     assert_eq!(ok.status, 200, "{:?}", ok.body);
     let fwd = dpoll_for(&r, &cred, "Ques", caps(false), "answer_reply");
     assert_eq!(fwd["answers"], json!([{"selected": ["b"], "other": null}]));
+    // "You decide" is relayed as it is
+    assert_eq!(call(&r, "tok", "/api/reply", json!({"stream": sid, "op": "answer", "id": 3, "answers": [{"decide": true}]})).status, 200);
+    let fwd = dpoll_for(&r, &cred, "Ques", caps(false), "answer_reply");
+    assert_eq!(fwd["answers"], json!([{"decide": true}]));
     // malformed ones never get through
     for bad in [json!({"op": "answer", "id": "x", "cancelled": true}), json!({"op": "answer", "id": 3}), json!({"op": "answer", "id": 3, "answers": []}),
                 json!({"op": "answer", "id": 3, "answers": [{}, {}, {}, {}, {}]}), json!({"op": "answer", "id": 3, "answers": [{"other": "y".repeat(30_000)}]}), json!({"op": "answer", "id": 3, "answers": "b"})] {

@@ -889,11 +889,12 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
     let ask_text = if text.is_empty() { "Please look at what I attached.".to_string() } else { text.clone() };
     // a restricted account's notes reach the model only through zohara_memory_search, which closes the web for the rest of the answer
     // (notes placed in the prompt would let a hostile page carry them out through the web tools)
-    let prompt = if restricted { crate::store::memory::system_without_notes(agent::system_prompt()) } else { crate::store::memory::system_with(agent::system_prompt(), &text) };
+    // the character (if any) goes last, so the phone note comes before it
     let system = if restricted {
-        prompt
+        crate::store::memory::system_without_notes(agent::system_prompt())
     } else {
-        format!("{prompt}\n\nThe person is talking to you from their phone (Zohara Link). Keep answers short and easy to read on a small screen.")
+        let base = format!("{}\n\nThe person is talking to you from their phone (Zohara Link). Keep answers short and easy to read on a small screen.", agent::system_prompt());
+        crate::store::memory::system_with(&base, &text)
     };
     let mut session = chat.session.clone();
     let mut history = chat.history.clone();
@@ -1500,6 +1501,48 @@ mod tenant_tests {
         let r = talk_live(with_tenant(json!({"op": "send", "text": "set up storage", "can_ask": true}), &t), |l| if l["event"] == "question" { vec![json!({"op": "answer", "id": l["id"], "cancelled": true})] } else { vec![] });
         assert!(r.iter().any(|l| l["event"] == "tool_done" && l["output"] == "The person declined to answer."), "{r:?}");
         assert!(seen.join().unwrap()[1]["messages"].to_string().contains("declined"));
+    }
+
+    #[test]
+    fn you_decide_reaches_the_model_as_a_request_to_choose_and_a_bad_mix_is_ignored() {
+        let _g = lock();
+        let t = fresh(true);
+        let (url, seen) = fake_model(vec![tool_reply(&[("zohara_ask_user", ask_args())]), chat_reply("I chose SQLite because it is a single file.")]);
+        use_model(&t, &url);
+        let r = talk_live(with_tenant(json!({"op": "send", "text": "set up storage", "can_ask": true}), &t), |l| {
+            if l["event"] != "question" {
+                return vec![];
+            }
+            let id = l["id"].clone();
+            vec![
+                json!({"op": "answer", "id": id, "answers": [{"decide": true, "selected": ["SQLite"]}]}), // mixed: ignored, the question stays open
+                json!({"op": "answer", "id": id, "answers": [{"decide": true}]}),
+            ]
+        });
+        let done = r.iter().find(|l| l["event"] == "tool_done" && l["name"] == "zohara_ask_user").unwrap_or_else(|| panic!("{r:?}"));
+        assert!(done["output"].as_str().unwrap().contains("The person asked you to decide: pick the best option and say which and why"), "{done}");
+        let seen = seen.join().unwrap();
+        assert!(seen[1]["messages"].to_string().contains("asked you to decide"), "the model got the instruction and carries on");
+        assert!(r.iter().any(|l| l["event"] == "text" && l["text"].as_str().unwrap().contains("I chose SQLite")));
+    }
+
+    #[test]
+    fn the_character_is_the_last_part_of_what_the_model_is_told_also_for_a_restricted_account() {
+        let _g = lock();
+        let t = fresh(true);
+        crate::tenant::scope(&t, || {
+            let p = crate::store::personality::add("Crush", "Sound like a shy, warm girl with a crush on the person. Call them jaan and get excited about their work.", false).unwrap();
+            crate::store::personality::set_active(&p.id).unwrap();
+        });
+        let (url, seen) = fake_model(vec![chat_reply("Hehe, okay jaan.")]);
+        use_model(&t, &url);
+        let _ = talk(with_tenant(json!({"op": "send", "text": "hi"}), &t), true);
+        let seen = seen.join().unwrap();
+        let sys = seen[0]["messages"][0]["content"].as_str().unwrap_or_default().to_string();
+        assert!(sys.contains("Call them jaan"), "{sys}");
+        assert!(sys.find("HOW TO WORK").unwrap() < sys.find("CHARACTER (").unwrap());
+        assert!(sys.trim_end().ends_with("keep the rest."), "the character is last");
+        assert!(!sys.contains("zohara_shell"), "a restricted account is not told about the computer");
     }
 
     // ----- attachments from the web app ---------------------------------------------------------------------------------

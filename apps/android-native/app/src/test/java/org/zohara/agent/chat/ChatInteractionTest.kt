@@ -559,6 +559,18 @@ class ChatInteractionTest {
     assertEquals(listOf(QuestionAnswer(emptyList(), "MariaDB please")), r.answers.single().second)
   }
 
+  @Test fun youDecideIsARowAndSendsDecide() {
+    val r = Rec()
+    themedCard(QuestionItem(2, 9, listOf(single)), r)
+    rule.onNodeWithText("You decide").assertExists()
+    rule.onNodeWithText("SQLite").performClick()
+    rule.onNodeWithText("You decide").performClick()
+    rule.onNodeWithText("SQLite").assertIsNotSelected()
+    rule.onNodeWithText("You decide").assertIsSelected()
+    rule.onNodeWithText("Send").assertIsEnabled().performClick()
+    assertEquals(listOf(2L to listOf(QuestionAnswer(emptyList(), null, decide = true))), r.answers)
+  }
+
   @Test fun skipSendsNothingButTheSkip() { // INTER-05
     val r = Rec()
     themedCard(QuestionItem(2, 9, listOf(single)), r)

@@ -310,33 +310,25 @@ pub fn briefing(query: &str) -> String {
     out
 }
 
-/// `base` followed by the personality in use and the briefing for `query`, when there are any.
+/// `base`, then the briefing for `query` (when there are notes), then the personality in use (when there is one). The personality is LAST on
+/// purpose: it must come after the abilities, the tool rules and the notes, so that it decides how everything is worded.
 pub fn system_with(base: &str, query: &str) -> String {
-    let mut out = base.to_string();
-    for part in [super::personality::instructions(), briefing(query)] {
-        if !part.is_empty() {
-            out.push_str("\n\n");
-            out.push_str(&part);
-        }
-    }
-    out
+    join(&[base, &briefing(query), &super::personality::instructions()])
 }
 
 /// `base` followed by the personality only, with NO notes: for a restricted account, whose notes must reach the model only through
 /// `zohara_memory_search` (which closes the web for the rest of the answer; notes placed in the prompt would not).
 pub fn system_without_notes(base: &str) -> String {
-    let mut out = base.to_string();
-    let p = super::personality::instructions();
-    if !p.is_empty() {
-        out.push_str("\n\n");
-        out.push_str(&p);
-    }
-    out
+    join(&[base, &super::personality::instructions()])
 }
 
-/// The personality and the briefing as one piece, for programs that take extra instructions (Claude Code).
+/// The briefing and the personality as one piece (personality last), for programs that take extra instructions (Claude Code).
 pub fn extras(query: &str) -> String {
-    [super::personality::instructions(), briefing(query)].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("\n\n")
+    join(&[&briefing(query), &super::personality::instructions()])
+}
+
+fn join(parts: &[&str]) -> String {
+    parts.iter().filter(|p| !p.trim().is_empty()).copied().collect::<Vec<_>>().join("\n\n")
 }
 
 // ---------- writing ----------
