@@ -26,9 +26,10 @@ jobs:
           GH_TOKEN: ${{ secrets.PACKAGES_DISPATCH_TOKEN }}
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
-          # a missing token must be a RED run: a green run that published nothing hid this problem for days
-          [ -n "$GH_TOKEN" ] || { echo "::error::PACKAGES_DISPATCH_TOKEN is not set in this repository's secrets, so build #$RUN_ID was NOT published to alpha. See docs/DEPLOY.md (Publishing to alpha)."; exit 1; }
+          # No token is needed: zohara-packages polls this repository (poll-agent.yml, every 20 minutes) and publishes the newest
+          # green build to alpha with its own token. With the optional PACKAGES_DISPATCH_TOKEN the push below makes it immediate.
+          [ -n "$GH_TOKEN" ] || { echo "::notice::No PACKAGES_DISPATCH_TOKEN: zohara-packages will pick up build #$RUN_ID by itself within about 20 minutes."; exit 0; }
           jq -n --arg run "$RUN_ID" '{event_type: "package-published",
-            client_payload: {run_id: $run, source_repo: "Zohaib8090/ZO-AI", channel: "alpha"}}' \
+            client_payload: {run_id: $run, source_repo: "Zohaib8090/zohara-agent", channel: "alpha"}}' \
             | gh api repos/Zohaib8090/zohara-packages/dispatches --method POST --input -
           echo "::notice::Zohara Agent build #$RUN_ID sent to the alpha channel"
