@@ -946,27 +946,32 @@ pub fn models_sheet(ui: &Rc<Ui>) {
 
 // ---------------------------------------------------------------- the home page pieces
 
-/// "Good evening, Zohaib": the greeting on the home page.
+/// The greeting on the home page ("Good morning, Zohaib", "Still up?", "Back at it", ...): one message from the shared table
+/// (`zo_core::greetings`), chosen once per launch so the home page does not change while the app is open, and never the one of the
+/// last launch. The time, weekday and days since the last launch pick the occasion.
 pub fn greeting() -> String {
-    let hour = glib::DateTime::now_local().map(|d| d.hour()).unwrap_or(12);
-    let part = match hour {
-        5..=11 => "Good morning",
-        12..=17 => "Good afternoon",
-        _ => "Good evening",
-    };
-    let full = glib::real_name().to_string_lossy().into_owned();
-    let mut name = full.split_whitespace().next().unwrap_or("").to_string();
-    if name.is_empty() || name == "Unknown" {
-        name = glib::user_name().to_string_lossy().into_owned();
-        if let Some(c) = name.get(..1) {
-            name = format!("{}{}", c.to_uppercase(), &name[1..]);
-        }
-    }
-    if name.is_empty() {
-        part.to_string()
-    } else {
-        format!("{part}, {name}")
-    }
+    static G: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    G.get_or_init(|| {
+        let now = glib::DateTime::now_local().ok();
+        let (hour, weekday, day) = match &now {
+            Some(d) => (
+                d.hour() as u32,
+                (d.day_of_week() as u32).saturating_sub(1), // glib: 1 = Monday .. 7 = Sunday
+                zo_core::greetings::day_number(d.year() as i64, d.month() as i64, d.day_of_month() as i64),
+            ),
+            None => (12, 2, 0),
+        };
+        let user = glib::user_name().to_string_lossy().into_owned();
+        let real = glib::real_name().to_string_lossy().into_owned();
+        let known = |v: &str| if v == "Unknown" { String::new() } else { v.to_string() };
+        let name = zo_core::greetings::first_name(&known(&real), &known(&user));
+        let path = zo_core::audit::config_dir().join("greeting.json");
+        let state = zo_core::greetings::State::load(&path);
+        let (text, next) = zo_core::greetings::greet(zo_core::greetings::table(), &state, zo_core::greetings::Moment { hour, weekday, day }, &name, glib::random_double());
+        next.save(&path);
+        text
+    })
+    .clone()
 }
 
 /// A flat text button for the line under the composer: the model, or the permission mode.

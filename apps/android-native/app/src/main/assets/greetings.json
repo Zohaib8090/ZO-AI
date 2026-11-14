@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "max_len": 48,
+  "away_days": 14,
+  "back_days": 3,
+  "streak_days": 5,
+  "messages": [
+    { "id": "early-1", "text": "Up early, {name}?", "time": ["early"], "weekday": [], "gap": [] },
+    { "id": "morning-1", "text": "Good morning, {name}", "time": ["morning"], "weekday": [], "gap": [] },
+    { "id": "morning-2", "text": "Morning. What's first on the list?", "time": ["morning"], "weekday": [], "gap": [] },
+    { "id": "noon-1", "text": "Midday check-in. Eaten yet?", "time": ["noon"], "weekday": [], "gap": [] },
+    { "id": "afternoon-1", "text": "Good afternoon, {name}", "time": ["afternoon"], "weekday": [], "gap": [] },
+    { "id": "evening-1", "text": "Good evening, {name}", "time": ["evening"], "weekday": [], "gap": [] },
+    { "id": "night-1", "text": "Quiet night. What's on your mind, {name}?", "time": ["night"], "weekday": [], "gap": [] },
+    { "id": "late-1", "text": "Still up, {name}?", "time": ["late"], "weekday": [], "gap": [] },
+    { "id": "late-2", "text": "It's late. Let's keep it gentle.", "time": ["late"], "weekday": [], "gap": [] },
+    { "id": "monday-1", "text": "New week. Where do we start?", "time": [], "weekday": ["monday"], "gap": [] },
+    { "id": "friday-evening", "text": "Friday evening. Almost the weekend.", "time": ["evening", "night"], "weekday": ["friday"], "gap": [] },
+    { "id": "weekend-1", "text": "No rush today. What are we making?", "time": [], "weekday": ["weekend"], "gap": [] },
+    { "id": "first-1", "text": "Welcome, {name}. Let's make something.", "time": [], "weekday": [], "gap": ["first"] },
+    { "id": "away-1", "text": "It's been a while, {name}. Welcome back.", "time": [], "weekday": [], "gap": ["away"] },
+    { "id": "back-1", "text": "Welcome back, {name}", "time": [], "weekday": [], "gap": ["back"] },
+    { "id": "streak-1", "text": "Busy streak. Remember to rest too.", "time": [], "weekday": [], "gap": ["streak"] },
+    { "id": "streak-2", "text": "Day after day. Nice rhythm.", "time": [], "weekday": [], "gap": ["streak"] },
+    { "id": "neutral-1", "text": "Back at it", "time": [], "weekday": [], "gap": [] },
+    { "id": "neutral-2", "text": "What are we making today?", "time": [], "weekday": [], "gap": [] },
+    { "id": "neutral-3", "text": "Ready when you are", "time": [], "weekday": [], "gap": [] }
+  ],
+  "golden": [
+    { "hour": 6, "weekday": "mon", "gap": "none", "ids": ["early-1", "monday-1", "neutral-1", "neutral-2", "neutral-3"] },
+    { "hour": 10, "weekday": "wed", "gap": "none", "ids": ["morning-1", "morning-2", "neutral-1", "neutral-2", "neutral-3"] },
+    { "hour": 13, "weekday": "sat", "gap": "none", "ids": ["noon-1", "weekend-1", "neutral-1", "neutral-2", "neutral-3"] },
+    { "hour": 19, "weekday": "fri", "gap": "none", "ids": ["evening-1", "friday-evening", "neutral-1", "neutral-2", "neutral-3"] },
+    { "hour": 22, "weekday": "fri", "gap": "none", "ids": ["night-1", "friday-evening", "neutral-1", "neutral-2", "neutral-3"] },
+    { "hour": 2, "weekday": "sun", "gap": "none", "ids": ["late-1", "late-2", "weekend-1", "neutral-1", "neutral-2", "neutral-3"] },
+    { "hour": 15, "weekday": "tue", "gap": "first", "ids": ["first-1"] },
+    { "hour": 15, "weekday": "tue", "gap": "away", "ids": ["away-1"] },
+    { "hour": 15, "weekday": "tue", "gap": "back", "ids": ["back-1"] },
+    { "hour": 9, "weekday": "thu", "gap": "streak", "ids": ["streak-1", "streak-2"] }
+  ]
+}

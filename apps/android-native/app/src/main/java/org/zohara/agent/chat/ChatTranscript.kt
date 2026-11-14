@@ -67,15 +67,6 @@ object Transcript {
   /** The title shown for a chat (CHAT-38, CHAT-50). */
   fun displayTitle(title: String, hasItems: Boolean): String = title.ifBlank { if (hasItems) "New chat" else "" }
 
-  /** Greeting (NAV-18): desktop hours; the first word of the name, else the part of the e-mail before the @, capitalised. */
-  fun greeting(hour: Int, displayName: String, email: String): String {
-    val part = when (hour) { in 5..11 -> "Good morning"; in 12..17 -> "Good afternoon"; else -> "Good evening" }
-    val first = displayName.trim().split(Regex("\\s+")).firstOrNull().orEmpty().ifEmpty {
-      email.substringBefore('@').trim().replaceFirstChar { it.uppercase() }
-    }
-    return if (first.isEmpty()) part else "$part, $first"
-  }
-
   /** Claude model ids shown the way the desktop does ("claude-opus-5-5" -> "Opus 5.5"); other models as they are (COMP-08). */
   fun niceName(model: String): String {
     val m = model.trim()
