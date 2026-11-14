@@ -12,7 +12,10 @@ use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-const MAX_STEPS: usize = 15;
+const MAX_STEPS: usize = 25;
+
+/// Added to the instructions for the last step of an answer.
+const WRAP_UP: &str = "\n\nSTEP LIMIT: this is your last step for this answer. Do not call any tool now. Reply in words only: say what you have done, what is still open, and what you would do next. The person can say \"continue\" to go on.";
 
 thread_local! {
     /// When the answer that is being made on this thread must be finished (restricted tenants only).
@@ -413,10 +416,18 @@ pub fn run_with(cfg: &Config, history: &mut Vec<Turn>, user: &str, extra: Extra,
     let _scope = crate::activity::RunScope::enter(cancel);
     // at most one question card per answer (INTERACTION.md section 1)
     let mut asked = false;
-    for _ in 0..max_steps {
+    for step in 0..max_steps {
         if cancel.load(Ordering::Relaxed) {
             return Err(STOPPED.into());
         }
+        // the last step: the model is told to wrap up, so the person gets a report and not just an error
+        let wrap_up;
+        let cfg = if step + 1 == max_steps && max_steps > 1 {
+            wrap_up = Config { provider: cfg.provider, base_url: cfg.base_url.clone(), model: cfg.model.clone(), key: cfg.key.clone(), system: format!("{}{WRAP_UP}", cfg.system), vision: cfg.vision };
+            &wrap_up
+        } else {
+            cfg
+        };
         if DEADLINE.with(|d| d.get()).is_some_and(|t| std::time::Instant::now() > t) {
             return Err(too_slow());
         }
@@ -480,7 +491,7 @@ pub fn run_with(cfg: &Config, history: &mut Vec<Turn>, user: &str, extra: Extra,
         }
         history.push(Turn::Results(results));
     }
-    Err(format!("Stopped after {max_steps} steps without a final answer."))
+    Err(format!("Stopped after {max_steps} steps without a final answer. Say \"continue\" to carry on from here."))
 }
 
 struct DeadlineGuard(Option<std::time::Instant>);
@@ -893,6 +904,21 @@ mod tests {
         assert_eq!(history.len(), 4);
         let seen = server.join().unwrap();
         assert_eq!(seen[1]["messages"].as_array().unwrap().last().unwrap()["content"], "zo-loop-ok");
+    }
+
+    #[test]
+    fn the_last_step_tells_the_model_to_wrap_up_in_words() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let call = json!({"choices":[{"message":{"content":null,"tool_calls":[{"id":"c","function":{"name":"zohara_shell","arguments":"{\"cmd\":\"true\"}"}}]}}]});
+        let mut replies = vec![call; MAX_STEPS - 1];
+        replies.push(json!({"choices":[{"message":{"content":"Done so far: a lot. Open: nothing. Say continue."}}]}));
+        let (url, server) = mock(replies);
+        let mut history = Vec::new();
+        run(&cfg(url, "openai"), &mut history, "go on forever", Mode::Auto, &Deny, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        let seen = server.join().unwrap();
+        assert_eq!(seen.len(), MAX_STEPS);
+        assert!(seen[..MAX_STEPS - 1].iter().all(|b| !b.to_string().contains("STEP LIMIT")), "not told early");
+        assert!(seen[MAX_STEPS - 1].to_string().contains("STEP LIMIT"), "told on the last step");
     }
 
     #[test]

@@ -78,6 +78,12 @@ fun whereItRuns(computer: String?): String? = if (computer == null)
   "Running in the cloud: chat, web search and memory. Choose My computer to use the tools on your own computer."
 else "Running on your computer ($computer): it can use the files and tools there, and asks on the computer before it changes anything."
 
+/**
+ * Enter sends only for a hardware keyboard without Shift. The on-screen keyboard (its key events carry FLAG_SOFT_KEYBOARD) has no
+ * Shift+Enter, so its Enter must make a new line: the arrow button sends.
+ */
+fun enterSends(shift: Boolean, keyFlags: Int): Boolean = !shift && (keyFlags and android.view.KeyEvent.FLAG_SOFT_KEYBOARD) == 0
+
 /** True from 90 percent of the limit (SRV-01): the counter shows. */
 fun showCounter(length: Int, limit: Int?): Boolean = limit != null && length >= limit * 9 / 10
 
@@ -106,7 +112,7 @@ fun Composer(text: String, onText: (String) -> Unit, m: ComposerModel, modifier:
           keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
           modifier = Modifier.fillMaxWidth().then(fieldExtra).testTag("message-field").semantics { contentDescription = "Message to Zohara Agent" }.onPreviewKeyEvent {
             // COMP-03: Enter sends and Shift+Enter is a new line on a hardware keyboard; the on-screen Enter is always a new line
-            if (it.type == KeyEventType.KeyDown && it.key == Key.Enter && !it.isShiftPressed) { send(); true } else false
+            if (it.type == KeyEventType.KeyDown && it.key == Key.Enter && enterSends(it.isShiftPressed, it.nativeKeyEvent.flags)) { send(); true } else false
           },
         )
         if (text.isEmpty()) Text(if (m.questionOpen) "Answer the question above first." else PLACEHOLDER, style = t.message, color = c.dim)
