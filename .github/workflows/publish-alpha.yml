@@ -26,7 +26,8 @@ jobs:
           GH_TOKEN: ${{ secrets.PACKAGES_DISPATCH_TOKEN }}
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
-          [ -n "$GH_TOKEN" ] || { echo "::warning::PACKAGES_DISPATCH_TOKEN is not set; build #$RUN_ID was not published."; exit 0; }
+          # a missing token must be a RED run: a green run that published nothing hid this problem for days
+          [ -n "$GH_TOKEN" ] || { echo "::error::PACKAGES_DISPATCH_TOKEN is not set in this repository's secrets, so build #$RUN_ID was NOT published to alpha. See docs/DEPLOY.md (Publishing to alpha)."; exit 1; }
           jq -n --arg run "$RUN_ID" '{event_type: "package-published",
             client_payload: {run_id: $run, source_repo: "Zohaib8090/ZO-AI", channel: "alpha"}}' \
             | gh api repos/Zohaib8090/zohara-packages/dispatches --method POST --input -

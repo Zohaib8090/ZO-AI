@@ -152,3 +152,11 @@ The service answers at **https://zohara-agent.duckdns.org** (a free DuckDNS name
 
 The Play listing links to `https://zohara-agent.duckdns.org/privacy` (privacy policy) and `https://zohara-agent.duckdns.org/delete-account` (account deletion page). Both are served without sign-in
 and their contact line comes from `ZO_CONTACT_EMAIL`, so that variable must be a real, read inbox before Play review. See `docs/PLAY-STORE.md`.
+
+## Publishing to alpha (what makes a new build reach the laptop)
+
+`publish-alpha.yml` runs after every green build on main and asks `Zohaib8090/zohara-packages` (publish.yml, workflow `repository_dispatch`) to publish the package to the alpha channel. It needs a repository **secret** `PACKAGES_DISPATCH_TOKEN` in THIS repository: a fine-grained personal access token whose only repository is `Zohaib8090/zohara-packages`, with the permission **Contents: Read and write** (needed for `repository_dispatch`) and an expiry you can live with. Create it on GitHub (Settings > Developer settings > Fine-grained tokens), then add it under this repository's Settings > Secrets and variables > Actions. Never paste it in chat or commit it.
+
+If the secret is missing the workflow now fails (red) instead of quietly doing nothing. Found 2026-11-14: the secret was gone, no build had reached alpha since 2026-11-12, and the laptop still had the 2026-11-03 build.
+
+On the laptop an update arrives through Settings > Zohara Update (or `sudo pacman -Sy` and then `sudo pacman -Syu`); the package is now named `zohara-agent` and replaces `zohara-ai`.
