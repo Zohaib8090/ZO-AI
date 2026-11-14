@@ -635,14 +635,15 @@ mod tests {
         // (zohara_ask_user is left out: nobody can be asked by this run)
         assert_eq!(tools.len(), crate::tools::RESTRICTED_TOOLS.len() - 1, "{tools:?}");
         assert!(tools.iter().all(|n| crate::tools::RESTRICTED_TOOLS.contains(n)));
-        // not restricted: the old limit of 15 and the full prompt
+        // not restricted: no step limit (16 calls still end in an answer) and the full prompt
         let admin = fresh(false);
-        let (url, seen) = fake_model(vec![tool_reply(&[("zohara_system", json!({}))]); 15]);
+        let mut replies = vec![tool_reply(&[("zohara_system", json!({}))]); 16];
+        replies.push(chat_reply("done"));
+        let (url, seen) = fake_model(replies);
         let mut hist = Vec::new();
         let mut c = cfg_for(&url);
         c.provider = crate::ai::providers::find("ollama").unwrap();
-        let e = scope(&admin, || agent::run(&c, &mut hist, "x", Mode::Bypass, &Deny, &NoQuestions, &AtomicBool::new(false), &mut |_| {})).unwrap_err();
-        assert!(e.contains("15 steps"), "{e}");
+        scope(&admin, || agent::run(&c, &mut hist, "x", Mode::Bypass, &Deny, &NoQuestions, &AtomicBool::new(false), &mut |_| {})).unwrap();
         assert!(seen.join().unwrap()[0]["messages"][0]["content"].as_str().unwrap().contains("Waydroid"));
     }
 
