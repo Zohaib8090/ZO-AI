@@ -38,6 +38,14 @@ class DeepLinksTest {
     assertNull(DeepLinks.chatIdFrom(view("zohara-agent://new")))
   }
 
+  @Test fun theAboutLinkOfTheUpdateNotification() {
+    assertEquals(DeepLinks.ABOUT, DeepLinks.pendingFrom(view("zohara-agent://about")))
+    assertEquals(DeepLinks.ABOUT, DeepLinks.pendingFrom(view("zohara-chat://about")))
+    assertNull("never mistaken for a chat id", DeepLinks.validChatId(DeepLinks.ABOUT))
+    assertNull(DeepLinks.chatIdFrom(view("zohara-agent://about")))
+    assertNull(DeepLinks.pendingFrom(view("https://evil.example/about")))
+  }
+
   @Test fun theZoharaChatSchemeStillWorks() {
     assertEquals("c1", DeepLinks.pendingFrom(view("zohara-chat://chat/c1")))
     assertEquals(DeepLinks.NEW_CHAT, DeepLinks.pendingFrom(view("zohara-chat://new")))

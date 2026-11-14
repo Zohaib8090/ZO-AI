@@ -4,7 +4,7 @@ import android.content.Intent
 
 /**
  * NAV-20, NAV-22, AUTH-24: where an intent wants to go. Notifications and links open a chat (`zohara-agent://chat/<id>` or the `chat` extra), the
- * launcher shortcut "New chat" is `zohara-agent://new`, and `zohara-agent://device` opens "Approve a sign-in" (the link never carries the code).
+ * launcher shortcut "New chat" is `zohara-agent://new`, and `zohara-agent://device` opens "Approve a sign-in" (the link never carries the code), `zohara-agent://about` opens Settings > About (update notifications).
  * Anything that is not `[\w-]{1,64}` as a chat id is ignored.
  */
 object DeepLinks {
@@ -12,6 +12,8 @@ object DeepLinks {
   /** pending values that are not chat ids (they do not match the id pattern, so they can never be mistaken for one) */
   const val NEW_CHAT = "+new"
   const val APPROVE = "+device"
+  /** `zohara-agent://about`: the update notification opens Settings > About */
+  const val ABOUT = "+about"
   /** the link scheme; [OLD_SCHEMES] (the names before the renames) are still accepted so old links and notifications keep working */
   const val SCHEME = "zohara-agent"
   const val OLD_SCHEME = "zoai"
@@ -32,6 +34,7 @@ object DeepLinks {
       "chat" -> validChatId(data.lastPathSegment)
       "new" -> NEW_CHAT
       "device" -> APPROVE
+      "about" -> ABOUT
       else -> null
     }
   }

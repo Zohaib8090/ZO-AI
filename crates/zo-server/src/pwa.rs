@@ -1,6 +1,6 @@
 //! The installable web app: the manifest, the icons and the service worker (`web/sw.js`). Served without a login (a browser
 //! fetches them before anyone is signed in). The service worker gets a version that is a hash of the page, so every new page is a
-//! new worker and the app shows "Update available".
+//! new worker and the app shows "New version available - Reload".
 
 use crate::{header, send_response, App};
 use sha2::{Digest, Sha256};
@@ -34,9 +34,19 @@ fn sitemap(base: &str) -> String {
     )
 }
 
-/// The app page with this server's own address in its canonical, og: and JSON-LD tags.
+/// The web build shown in Settings > About: the workspace version and the first characters of the hash that also versions the service worker.
+pub fn web_build() -> &'static str {
+    static B: OnceLock<String> = OnceLock::new();
+    B.get_or_init(|| {
+        let v = sw_text();
+        let hash = v.split("const VERSION = \"").nth(1).and_then(|r| r.split('"').next()).unwrap_or("");
+        format!("{} ({})", env!("CARGO_PKG_VERSION"), hash.chars().take(7).collect::<String>())
+    })
+}
+
+/// The app page with this server's own address in its canonical, og: and JSON-LD tags, and its build in the About page.
 pub fn index_for(app: &App) -> String {
-    INDEX.replace(DEFAULT_BASE, base_of(app))
+    INDEX.replace(DEFAULT_BASE, base_of(app)).replace("__WEB_BUILD__", web_build())
 }
 
 const ICONS: [(&str, &[u8]); 6] = [
@@ -105,6 +115,19 @@ mod tests {
             assert!(ICONS.iter().any(|(p, b)| *p == i["src"].as_str().unwrap() && b.starts_with(b"\x89PNG")), "{i}");
         }
         assert!(INDEX.contains("rel=\"manifest\"") && INDEX.contains("apple-touch-icon") && INDEX.contains("theme-color"));
+    }
+
+    #[test]
+    fn the_page_shows_its_build_and_offers_reload_when_a_new_worker_waits() {
+        // __WEB_BUILD__ is replaced in what is served; the toast text and the About checks are in the page
+        assert!(INDEX.contains("const WEB_BUILD = \"__WEB_BUILD__\""));
+        let b = web_build();
+        assert!(b.starts_with(env!("CARGO_PKG_VERSION")) && b.ends_with(')') && !b.contains("__"), "{b}");
+        assert_eq!(b.rsplit('(').next().unwrap().trim_end_matches(')').len(), 7);
+        for needle in ["New version available", "checkWebUpdate", "/api/update/latest", "function isNewerVersion", "swReg.waiting"] {
+            assert!(INDEX.contains(needle), "{needle}");
+        }
+        assert!(!INDEX.contains("Update available"));
     }
 
     #[test]

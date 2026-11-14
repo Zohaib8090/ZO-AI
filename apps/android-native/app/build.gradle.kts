@@ -14,6 +14,11 @@ if (hasGoogleServices) {
   apply(plugin = "com.google.gms.google-services")
 }
 
+// `version = "x.y.z"` under [workspace.package] in the repository's Cargo.toml
+val workspaceVersion: String = rootProject.file("../../Cargo.toml").takeIf { it.exists() }?.readLines()
+  ?.dropWhile { it.trim() != "[workspace.package]" }?.drop(1)?.takeWhile { !it.trim().startsWith("[") }
+  ?.firstNotNullOfOrNull { Regex("""^\s*version\s*=\s*"([^"]+)"""").find(it)?.groupValues?.get(1) } ?: "0.0.0"
+
 android {
   namespace = "org.zohara.agent"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -22,8 +27,10 @@ android {
     applicationId = "org.zohara.agent"
     minSdk = 26
     targetSdk = 36
+    // The version has ONE source: the Cargo workspace version (../../Cargo.toml). CI passes ZO_VERSION_NAME (the release tag without "v") and a
+    // growing ZO_VERSION_CODE (Play needs a higher code for every upload); a local build uses the workspace version and code 1.
     versionCode = (System.getenv("ZO_VERSION_CODE") ?: "1").toInt()
-    versionName = "0.1.${System.getenv("ZO_VERSION_CODE") ?: "1"}"
+    versionName = System.getenv("ZO_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: workspaceVersion
     buildConfigField("String", "DEFAULT_SERVER_URL", "\"https://zohara-agent.duckdns.org\"")
     buildConfigField("boolean", "FIREBASE_CONFIGURED", hasGoogleServices.toString())
     // the Web client id of the Firebase project (Google sign-in): the owner puts it in local.properties as ZO_WEB_CLIENT_ID=... or the
@@ -99,6 +106,7 @@ dependencies {
   implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.browser)
+  implementation(libs.androidx.work.runtime)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.kotlinx.coroutines.play.services)
@@ -119,6 +127,7 @@ dependencies {
   testImplementation(libs.okhttp.mockwebserver)
   testImplementation(libs.robolectric)
   testImplementation(libs.androidx.test.core)
+  testImplementation(libs.androidx.work.testing)
   testImplementation(libs.androidx.test.junit)
   testImplementation(platform(libs.androidx.compose.bom))
   testImplementation(libs.androidx.compose.ui.test.junit4)

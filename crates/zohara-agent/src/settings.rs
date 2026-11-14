@@ -9,7 +9,7 @@ use zo_core::ai::{agent, claude_code, profiles, providers, Selection};
 use zo_core::mcp_client::{self, ServerConfig};
 use std::sync::mpsc;
 
-fn section(title: &str) -> (gtk::Box, gtk::Box) {
+pub(crate) fn section(title: &str) -> (gtk::Box, gtk::Box) {
     let outer = vbox(8);
     outer.set_margin_bottom(26);
     outer.append(&lbl(title, "settings-head"));
@@ -20,7 +20,7 @@ fn section(title: &str) -> (gtk::Box, gtk::Box) {
 }
 
 /// One line in a section: a title and a few words under it on the left, a control on the right.
-fn row(title: &str, sub: &str, control: Option<&impl IsA<gtk::Widget>>) -> gtk::Box {
+pub(crate) fn row(title: &str, sub: &str, control: Option<&impl IsA<gtk::Widget>>) -> gtk::Box {
     let r = hbox(14);
     r.add_css_class("settings-row");
     let col = vbox(3);
@@ -63,7 +63,7 @@ fn find_sub(r: &gtk::Box) -> gtk::Label {
     lbl("", "pc-meta")
 }
 
-fn no_control() -> Option<&'static gtk::Button> {
+pub(crate) fn no_control() -> Option<&'static gtk::Button> {
     None
 }
 
@@ -112,7 +112,7 @@ pub fn show(ui: &Rc<Ui>) {
         ("sync", "Account and sync", "Optional: sign in to keep chats, memory and personalities in step with the web version."),
         ("machines", "Machines", "Other computers Zohara Agent can work on over SSH."),
         ("data", "Data", "Saved chats."),
-        ("about", "About", "Version."),
+        ("about", "About", "Version and updates."),
     ];
     if page.is_empty() || !pages.iter().any(|p| p.0 == page) {
         content.append(&lbl("Settings", "page-title"));
@@ -787,10 +787,11 @@ pub fn show(ui: &Rc<Ui>) {
 
     // ---- about ----
     if page == "about" {
-    let (sec, card) = section("About");
-    card.append(&row("Zohara Agent", &format!("Version {} · the AI built into Zohara OS", env!("CARGO_PKG_VERSION")), no_control()));
-    let _ = agent::SYSTEM_PROMPT;
-    content.append(&sec);
+        let (sec, card) = section("About");
+        card.append(&row("Zohara Agent", &format!("Version {} · the AI built into Zohara OS", zo_core::update::VERSION), no_control()));
+        let _ = agent::SYSTEM_PROMPT;
+        content.append(&sec);
+        crate::updates::about_updates(ui, content);
     }
 
     ui.stack.set_visible_child_name("settings");
@@ -827,7 +828,7 @@ thread_local! {
 }
 
 /// Runs `work` off the main thread and hands its result to `done` on the main thread.
-fn background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, done: impl FnOnce(T) + 'static) {
+pub(crate) fn background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, done: impl FnOnce(T) + 'static) {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(work());
@@ -845,7 +846,7 @@ fn background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, done
     });
 }
 
-fn wrapped(text: &str) -> gtk::Label {
+pub(crate) fn wrapped(text: &str) -> gtk::Label {
     let l = lbl(text, "field-hint");
     l.set_wrap(true);
     l.set_xalign(0.0);

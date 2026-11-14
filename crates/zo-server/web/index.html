@@ -2545,7 +2545,7 @@ async function showActivity() {
 }
 
 /* ---------- settings: a list of pages, each with a Back button ---------- */
-const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How Zohara Agent talks to you."], ["memory", "Memory", "What Zohara Agent remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what Zohara Agent may do on its own."], ["apps", "Connected apps", "Tools Zohara Agent can use (MCP servers)."], ["machines", "Machines", "Computers Zohara Agent can reach over SSH."], ["sync", "Desktop sync", "Share chats and memory with the desktop app."], ["computers", "My computers", "Computers you can run Zohara Agent on from this page."], ["notifications", "Install and notifications", "Install Zohara Agent as an app, and get told when an answer is ready."], ["account", "Account", "Your data, signed-in devices, export and delete."], ["data", "Data", "Saved chats."], ["about", "About", "Version."]];
+const PAGES = [["model", "Model and profiles", "Which AI answers, its key, and saved presets."], ["personality", "Personality", "How Zohara Agent talks to you."], ["memory", "Memory", "What Zohara Agent remembers about you between chats."], ["general", "Appearance and permissions", "Light or dark, and what Zohara Agent may do on its own."], ["apps", "Connected apps", "Tools Zohara Agent can use (MCP servers)."], ["machines", "Machines", "Computers Zohara Agent can reach over SSH."], ["sync", "Desktop sync", "Share chats and memory with the desktop app."], ["computers", "My computers", "Computers you can run Zohara Agent on from this page."], ["notifications", "Install and notifications", "Install Zohara Agent as an app, and get told when an answer is ready."], ["account", "Account", "Your data, signed-in devices, export and delete."], ["data", "Data", "Saved chats."], ["about", "About", "Versions and updates."]];
 const pages = () => PAGES.filter(p => !(restricted() && ADMIN_PAGES.includes(p[0])));
 function row(title, sub, control) { const r = document.createElement("div"); r.className = "settings-row"; r.innerHTML = `<div class="col"><div class="pc-name2"></div>${sub ? '<div class="pc-meta2"></div>' : ""}</div>`; r.querySelector(".pc-name2").textContent = title; if (sub) r.querySelector(".pc-meta2").textContent = sub; if (control) r.appendChild(control); return r; }
 function cardOf(...rows) { const c = document.createElement("div"); c.className = "settings-card"; rows.forEach(r => c.appendChild(r)); return c; }
@@ -2776,7 +2776,74 @@ async function pageData(b) {
   b.appendChild(head("Data"));
   b.appendChild(cardOf(row("Saved chats, projects and tasks", r.chats.length + " saved chats, kept on the server.", open), row("Delete all chats", "Removes the saved conversations here, and on every computer that syncs with this server.", del)));
 }
-async function pageAbout(b) { const s = await op("status"); b.innerHTML = ""; b.appendChild(head("About")); b.appendChild(cardOf(row("Zohara Agent", "Version " + (s.version || "") + " · the AI built into Zohara OS, on the web"))); }
+/* --- versions and update checks (docs/UPDATES.md): semver compare like zo_core::update::is_newer --- */
+const WEB_BUILD = "__WEB_BUILD__"; /* the server swaps in "<workspace version> (<hash of this page>)" */
+function semverParse(v) {
+  const m = /^[vV]?(\d+(?:\.\d+){0,3})(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(String(v || "").trim());
+  if (!m) return null;
+  const nums = m[1].split(".").map(Number); while (nums.length < 4) nums.push(0);
+  return { nums, pre: m[2] ? m[2].split(".") : [] };
+}
+function semverCmp(a, b) {
+  for (let i = 0; i < 4; i++) if (a.nums[i] !== b.nums[i]) return a.nums[i] < b.nums[i] ? -1 : 1;
+  if (!a.pre.length || !b.pre.length) return a.pre.length === b.pre.length ? 0 : (a.pre.length ? -1 : 1);
+  for (let i = 0; i < Math.min(a.pre.length, b.pre.length); i++) {
+    const x = a.pre[i], y = b.pre[i], xn = /^\d+$/.test(x), yn = /^\d+$/.test(y);
+    if (x === y) continue;
+    if (xn && yn) return Number(x) < Number(y) ? -1 : 1;
+    if (xn !== yn) return xn ? -1 : 1;
+    return x < y ? -1 : 1;
+  }
+  return a.pre.length === b.pre.length ? 0 : (a.pre.length < b.pre.length ? -1 : 1);
+}
+function isNewerVersion(current, latest) { const c = semverParse(current), l = semverParse(latest); return !!(c && l && semverCmp(l, c) > 0); }
+/* the newest GitHub release as the server knows it (public, cached for an hour there; nothing about the person is sent) */
+async function fetchLatestRelease() {
+  const r = await fetch("/api/update/latest", { cache: "no-store" });
+  if (!r.ok) throw new Error("the server answered " + r.status);
+  const v = await r.json();
+  if (!v || v.ok !== true) throw new Error("the server does not support update checks");
+  return v;
+}
+/* looks for a newer page (the service worker's own update check); the "New version available" toast appears when one is waiting */
+async function checkWebUpdate() {
+  if (!("serviceWorker" in navigator) || isNative() || !swReg) return "unsupported";
+  await swReg.update();
+  if (swReg.waiting && navigator.serviceWorker.controller) { updateToast(swReg.waiting); return "available"; }
+  if (swReg.installing) return "installing";
+  return "current";
+}
+async function pageAbout(b) {
+  b.innerHTML = ""; b.appendChild(head("About"));
+  const status = row("Updates", "Press Check to look for a newer version.");
+  const sub = status.querySelector(".pc-meta2"), notes = document.createElement("div"); notes.className = "pc-meta2"; notes.style.whiteSpace = "pre-wrap";
+  const rows = [row("Zohara Agent", "The AI built into Zohara OS, on the web"), row("Web app", WEB_BUILD)];
+  const serverRow = row("Server version", "Reading..."); rows.push(serverRow);
+  const check = btn("Check", "", async () => {
+    check.disabled = true; sub.textContent = "Checking..."; notes.textContent = "";
+    try {
+      const [rel, web] = await Promise.all([fetchLatestRelease().catch(e => ({ _err: e.message })), checkWebUpdate().catch(() => "unsupported")]);
+      if (rel.server_version) serverRow.querySelector(".pc-meta2").textContent = rel.server_version;
+      const parts = [];
+      if (web === "available") parts.push("A new version of this page is ready: use Reload in the message at the bottom.");
+      else if (web === "installing") parts.push("A new version of this page is being fetched. A Reload message will appear.");
+      else if (web === "current") parts.push("This page is up to date.");
+      if (rel._err) parts.push("Could not check for new app releases: " + rel._err + ".");
+      else if (!rel.latest) parts.push("Could not check for new app releases" + (rel.error ? ": " + rel.error : "") + ".");
+      else if (rel.server_version && isNewerVersion(rel.server_version, rel.latest.version)) parts.push("Version " + rel.latest.version + " of the apps is out (the server runs " + rel.server_version + ").");
+      else parts.push("The newest app release is " + rel.latest.version + ".");
+      sub.textContent = parts.join(" ");
+      if (rel.latest && rel.latest.notes) notes.textContent = rel.latest.notes;
+      if (rel.latest && /^https:\/\/github\.com\//.test(rel.latest.release_url || "")) { const a = document.createElement("a"); a.href = rel.latest.release_url; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = "Release page"; a.className = "pc-meta2"; notes.appendChild(document.createElement("br")); notes.appendChild(a); }
+    } catch (e) { sub.textContent = "Could not check for updates: " + e.message; }
+    check.disabled = false;
+  });
+  status.appendChild(check);
+  status.querySelector(".col").appendChild(notes);
+  rows.push(status);
+  b.appendChild(cardOf(...rows));
+  fetchLatestRelease().then(v => { serverRow.querySelector(".pc-meta2").textContent = v.server_version || "unknown"; }).catch(() => { serverRow.querySelector(".pc-meta2").textContent = "unknown"; });
+}
 
 /* ---- notifications, installable app, background push ---- */
 /* What this does: the app can be installed (manifest + service worker /sw.js); it can tell the person that an answer is ready or that
@@ -2795,11 +2862,11 @@ let swReg = null, noteReloading = false, pendingChat = "", noteSeq = 0, noteUnse
 const noted = new Set();
 try { const q = new URLSearchParams(location.search).get("chat"); if (q && /^[\w-]{1,64}$/.test(q)) pendingChat = q; } catch {}
 
-/* --- the service worker, and the "Update available" toast --- */
+/* --- the service worker, and the "New version available - Reload" toast --- */
 function updateToast(w) {
   if (document.querySelector(".toast.update")) return;
   const d = document.createElement("div"); d.className = "toast update"; d.setAttribute("role", "status");
-  d.innerHTML = '<span>Update available</span><button type="button" class="tbtn">Reload</button><button type="button" class="tx" aria-label="Dismiss">×</button>';
+  d.innerHTML = '<span>New version available</span><button type="button" class="tbtn">Reload</button><button type="button" class="tx" aria-label="Dismiss">×</button>';
   d.querySelector(".tbtn").onclick = () => {
     if (busy && !confirm("An answer is still being written. Reload anyway?")) return;
     noteReloading = true; try { w.postMessage({ type: "skip-waiting" }); } catch {}
@@ -2819,6 +2886,7 @@ async function swInit() {
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (noteReloading) location.reload(); });
     document.addEventListener("visibilitychange", () => { if (!document.hidden) swReg.update().catch(() => {}); });
     setInterval(() => swReg.update().catch(() => {}), 3600e3);
+    addEventListener("online", () => swReg.update().catch(() => {}));
   } catch {}
 }
 addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstall = e; });

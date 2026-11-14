@@ -556,6 +556,9 @@ Page list in the web and the desktop. Desktop (9): Model and profiles, Personali
 | SET-DATA-01 | Row "Saved chats, projects and tasks": "N saved chats, kept on this computer / the server." + "View chats" | settings.rs data | `pageData:1992` | same | must | settings | [x] |
 | SET-DATA-02 | Row "Delete all chats" (LIST-10) | settings.rs | `pageData:1994` | same | must | settings | [x] |
 | SET-ABOUT-01 | About: "Zohara Agent" "Version X · the AI built into Zohara OS" (phone: app version and server version from `status.version`, build, links to privacy/terms and open-source licences) | settings.rs about | `pageAbout:1998` | adapted | must | settings | [x] |
+| UPD-01 | About: "Check for updates" button and result (up to date / Version X is available with notes / Could not check), `GET /api/update/latest` without a token (docs/UPDATES.md) | updates.rs about_updates | `pageAbout` | same | must | settings | [x] `AboutScreenTest`, `UpdateCheckTest` |
+| UPD-02 | "Download": the GitHub release page for a sideload, the Play listing for a Play install; nothing is downloaded or installed | updates.rs open_release | `pageAbout` release link | adapted | must | settings | [x] `InstallSourceTest`, `AboutScreenTest` |
+| UPD-03 | "Check for updates automatically" (default on), WorkManager every ~12 h, network + battery not low, survives restart, ONE notification per version on the "App updates" channel, tap opens About (`zohara-agent://about`) | updates.rs start | n/a | adapted | must | settings | [x] `UpdateWorkerTest`, `UpdateNotifierTest`, `DeepLinksTest` (not run on a device) |
 
 ## 20. Run on My computer, linked computers, Claude Code status (LINK) NEW
 

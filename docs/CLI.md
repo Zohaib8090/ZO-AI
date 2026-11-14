@@ -35,6 +35,7 @@ memory, model choice and permission mode with the app and the phone. Small on pu
 | `zo memory`, `zo remember "text"`, `zo forget <id>` | Long-term memory. |
 | `zo login`, `zo logout` | Sign in (browser code or e-mail and password) and out; see above. Not needed for the local app. |
 | `zo status` | Provider, model, permission mode, version. |
+| `zo version`, `zo update-check` | The version of this client; ask the server whether a newer release exists (prints the notes, the release page and the pacman command; never installs; exit 1 when the check could not be done). See [UPDATES.md](UPDATES.md). |
 | `zo models [provider]`, `zo use <provider> [model]` | Providers and models; choose one. |
 | `zo mode [Manual\|Auto\|Bypass]` | Show or set the permission mode. |
 

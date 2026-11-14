@@ -14,7 +14,8 @@ what the desktop app and the web app have; the list of everything, one row per f
   done once for the new package: add an Android app `org.zohara.agent` in project `zo-ai-144`, add the SHA-1/SHA-256 of the debug and release keys to it, download a new
   `google-services.json` into `apps/android-native/app/` and create/keep the Google sign-in Web client id. The old Firebase app for `org.zohara.zoai` is only needed while the
   legacy wrapper is still installed. Uninstall the old app when done.
-* Links: the app opens `zohara-agent://chat/<id>`, `zohara-agent://new` and `zohara-agent://device`; the older `zohara-chat://` and `zoai://` links are still accepted.
+* Updates: Settings > About checks for a newer release (button and an automatic check about every 12 hours with one notification per new version; it opens the release page, or the Play listing for a Play install, and never installs anything). `versionName` comes from the Cargo workspace version / the release tag (`ZO_VERSION_NAME`). Details and the release workflow that builds the signed APK and `.aab`: `docs/UPDATES.md`.
+* Links: the app opens `zohara-agent://chat/<id>`, `zohara-agent://new` and `zohara-agent://device` and `zohara-agent://about` (Settings > About; the update notification); the older `zohara-chat://` and `zoai://` links are still accepted.
 * Verification so far is JVM only (JUnit, MockWebServer, Robolectric, Compose UI tests, Roborazzi screenshots in both themes); nothing was run on a device,
   with real Firebase or FCM, or with a real microphone. The README lists what is not verified.
 

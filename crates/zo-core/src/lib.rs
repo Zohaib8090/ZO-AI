@@ -26,6 +26,7 @@ pub mod term;
 pub mod uibridge;
 pub mod voice;
 pub mod tools;
+pub mod update;
 
 pub use policy::{Decision, Mode, Risk};
 pub use tools::{call, definitions, ToolDef};

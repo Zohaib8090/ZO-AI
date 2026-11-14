@@ -47,6 +47,11 @@ class AppContainer(val app: Application) {
   val profilesCache = TtlCache<String, ProfilesResp>()
   val modelsCache = TtlCache<String, ModelsResp>()
 
+  /** the update check of Settings > About and the switch "Check for updates automatically" (update module) */
+  val updates: org.zohara.agent.update.UpdateController by lazy {
+    org.zohara.agent.update.UpdateController(scope, org.zohara.agent.update.UpdateChecker(org.zohara.agent.update.UpdateApi(serverUrl = { serverUrl }), BuildConfig.VERSION_NAME), prefs)
+  }
+
   val session = Session(auth, api, prefs, scope, listOf(providersCache, profilesCache, modelsCache))
   val toast = ToastState()
 

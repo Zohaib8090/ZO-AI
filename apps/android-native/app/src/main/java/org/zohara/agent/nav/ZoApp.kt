@@ -130,6 +130,7 @@ private fun MainShell(container: AppContainer, auth: AuthState.SignedIn, pending
     when {
       pending == DeepLinks.NEW_CHAT -> { navigator.home(); pendingChat.value = null }
       pending == DeepLinks.APPROVE -> { navigator.settings(Routes.SETTINGS_APPROVE); pendingChat.value = null }
+      pending == DeepLinks.ABOUT -> { navigator.settings(Routes.SETTINGS_ABOUT); pendingChat.value = null }
       DeepLinks.validChatId(pending) != null -> { navigator.openChat(pending!!); pendingChat.value = null }
     }
   }
