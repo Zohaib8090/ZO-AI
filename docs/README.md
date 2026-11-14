@@ -14,6 +14,7 @@ https://zohara-agent.duckdns.org, the repository is Zohaib8090/zohara-agent. Eng
 | [ACTIVITY.md](ACTIVITY.md) | What is running now (tray icon, Activity page, web menu) and how to stop it |
 | [SSH.md](SSH.md) | Running commands on other computers over SSH (machines) |
 | [INTERACTION.md](INTERACTION.md) | Question cards and "needs you" notifications on every platform (the contract) |
+| [GREETINGS.md](GREETINGS.md) | The home-screen greetings (20 messages by time of day, weekday and gap) and how each client picks one; one shared JSON file |
 | [NOTIFICATIONS.md](NOTIFICATIONS.md) | Notifications, the installable web app (PWA) and background push |
 
 ## Accounts, sync and the desktop link
@@ -53,6 +54,7 @@ https://zohara-agent.duckdns.org, the repository is Zohaib8090/zohara-agent. Eng
 | Document | What it is |
 |---|---|
 | [RELEASING.md](RELEASING.md) | How a tag becomes a GitHub Release (package, tarball, APK, AAB, checksums, `latest.json`), versioning, secrets, keystore |
+| [UPDATES.md](UPDATES.md) | The update check in every client (`/api/update/latest`, About pages, notifications, `zo update-check`); notify only, nothing installs itself |
 
 ## History and working notes
 
