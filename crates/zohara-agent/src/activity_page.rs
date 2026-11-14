@@ -126,7 +126,7 @@ fn source_word(s: &str) -> &str {
 /// Everything the page shows, read once, so that "did anything change" is one comparison.
 #[derive(Debug, Default)]
 struct Snapshot {
-    running: Vec<(u64, Kind, String, String, String, Option<String>, u64, bool, String)>,
+    running: Vec<(u64, Kind, String, String, String, Option<String>, u64, bool, String, u32)>,
     terminals: Vec<(u64, String)>,
     phone: String,
     web: String,
@@ -156,7 +156,7 @@ fn snapshot() -> Snapshot {
             Kind::Terminal => s.terminals.push((i.id, i.title.clone())),
             _ => {
                 let msg = STOPPED.with(|m| m.borrow().get(&i.id).cloned()).unwrap_or_default();
-                s.running.push((i.id, i.kind, i.title.clone(), i.detail.clone(), i.source.clone(), i.chat_id.clone(), i.started_ms, i.can_stop(), msg));
+                s.running.push((i.id, i.kind, i.title.clone(), i.detail.clone(), i.source.clone(), i.chat_id.clone(), i.started_ms, i.can_stop(), msg, i.steps));
             }
         }
     }
@@ -297,10 +297,13 @@ fn rebuild(ui: &Rc<Ui>, s: &Snapshot) {
         empty.append(&d);
         sec.append(&empty);
     }
-    for (id, kind, title, detail, source, chat_id, started, can_stop, msg) in &s.running {
+    for (id, kind, title, detail, source, chat_id, started, can_stop, msg, steps) in &s.running {
         let mut sub = format!("{} from {}", kind_word(*kind), source_word(source));
         if !detail.is_empty() {
             sub += &format!(" · {detail}");
+        }
+        if *steps > 0 {
+            sub += &format!(" · {}", crate::steps::step_label(*steps as usize));
         }
         let (row, right) = line(kind_icon(*kind), title, &sub);
         let t = lbl(&clock(activity::now_ms().saturating_sub(*started)), "pc-meta");

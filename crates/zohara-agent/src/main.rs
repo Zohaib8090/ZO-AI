@@ -20,6 +20,7 @@ mod quick;
 mod scheduler;
 mod settings;
 mod shortcut;
+mod steps;
 mod theme;
 mod tray;
 mod updates;
@@ -1889,6 +1890,11 @@ fn build_ui(app: &adw::Application) {
     let tools_spacer = gtk::Box::new(Orientation::Horizontal, 0);
     tools_spacer.set_hexpand(true);
     tools.append(&tools_spacer);
+    // "Step 7": the tool calls made so far in the running answer, beside the stop button
+    let step_lbl = lbl("", "step-counter");
+    step_lbl.set_visible(false);
+    step_lbl.set_valign(gtk::Align::Center);
+    tools.append(&step_lbl);
     let send_btn = icon_button("go-up-symbolic", "Send", "tool-btn send");
     tools.append(&send_btn);
     composer.append(&tools);
@@ -2376,6 +2382,12 @@ fn build_ui(app: &adw::Application) {
             }
             sb.set_icon_name(if busy { "media-playback-stop-symbolic" } else { "go-up-symbolic" });
             sb.set_tooltip_text(Some(if busy { "Stop" } else { "Send" }));
+        }));
+        let sl = step_lbl.clone();
+        chat_ctl.on_steps(Rc::new(move |n| {
+            sl.set_text(&steps::step_label(n));
+            sl.set_tooltip_text(Some(&steps::step_tip(n)));
+            sl.set_visible(n > 0);
         }));
         let (c, p, ui2) = (chat_ctl.clone(), prompt.clone(), ui.clone());
         prompt.connect_send(move || {

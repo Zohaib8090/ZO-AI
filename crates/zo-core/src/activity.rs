@@ -60,6 +60,8 @@ pub struct Item {
     /// Setting this stops the thing. None: it can only be watched.
     pub cancel: Option<Arc<AtomicBool>>,
     pub tenant: Option<String>,
+    /// Tool calls made so far (answers only; 0 = none yet or not an answer).
+    pub steps: u32,
     /// Closing a terminal is the stop of a terminal.
     term: Option<u32>,
 }
@@ -70,8 +72,12 @@ impl Item {
     }
 
     pub fn to_json(&self) -> Value {
-        json!({"id": self.id, "kind": self.kind.as_str(), "title": self.title, "detail": self.detail, "source": self.source,
-            "chat_id": self.chat_id, "started_ms": self.started_ms, "can_stop": self.can_stop()})
+        let mut v = json!({"id": self.id, "kind": self.kind.as_str(), "title": self.title, "detail": self.detail, "source": self.source,
+            "chat_id": self.chat_id, "started_ms": self.started_ms, "can_stop": self.can_stop()});
+        if self.steps > 0 {
+            v["steps"] = json!(self.steps);
+        }
+        v
     }
 }
 
@@ -98,6 +104,13 @@ pub struct Guard {
 impl Guard {
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    /// Sets how many tool calls the answer has made so far.
+    pub fn set_steps(&self, n: u32) {
+        if let Some(i) = items().iter_mut().find(|i| i.id == self.id) {
+            i.steps = n;
+        }
     }
 
     /// Changes the second line of the item (what it is doing now).
@@ -148,6 +161,7 @@ pub fn start(kind: Kind, title: &str, detail: &str, source: &str, chat_id: Optio
         started_ms: now_ms(),
         cancel,
         tenant,
+        steps: 0,
         term: None,
     });
     Guard { id }
@@ -247,6 +261,7 @@ fn live_items() -> Vec<Item> {
                 started_ms: 0,
                 cancel: None,
                 tenant: None,
+                steps: 0,
                 term: Some(t.id),
             });
         }
@@ -263,7 +278,7 @@ fn live_items() -> Vec<Item> {
         } else {
             format!("{} · waiting for the first sync", c.email)
         };
-        out.push(Item { id: SYNC_ID, kind: Kind::Sync, title: "Sync".into(), detail, source: "background".into(), chat_id: None, started_ms: 0, cancel: None, tenant: None, term: None });
+        out.push(Item { id: SYNC_ID, kind: Kind::Sync, title: "Sync".into(), detail, source: "background".into(), chat_id: None, started_ms: 0, cancel: None, tenant: None, steps: 0, term: None });
     }
     out
 }
@@ -386,6 +401,20 @@ mod tests {
 
     fn mine(v: &[Item], title: &str) -> bool {
         v.iter().any(|i| i.title == title)
+    }
+
+    #[test]
+    fn the_step_count_of_an_answer_is_listed_and_in_the_json_only_once_it_is_above_zero() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let g = start(Kind::Answer, "steps-test", "", "desktop", None, None);
+        let find = || list().into_iter().find(|i| i.title == "steps-test").expect("listed");
+        assert_eq!(find().steps, 0);
+        assert!(find().to_json().get("steps").is_none());
+        g.set_steps(7);
+        assert_eq!(find().steps, 7);
+        assert_eq!(find().to_json()["steps"], 7);
+        drop(g);
+        assert!(!mine(&list(), "steps-test"));
     }
 
     #[test]

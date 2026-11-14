@@ -37,6 +37,8 @@ pub struct Ctl {
     busy: Cell<bool>,
     cancel: Arc<AtomicBool>,
     on_busy: RefCell<Option<Rc<dyn Fn(bool)>>>,
+    /// Called with the number of tool calls made so far in the running answer (0 when it ends).
+    on_steps: RefCell<Option<Rc<dyn Fn(usize)>>>,
     on_retry: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     /// Called with (which of your messages, its new text) when a message is edited and sent again.
     on_edit: Rc<RefCell<Option<Rc<dyn Fn(usize, String)>>>>,
@@ -113,7 +115,7 @@ impl Ctl {
         scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         scroll.set_visible(false);
         chat.insert_child_after(&scroll, Some(hero));
-        Rc::new(Ctl { chat: chat.clone(), hero: hero.clone(), thread, scroll, history: RefCell::new(Vec::new()), session: RefCell::new(None), extra: RefCell::new(String::new()), title: RefCell::new(String::new()), id: RefCell::new(String::new()), entries: RefCell::new(Vec::new()), on_saved: RefCell::new(None), busy: Cell::new(false), cancel: Arc::new(AtomicBool::new(false)), on_busy: RefCell::new(None), on_retry: Rc::new(RefCell::new(None)), on_edit: Rc::new(RefCell::new(None)), last_retry: RefCell::new(None), branches: RefCell::new(Default::default()), on_switch: Rc::new(RefCell::new(None)), last_nav: RefCell::new(None), last_usage: Cell::new(None), group: RefCell::new(None), base: Cell::new(Default::default()) })
+        Rc::new(Ctl { chat: chat.clone(), hero: hero.clone(), thread, scroll, history: RefCell::new(Vec::new()), session: RefCell::new(None), extra: RefCell::new(String::new()), title: RefCell::new(String::new()), id: RefCell::new(String::new()), entries: RefCell::new(Vec::new()), on_saved: RefCell::new(None), busy: Cell::new(false), cancel: Arc::new(AtomicBool::new(false)), on_busy: RefCell::new(None), on_steps: RefCell::new(None), on_retry: Rc::new(RefCell::new(None)), on_edit: Rc::new(RefCell::new(None)), last_retry: RefCell::new(None), branches: RefCell::new(Default::default()), on_switch: Rc::new(RefCell::new(None)), last_nav: RefCell::new(None), last_usage: Cell::new(None), group: RefCell::new(None), base: Cell::new(Default::default()) })
     }
 
     pub fn on_saved(&self, f: Rc<dyn Fn()>) {
@@ -459,6 +461,17 @@ impl Ctl {
 
     pub fn on_busy(&self, f: Rc<dyn Fn(bool)>) {
         *self.on_busy.borrow_mut() = Some(f);
+    }
+
+    pub fn on_steps(&self, f: Rc<dyn Fn(usize)>) {
+        *self.on_steps.borrow_mut() = Some(f);
+    }
+
+    fn set_steps(&self, n: usize) {
+        let f = self.on_steps.borrow().clone();
+        if let Some(f) = f {
+            f(n);
+        }
     }
 
     fn set_busy(&self, on: bool) {
@@ -810,6 +823,10 @@ impl Ctl {
             let _activity = activity;
             let tx2 = tx.clone();
             let mut emit = |e: Event| {
+                // the Activity page shows the step count of this answer
+                if let Event::Steps(n) = &e {
+                    _activity.set_steps(*n as u32);
+                }
                 let _ = tx2.send(Msg::Ev(e));
             };
             let r = match &cfg {
@@ -820,9 +837,26 @@ impl Ctl {
         });
         let me = self.clone();
         let prompt = prompt.clone();
+        let mut gate = crate::steps::StuckGate::default();
+        let mut notice: Option<gtk::Box> = None;
         glib::timeout_add_local(Duration::from_millis(40), move || {
             loop {
                 match rx.try_recv() {
+                    Ok(Msg::Ev(Event::Steps(n))) => me.set_steps(n),
+                    Ok(Msg::Ev(Event::Stuck { n, .. })) => {
+                        // never stops anything by itself: it asks, and Stop is the same as the Stop button
+                        if gate.should_show(n) {
+                            if let Some(old) = notice.take() {
+                                me.thread.remove(&old);
+                            }
+                            me.end_group();
+                            let me2 = me.clone();
+                            let card = crate::steps::notice(move || me2.stop());
+                            me.thread.append(&card);
+                            me.scroll_down();
+                            notice = Some(card);
+                        }
+                    }
                     Ok(Msg::Ev(Event::TextDelta(d))) => {
                         thinking.set_visible(false);
                         let entry = live.get_or_insert_with(|| (me.add_plain("", "msg-live"), String::new()));
@@ -882,6 +916,10 @@ impl Ctl {
                     }
                     Ok(Msg::Done(result, history, session)) => {
                         thinking.set_visible(false);
+                        if let Some(old) = notice.take() {
+                            me.thread.remove(&old);
+                        }
+                        me.set_steps(0);
                         me.end_group();
                         // stopped half way: keep what had been written
                         if let Some((w, partial)) = live.take() {
@@ -909,6 +947,7 @@ impl Ctl {
                     }
                     Err(mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
                     Err(mpsc::TryRecvError::Disconnected) => {
+                        me.set_steps(0);
                         me.set_busy(false);
                         prompt.set_sensitive(true);
                         return glib::ControlFlow::Break;
