@@ -12,9 +12,10 @@ use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-const MAX_STEPS: usize = 25;
+/// Steps per answer for the person's own agent: no limit (Stop ends it; a growing conversation is summarized on the way).
+const MAX_STEPS: usize = usize::MAX;
 
-/// Added to the instructions for the last step of an answer.
+/// Added to the instructions for the last step of an answer (only accounts that have a step limit reach it).
 const WRAP_UP: &str = "\n\nSTEP LIMIT: this is your last step for this answer. Do not call any tool now. Reply in words only: say what you have done, what is still open, and what you would do next. The person can say \"continue\" to go on.";
 
 thread_local! {
@@ -420,9 +421,20 @@ pub fn run_with(cfg: &Config, history: &mut Vec<Turn>, user: &str, extra: Extra,
         if cancel.load(Ordering::Relaxed) {
             return Err(STOPPED.into());
         }
+        // a long run: summarize the conversation before it outgrows the window
+        if step > 0 && step % 5 == 0 {
+            let used = super::context::tokens(&cfg.system) + super::context::specs_tokens(&specs) + super::context::history_tokens(history);
+            if used as f64 > window as f64 * super::context::COMPACT_AT {
+                match compact(cfg, history, cancel, &mut |_| {}) {
+                    Ok(()) => on_event(Event::ToolDone { name: "compaction".into(), ok: true, output: "The earlier part of this conversation was summarized, so there is room to go on.".into() }),
+                    Err(e) if e == STOPPED => return Err(e),
+                    Err(_) => {}
+                }
+            }
+        }
         // the last step: the model is told to wrap up, so the person gets a report and not just an error
         let wrap_up;
-        let cfg = if step + 1 == max_steps && max_steps > 1 {
+        let cfg = if max_steps != usize::MAX && step + 1 == max_steps && max_steps > 1 {
             wrap_up = Config { provider: cfg.provider, base_url: cfg.base_url.clone(), model: cfg.model.clone(), key: cfg.key.clone(), system: format!("{}{WRAP_UP}", cfg.system), vision: cfg.vision };
             &wrap_up
         } else {
@@ -907,18 +919,19 @@ mod tests {
     }
 
     #[test]
-    fn the_last_step_tells_the_model_to_wrap_up_in_words() {
+    fn the_persons_own_agent_has_no_step_limit() {
         let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let call = json!({"choices":[{"message":{"content":null,"tool_calls":[{"id":"c","function":{"name":"zohara_shell","arguments":"{\"cmd\":\"true\"}"}}]}}]});
-        let mut replies = vec![call; MAX_STEPS - 1];
-        replies.push(json!({"choices":[{"message":{"content":"Done so far: a lot. Open: nothing. Say continue."}}]}));
+        let mut replies = vec![call; 40];
+        replies.push(json!({"choices":[{"message":{"content":"All forty steps done."}}]}));
         let (url, server) = mock(replies);
         let mut history = Vec::new();
-        run(&cfg(url, "openai"), &mut history, "go on forever", Mode::Auto, &Deny, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        let mut last = String::new();
+        run(&cfg(url, "openai"), &mut history, "keep going", Mode::Auto, &Deny, &AtomicBool::new(false), &mut |e| if let Event::Text(t) = e { last = t }).unwrap();
+        assert_eq!(last, "All forty steps done.");
         let seen = server.join().unwrap();
-        assert_eq!(seen.len(), MAX_STEPS);
-        assert!(seen[..MAX_STEPS - 1].iter().all(|b| !b.to_string().contains("STEP LIMIT")), "not told early");
-        assert!(seen[MAX_STEPS - 1].to_string().contains("STEP LIMIT"), "told on the last step");
+        assert_eq!(seen.len(), 41);
+        assert!(seen.iter().all(|b| !b.to_string().contains("STEP LIMIT")));
     }
 
     #[test]
