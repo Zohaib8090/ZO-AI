@@ -193,6 +193,9 @@ svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .tool-btn:hover{background:var(--hov);color:var(--text)}
 .tool-btn.send{background:var(--accent);color:var(--onaccent);border-radius:10px;width:32px}.tool-btn.send:hover{background:var(--accent2)}
 .tool-btn.stop{background:#E5484D;color:#fff;border-radius:10px;width:32px}
+.stepn{font-size:12px;color:var(--dim);margin-right:6px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.toast.stuck{width:max-content;display:flex;align-items:center;gap:12px;max-width:calc(100vw - 32px);bottom:calc(150px + var(--sab,0px));z-index:41}
+.toast.stuck .tbtn{color:#E5484D;font-weight:600}.toast.stuck .tbtn:hover{text-decoration:underline}.toast.stuck .tx{color:var(--dim);font-size:16px;line-height:1}
 .tool-btn.mic{position:relative}.tool-btn.mic:disabled{opacity:.4;cursor:not-allowed}
 .tool-btn.mic.on,.tool-btn.mic.on:hover{background:#E5484D;color:#fff}
 .tool-btn.mic.on::after{content:"";position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;background:#fff;animation:micp 1.1s ease-in-out infinite}@keyframes micp{50%{opacity:.25;transform:scale(.7)}}
@@ -441,7 +444,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .note a{display:inline-block;padding:14px 6px;margin:-14px -6px}
   .pills{padding:4px 4px 0}
   .q-card{padding:12px}
-  .toast.update .tbtn{min-height:44px;padding:0 8px}
+  .toast.update .tbtn,.toast.stuck .tbtn{min-height:44px;padding:0 8px}
   .netbar .btn{min-height:44px}
 }
 
@@ -723,7 +726,7 @@ function greet() {
 /* ---------- the composer (home and chat share it) ---------- */
 function composerHTML() {
   return `<div class="composer"><div class="att-strip" id="attStrip" aria-label="Attachments"></div><textarea id="text" rows="1" placeholder="How can I help you today?"></textarea>
-    <div class="row"><button class="tool-btn" id="plus" title="Add pictures, files or a link" aria-label="Add pictures, files or a link" data-i="plus"></button><span class="grow"></span>
+    <div class="row"><button class="tool-btn" id="plus" title="Add pictures, files or a link" aria-label="Add pictures, files or a link" data-i="plus"></button><span class="grow"></span><span class="stepn hide" id="stepN" role="status" aria-live="off"></span>
     <button class="tool-btn mic" id="mic" data-i="mic" aria-pressed="false"></button>
     <button class="tool-btn send" id="send" title="Send" data-i="up"></button><button class="tool-btn stop hide" id="stop" title="Stop" data-i="stop"></button></div></div>
     <div class="runnote hide" id="runNote" role="status" aria-live="polite"></div>
@@ -748,7 +751,20 @@ function wireComposer() {
   if ($("pTerminal")) $("pTerminal").onclick = () => dockToggle("terminal");
   refreshModel(); t.focus();
 }
-function setBusy(b) { busy = b; if ($("send")) { $("send").classList.toggle("hide", b); $("stop").classList.toggle("hide", !b); $("text").disabled = b; voiceMicPaint(); } }
+/* live step counter and stuck-loop notice (stream events "steps" {n} and "stuck" {n, tool}); never stops anything by itself */
+let stepsN = 0;
+function stepsPaint(group) { const e = $("stepN"); if (e) { e.textContent = stepsN > 0 ? "Step " + stepsN : ""; e.classList.toggle("hide", !(busy && stepsN > 0)); } if (group) { group.dataset.step = stepsN; setGroupText(group); } }
+function stuckClear() { document.querySelectorAll(".toast.stuck").forEach(x => x.remove()); }
+function stuckNotice() {
+  stuckClear();
+  const d = document.createElement("div"); d.className = "toast stuck"; d.setAttribute("role", "alert");
+  d.innerHTML = `<span>Repeating the same step. Stop?</span><button class="tbtn" type="button">Stop</button><button class="tx" type="button" aria-label="Dismiss">\u00d7</button>`;
+  const [stop, x] = d.querySelectorAll("button");
+  stop.onclick = () => { d.remove(); if (busy && $("stop")) $("stop").click(); };
+  x.onclick = () => d.remove();
+  document.body.appendChild(d);
+}
+function setBusy(b) { if (b !== busy) { stepsN = 0; stuckClear(); } busy = b; stepsPaint(); if ($("send")) { $("send").classList.toggle("hide", b); $("stop").classList.toggle("hide", !b); $("text").disabled = b; voiceMicPaint(); } }
 async function refreshModel() {
   if (onDesktop()) {
     const id = runOn; let ok = true;
@@ -1109,7 +1125,7 @@ function newGroup(active) {
   g.querySelector(".tool-head").onclick = () => g.classList.toggle("open");
   thread().appendChild(g); setGroupText(g); return g;
 }
-function setGroupText(g) { const n = +g.dataset.n; g.querySelector(".tool-head-text").textContent = g.classList.contains("active") ? "Working…" : "Ran " + n + " command" + (n === 1 ? "" : "s"); }
+function setGroupText(g) { const n = +g.dataset.n; g.querySelector(".tool-head-text").textContent = g.classList.contains("active") ? "Working…" + (+g.dataset.step > 0 ? " Step " + g.dataset.step : "") : "Ran " + n + " command" + (n === 1 ? "" : "s"); }
 function groupAdd(g, line) { g.dataset.n = +g.dataset.n + 1; const p = document.createElement("pre"); p.textContent = line; g.querySelector(".tool-body").appendChild(p); setGroupText(g); }
 function groupOut(g, out) { const p = document.createElement("pre"); p.textContent = out; g.querySelector(".tool-body").appendChild(p); }
 function endGroup(g) { if (!g) return; g.classList.remove("active"); g.querySelector(".spin").classList.add("hide"); setGroupText(g); }
@@ -1165,6 +1181,8 @@ async function send(opts) {
           case "delta": clearWait(); endGroup(group); group = null; if (!ai) { ai = aiBox(); acc = ""; } acc += ev.text; setAi(ai, acc); break;
           case "text": if (!acc) { if (!ai) ai = aiBox(); acc = ev.text; setAi(ai, acc); } break;
           case "tool_start": clearWait(); ai = null; acc = ""; if (!group) group = newGroup(true); groupAdd(group, ev.summary || ev.name); scrollEnd(); break;
+          case "steps": if (Number.isSafeInteger(ev.n) && ev.n > 0) { stepsN = ev.n; stepsPaint(group); } break;
+          case "stuck": stuckNotice(); break;
           case "tool_done": clearWait(); if (ev.name === "zohara_ask_user") closeQuestionCards(); if (group && ev.output) groupOut(group, ev.output); break;
           case "approval": if (dsk && !dcaps(curDev()).approvals_from_web) waitApproval(ev.summary || ev.tool); else ask(ev); break;
           case "approval_wait": case "waiting_approval": if (dsk) waitApproval(ev.summary); break;
