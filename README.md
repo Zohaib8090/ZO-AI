@@ -64,6 +64,7 @@ Any MCP client that can start a stdio server works the same way.
 zo "how much disk is left?"        # one answer, streamed; tool steps appear dimmed on stderr
 zo chat                            # an interactive chat (/new /chats /open N /model /mode /memory /stop /quit)
 zo memory; zo remember "I use fish"; zo status
+zo version; zo update-check                                    # is a newer release out? (prints only; installs nothing)
 zo login                                                       # sign in (a code and a web address; Google or e-mail)
 zo --remote https://your-server "question"                      # a zo-server instead of the local app (after zo login)
 ```
@@ -93,6 +94,7 @@ cargo run -p zo-core --example mock-model   # a fake model server, to try the ch
 
 * [docs/ZOHARA-AGENT.md](docs/ZOHARA-AGENT.md): how the app, the model layer, context and compaction, profiles and storage work.
 * [docs/CLI.md](docs/CLI.md): the `zo` terminal client.
+* [docs/UPDATES.md](docs/UPDATES.md): how every client checks for new releases (GitHub Releases, `GET /api/update/latest`, notify only) and the release workflow.
 * [docs/ACTIVITY.md](docs/ACTIVITY.md): what is running now (tray icon, Activity page, web menu), and how to stop it.
 * [docs/LOGIN.md](docs/LOGIN.md): signing in (desktop, terminal, web), the device flow and its security.
 * [docs/MCP.md](docs/MCP.md): MCP servers, sign-in and the redirect address.

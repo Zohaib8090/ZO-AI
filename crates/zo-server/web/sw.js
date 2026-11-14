@@ -1,7 +1,7 @@
 /* Zohara Agent service worker. Two jobs: keep the app shell (the page and its icons) so the installed app opens at once, and show
    notifications (also when a push arrives while the browser is closed). It never touches /api/: answers, chats and keys are
    not cached, ever. The server replaces __VERSION__ with a hash of the page, so a new page means a new worker and the
-   "Update available" toast; the new worker waits until the person presses Reload. */
+   "New version available - Reload" toast; the new worker waits until the person presses Reload. */
 const VERSION = "__VERSION__";
 const CACHE = "zo-shell-" + VERSION;
 const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/maskable-192.png", "/icons/maskable-512.png", "/apple-touch-icon.png"];

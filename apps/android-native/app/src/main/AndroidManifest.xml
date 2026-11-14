@@ -50,7 +50,7 @@
         <data android:scheme="zoai" />
         <data android:host="chat" />
       </intent-filter>
-      <!-- zohara-agent://new: the launcher shortcut "New chat"; zohara-agent://device: approve a desktop or terminal sign-in (no code in the link). The older zohara-chat:// and zoai:// schemes are still accepted. -->
+      <!-- zohara-agent://new: the launcher shortcut "New chat"; zohara-agent://device: approve a desktop or terminal sign-in (no code in the link); zohara-agent://about: Settings > About (the update notification). The older zohara-chat:// and zoai:// schemes are still accepted. -->
       <intent-filter>
         <action android:name="android.intent.action.VIEW" />
         <category android:name="android.intent.category.DEFAULT" />
@@ -60,6 +60,7 @@
         <data android:scheme="zoai" />
         <data android:host="new" />
         <data android:host="device" />
+        <data android:host="about" />
       </intent-filter>
       <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
     </activity>

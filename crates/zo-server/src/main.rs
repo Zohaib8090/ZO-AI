@@ -22,6 +22,8 @@
 //!                              devices show people `<it>/device` to sign in. Else RENDER_EXTERNAL_URL is used. One of the two is
 //!                              required (the server does not start with the login on and neither set, or one that is not https://host)
 //!   RENDER_EXTERNAL_URL        the server's own address (Render sets it): it calls itself every few minutes so it is not put to sleep
+//!   ZO_UPDATE_REPO            the GitHub repository whose newest release is announced to the clients (default Zohaib8090/zohara-agent);
+//!                              GET /api/update/latest answers from it, cached for an hour (docs/UPDATES.md)
 //!   ZO_SERVER_NO_AUTH=1        for testing on your own computer only: no login, listens on 127.0.0.1 only, no Firestore, one fixed
 //!                              (restricted) person; ZO_NOAUTH_ADMIN=1 makes that person an admin
 
@@ -604,6 +606,15 @@ fn send(app: &Arc<App>, req: Request, v: Value, lease: Lease, tenant: zo_core::t
     }
 }
 
+/// What GitHub said about the newest release, kept for an hour (zo_core::update::Cache): clients ask this server, never GitHub.
+static UPDATE_CACHE: zo_core::update::Cache = zo_core::update::Cache::new();
+
+fn update_latest() -> Value {
+    let src = zo_core::update::Source::from_env();
+    let snap = UPDATE_CACHE.get(zo_core::update::now_secs(), || zo_core::update::fetch_latest(&src));
+    zo_core::update::api_body(&snap, &src.repo)
+}
+
 fn route(app: Arc<App>, mut req: Request) {
     let path = req.url().split('?').next().unwrap_or("").to_string();
     let method = req.method().clone();
@@ -617,6 +628,8 @@ fn route(app: Arc<App>, mut req: Request) {
     match (&method, path.as_str()) {
         (Method::Options, _) => return text(&app, req, 204, ""),
         (Method::Get | Method::Head, "/healthz") => return text(&app, req, 200, "ok"),
+        // the newest release, for every client's update check (no sign-in, nothing about the caller; see docs/UPDATES.md)
+        (Method::Get | Method::Head, "/api/update/latest") => return reply(&app, req, 200, update_latest()),
         // /device is the approval page: a page of the same app (it works out from the address which screen to show)
         (Method::Get | Method::Head, "/") | (Method::Get | Method::Head, "/index.html") | (Method::Get | Method::Head, "/device") => return html(&app, req, pwa::index_for(&app), pages::APP_CSP),
         // the installable app: manifest, icons and the service worker (see pwa.rs)

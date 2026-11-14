@@ -36,6 +36,8 @@ class ZoPrefs(private val store: DataStore<Preferences>, private val defaultServ
     val runOn = stringPreferencesKey("run_on")
     val pushId = stringPreferencesKey("push_registration_id")
     val consentVersion = stringPreferencesKey("consent_version")
+    val updateAuto = booleanPreferencesKey("update_auto")
+    val updateNotified = stringPreferencesKey("update_notified_version")
   }
 
   val all: Flow<Preferences> get() = store.data
@@ -66,6 +68,15 @@ class ZoPrefs(private val store: DataStore<Preferences>, private val defaultServ
   /** "Show details in notifications": off by default (INTERACTION.md section 3) */
   val notifDetails: Flow<Boolean> = store.data.map { it[K.notifDetails] ?: false }
   suspend fun setNotifDetails(on: Boolean) { store.edit { it[K.notifDetails] = on } }
+
+  // ---- update checks (update module, docs/UPDATES.md) ----
+  /** "Check for updates automatically": on by default */
+  val updateAuto: Flow<Boolean> = store.data.map { it[K.updateAuto] ?: true }
+  suspend fun setUpdateAuto(on: Boolean) { store.edit { it[K.updateAuto] = on } }
+  suspend fun updateAutoNow(): Boolean = updateAuto.first()
+  /** the newest version the person was already told about by a notification (one notification per version) */
+  val updateNotified: Flow<String> = store.data.map { it[K.updateNotified].orEmpty() }
+  suspend fun setUpdateNotified(version: String) { store.edit { it[K.updateNotified] = version } }
 
   // ---- server ----
   val serverUrl: Flow<String> = store.data.map { it[K.serverUrl]?.takeIf { s -> s.isNotBlank() } ?: defaultServer }

@@ -27,6 +27,7 @@ Render's `PORT` is read by the server. `zo-mcp` must sit next to `zo-server` (Cl
    | `ZO_OPERATOR_COUNTRY` | whose law the terms name (for example Germany) | no |
    | `CLAUDE_CODE_OAUTH_TOKEN` | optional, see "Claude Code" below. Leave empty if you do not use Claude Code mode | yes |
 
+   Optional: `ZO_UPDATE_REPO` (`owner/name`, default `Zohaib8090/zohara-agent`): the GitHub repository whose newest release `GET /api/update/latest` announces to the apps (cached one hour; see `UPDATES.md`).
    `ZO_SERVER_SECRET` is created by Render (`generateValue: true`). `ZO_MAX_USERS` (200), `ZO_MAX_RUNS` (8), `ZO_HOSTING_REGION` and `ZO_TENANT_ROOT` are set in `render.yaml`;
    optional `ZO_BLOCKED_EMAILS` (comma list refused at sign-in) you add yourself. There is no `ZO_ACCESS_TOKEN` any more: the desktop app and `zo` sign in (`LOGIN.md`) and the server issues their device credentials.
    `ZO_PUBLIC_URL` is in `render.yaml` with a placeholder: you set it in step 6 once you know the address.

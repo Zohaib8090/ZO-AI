@@ -22,6 +22,7 @@ mod settings;
 mod shortcut;
 mod theme;
 mod tray;
+mod updates;
 
 use adw::prelude::*;
 use gtk4 as gtk;
@@ -1647,6 +1648,14 @@ pub(crate) fn raise_main() {
     }
 }
 
+/// A new-version notification was clicked: the window, on Settings > About.
+pub(crate) fn open_about() {
+    raise_main();
+    if let Some(ui) = UI.with(|u| u.borrow().as_ref().and_then(|w| w.upgrade())) {
+        settings::open_page(&ui, "about");
+    }
+}
+
 /// The tray's "Activity..." entry: the window, on the Activity page.
 pub(crate) fn open_activity() {
     raise_main();
@@ -2745,6 +2754,7 @@ fn build_ui(app: &adw::Application) {
         Ok("settings-sync") => settings::open_page(&ui, "sync"),
         Ok("settings-general") => settings::open_page(&ui, "general"),
         Ok("settings-model") => settings::open_page(&ui, "model"),
+        Ok("settings-about") => settings::open_page(&ui, "about"),
         Ok("add-server") => {
             settings::show(&ui);
             settings::open_add_server(&ui);
@@ -2874,6 +2884,7 @@ fn main() -> glib::ExitCode {
     app.connect_startup(|app| {
         theme::init();
         ask::init(app);
+        updates::init(app);
         gtk::Window::set_default_icon_name("zohara-agent");
     });
     app.connect_activate(|_| show_main(""));
@@ -2904,6 +2915,8 @@ fn main() -> glib::ExitCode {
             zo_core::sync::start();
             // "Control this computer from the web": the thread does nothing (no network) until that switch is on and someone is signed in
             zo_core::link::start(std::sync::Arc::new(ask::LinkHost));
+            // update checks: notify only (updates.rs)
+            updates::start();
             scheduler::start(Rc::new(|| {
                 let f = TASKS_DONE.with(|t| t.borrow().clone());
                 if let Some(f) = f {

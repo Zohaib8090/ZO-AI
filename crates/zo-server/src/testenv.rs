@@ -26,6 +26,8 @@ pub fn env() -> PathBuf {
         std::env::set_var("ZO_MULTI_TENANT", "1");
         std::env::set_var("ZO_TENANT_ROOT", b.join("tenants"));
         std::env::set_var("ZO_SERVER_SECRET", SECRET);
+        // the update check must never reach GitHub from a test: nothing listens on port 9
+        std::env::set_var("ZO_UPDATE_BASE_URL", "http://127.0.0.1:9");
     });
     b.join("tenants")
 }

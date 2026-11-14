@@ -618,6 +618,26 @@ fn the_web_page_the_policy_pages_and_the_headers() {
 }
 
 #[test]
+fn the_update_check_is_public_answers_ok_even_when_github_cannot_be_read_and_keeps_user_data_out() {
+    // testenv points the release source at a closed port: GitHub is "unreachable"
+    let r = rig(&[], "", 200, 600);
+    let res = ureq::get(&format!("{}/api/update/latest", r.base)).call().unwrap();
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.header("Content-Type"), Some("application/json"));
+    let v: Value = serde_json::from_str(&res.into_string().unwrap()).unwrap();
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["server_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(v["repo"], "Zohaib8090/zohara-agent");
+    assert!(v["latest"].is_null(), "{v}");
+    assert_eq!(v["error"], "GitHub could not be reached");
+    // a second call is answered from the failure memory (still the same, still 200)
+    let again: Value = ureq::get(&format!("{}/api/update/latest", r.base)).call().unwrap().into_json().unwrap();
+    assert_eq!(again["error"], "GitHub could not be reached");
+    // read-only: a POST there is not a route
+    assert!(matches!(ureq::post(&format!("{}/api/update/latest", r.base)).send_string("{}"), Err(ureq::Error::Status(404, _))));
+}
+
+#[test]
 fn the_no_login_test_mode_uses_one_fixed_restricted_person_and_only_answers_its_own_page() {
     let root = testenv::service();
     let tenants = Arc::new(TenantMap::new(root, None, testenv::SECRET.into(), 200, 8));

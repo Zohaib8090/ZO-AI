@@ -3,6 +3,7 @@
 mod account;
 mod net;
 mod proto;
+mod update;
 
 use net::{Stream, Target};
 use proto::{approve_reply, ago, is_yes, one_line, send_request, stop_reply, Event, Renderer};
@@ -32,6 +33,8 @@ Usage:
   zo login [--email]         sign in (browser: type a code on the web page; --email: e-mail and password)
   zo logout                  sign out of this computer (the server forgets this terminal)
   zo whoami                  the account you are signed in as
+  zo version                 the version of this client
+  zo update-check            ask the server whether a newer Zohara Agent release is out (prints only; installs nothing)
 
 Options:
   -c, --chat ID          continue this chat (one-shot questions)
@@ -653,7 +656,7 @@ fn run() -> i32 {
         return 0;
     }
     if o.version {
-        println!("zo {}", env!("CARGO_PKG_VERSION"));
+        println!("zo {}", zo_core::update::VERSION);
         return 0;
     }
     install_sigint();
@@ -671,6 +674,18 @@ fn run() -> i32 {
     if o.email && cmd != "login" {
         eprintln!("zo: --email is only for `zo login` (try --help)");
         return 2;
+    }
+    if matches!(cmd, "version" | "update-check") {
+        if rest.len() > 1 {
+            eprintln!("zo: {cmd} takes no arguments (try --help)");
+            return 2;
+        }
+        if cmd == "version" {
+            return update::cmd_version();
+        }
+        // the server named with --remote or ZO_REMOTE_URL, else the Zohara Agent server (login::server_url)
+        let named = o.remote.clone().or_else(|| std::env::var("ZO_REMOTE_URL").ok()).map(|u| u.trim().to_string()).filter(|u| !u.is_empty());
+        return update::cmd_update_check(named.map(Ok).unwrap_or_else(zo_core::login::server_url));
     }
     if matches!(cmd, "login" | "logout" | "whoami") {
         if rest.len() > 1 {
