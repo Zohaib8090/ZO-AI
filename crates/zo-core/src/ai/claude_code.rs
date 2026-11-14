@@ -347,9 +347,18 @@ fn run_once(mode: Option<crate::policy::Mode>, model: &str, effort: Option<&str>
     }
     let mut failure = None;
     let mut names = Vec::new();
+    // the step counter and the repeat notice: Claude Code runs its own loop, so the summary stands in for the arguments
+    let mut watch = super::agent::StepWatch::default();
+    let mut counted = |e: Event| {
+        let extra = if let Event::ToolStart { name, summary } = &e { watch.events(name, &Value::String(summary.clone())) } else { Vec::new() };
+        on_event(e);
+        for x in extra {
+            on_event(x);
+        }
+    };
     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
         if let Ok(v) = serde_json::from_str::<Value>(&line) {
-            if let Some(e) = handle_line(&v, session, &mut names, on_event) {
+            if let Some(e) = handle_line(&v, session, &mut names, &mut counted) {
                 failure = Some(e);
             }
         }
@@ -439,6 +448,8 @@ mod tests {
                 Event::ToolStart { name, .. } => format!("start:{name}"),
                 Event::ToolDone { name, ok, output } => format!("done:{name}:{ok}:{output}"),
                 Event::Usage(_) => "usage".to_string(),
+                Event::Steps(n) => format!("steps:{n}"),
+                Event::Stuck { n, .. } => format!("stuck:{n}"),
             })).is_none());
         }
         assert_eq!(out, ["start:zohara_system", "done:zohara_system:true:OS: Linux", "text:Kernel: Linux"]);

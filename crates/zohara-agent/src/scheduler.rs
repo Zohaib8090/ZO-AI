@@ -43,7 +43,7 @@ fn run_task(task: &Task) -> Chat {
     );
     let result = {
         let mut on = |e: Event| match e {
-            Event::TextDelta(_) | Event::Usage(_) => {}
+            Event::TextDelta(_) | Event::Usage(_) | Event::Steps(_) | Event::Stuck { .. } => {}
             Event::Text(t) => entries.push(entry("msg-ai", t)),
             Event::ToolStart { name, summary } => entries.push(entry("msg-tool", format!("▸ {name}  {}", summary.lines().nth(1).unwrap_or("")))),
             Event::ToolDone { ok, output, .. } => {

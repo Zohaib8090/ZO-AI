@@ -927,6 +927,12 @@ fn send(req: &Value, mut reader: BufReader<UnixStream>, out: Arc<Mutex<UnixStrea
             Event::Usage(u) => {
                 line(&o, &json!({"event": "usage", "input": u.input, "output": u.output}));
             }
+            Event::Steps(n) => {
+                line(&o, &json!({"event": "steps", "n": n}));
+            }
+            Event::Stuck { n, tool } => {
+                line(&o, &json!({"event": "stuck", "n": n, "tool": tool}));
+            }
         };
         if sel.provider == "claude-code" {
             let model = if sel.model.is_empty() { "sonnet".to_string() } else { sel.model.clone() };
@@ -1364,6 +1370,32 @@ mod tenant_tests {
             None => std::env::remove_var("XDG_CONFIG_HOME"),
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_stream_carries_the_step_counter_and_one_repeat_notice_even_for_a_restricted_account() {
+        let _g = lock();
+        let t = fresh(true);
+        let same = ("zohara_web_search", json!({"query": ""}));
+        let (url, _seen) = fake_model(vec![tool_reply(&vec![same; 9]), chat_reply("Done.")]);
+        use_model(&t, &url);
+        let r = talk(with_tenant(json!({"op": "send", "text": "go round in circles"}), &t), true);
+        let steps: Vec<u64> = r.iter().filter(|l| l["event"] == "steps").map(|l| l["n"].as_u64().unwrap()).collect();
+        assert_eq!(steps, (1..=9).collect::<Vec<u64>>(), "{r:?}");
+        let stuck: Vec<&Value> = r.iter().filter(|l| l["event"] == "stuck").collect();
+        assert_eq!(stuck.len(), 1, "{r:?}");
+        assert_eq!((stuck[0]["n"].as_u64(), stuck[0]["tool"].as_str()), (Some(8), Some("zohara_web_search")));
+        // the notice comes right after the eighth step, and nothing was stopped
+        let kinds: Vec<&str> = r.iter().filter_map(|l| l["event"].as_str()).collect();
+        let i = kinds.iter().position(|k| *k == "stuck").unwrap();
+        assert_eq!(kinds[i - 1], "steps");
+        assert!(!kinds.contains(&"stopped") && !kinds.contains(&"error"), "{kinds:?}");
+        assert_eq!(kinds.last(), Some(&"done"));
+        // the saved chat has no line for either event
+        crate::tenant::scope(&t, || {
+            let c = chats::load();
+            assert!(c[0].entries.iter().all(|e| !e.text.contains("Repeating")), "nothing about it is saved in the chat");
+        });
     }
 
     #[test]

@@ -1180,6 +1180,20 @@ mod tests {
     }
 
     #[test]
+    fn step_and_repeat_events_reach_the_page_as_they_are() {
+        let l = fast();
+        up(&l, "t", "d");
+        let (job, _) = l.submit_send("t", None, json!({"text": "x"}), 1).unwrap();
+        l.poll("t", "d", "n", &json!({})).unwrap();
+        let sent = [json!({"event": "steps", "n": 8}), json!({"event": "stuck", "n": 8, "tool": "zohara_shell"})];
+        l.events("t", "d", &job, &sent, false).unwrap();
+        match l.relay_wait(&job, Duration::from_millis(50)) {
+            Relay::Events(evs) => assert_eq!(evs, sent),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn purging_a_person_or_a_computer_ends_their_jobs() {
         let l = fast();
         up(&l, "t", "d");

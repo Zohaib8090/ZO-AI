@@ -1487,6 +1487,23 @@ mod tests {
     }
 
     #[test]
+    fn steps_and_stuck_events_are_relayed_unchanged() {
+        let (_g, _dir) = sandbox("a_steps");
+        let connect = fake_service(move |_req, w, _| {
+            wl(w, json!({"event": "tool_start", "name": "zohara_shell", "summary": "zohara_shell\ncmd: ls"}));
+            wl(w, json!({"event": "steps", "n": 8}));
+            wl(w, json!({"event": "stuck", "n": 8, "tool": "zohara_shell"}));
+            wl(w, json!({"event": "done"}));
+        });
+        let job = json!({"id": "j-st", "type": "send", "text": "hi"});
+        let r = rig(vec![job], connect, host(true), None);
+        wait_until("the job to be done", || r.done.lock().unwrap().contains(&"j-st".to_string()));
+        let evs = r.events.lock().unwrap().clone();
+        assert!(evs.contains(&json!({"event": "steps", "n": 8})), "{evs:?}");
+        assert!(evs.contains(&json!({"event": "stuck", "n": 8, "tool": "zohara_shell"})), "{evs:?}");
+    }
+
+    #[test]
     fn an_unknown_job_type_and_an_expired_job_are_refused_and_reported() {
         let (_g, _dir) = sandbox("an_unk");
         let ran = Arc::new(AtomicBool::new(false));

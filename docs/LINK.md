@@ -133,3 +133,17 @@ Code: `crates/zo-core/src/control.rs` (the operations), `link.rs` (`run_control`
 
 Rules the desktop enforces (the server only checks the shape): the path is resolved with symbolic links followed and must stay inside the home folder (so a link out of home is refused); keys, sign-ins and the app's own settings are refused and left out of listings (`guard_read` plus the secret names of the permission policy, so `~/.ssh`, `~/.gnupg`, `~/.config/zohara-agent`, `.claude`, `.aws`, shell histories, and any path containing `token`, `password`, `secret` and the like); refused paths never show a dialog; the dialog names the RESOLVED path, never the web's text; only one control request at a time (a second gets "already waiting for your answer"); an answer that comes more than 90 s after the request arrived is not acted on (the server's wait is 100 s); every request, answered or refused, is written to the audit log (path and outcome, never file contents). The dialog shows even when the permission mode is Bypass or the person turned on "Answer approvals from the web too": these questions are always answered on the computer.
 No trusted-session grant yet, so a folder tree needs one answer per folder. Not in this phase: writing, deleting, moving, uploads/downloads of binary files, terminal, apps, power, live view, other roots than home.
+
+## Step counter and repeat notice (events `steps` and `stuck`)
+
+Two more events travel on the `send` stream, in a cloud answer and through the desktop relay, unchanged (the server and the
+link pass every event of a send job on; they are not saved in the chat):
+
+| `event` | Fields | Meaning |
+|---|---|---|
+| `steps` | `n` | the number of tool calls made so far in this answer, sent right after each `tool_start` ("Step 7") |
+| `stuck` | `n`, `tool` | the agent made the identical call (same tool name and same arguments) 8 times in a row, or alternated between the same two identical calls for 12 calls; `tool` is the latest one. A notice for the person ("Repeating the same step. Stop?" with a Stop button). It never stops anything by itself, the model is not told, it is sent at most once per answer and again only after 10 more calls in the same pattern |
+
+Clients that do not know these events ignore them. Restricted (cloud) accounts get them too; no new permission is involved.
+Detector: `StepWatch` in `crates/zo-core/src/ai/agent.rs` (pure, unit tested). Claude Code answers get the counter and the notice too
+(the tool summary stands in for the arguments).

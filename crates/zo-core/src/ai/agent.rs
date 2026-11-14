@@ -186,6 +186,88 @@ pub enum Event {
     ToolDone { name: String, ok: bool, output: String },
     /// What the last request used (tokens in, out, from the provider's cache).
     Usage(Usage),
+    /// The number of tool calls made so far in this answer (on every tool start).
+    Steps(usize),
+    /// The agent keeps making the same call: `n` calls in the repeating pattern, the tool of the latest one. Only a notice for the
+    /// person (who may press Stop); nothing is stopped and the model is not told.
+    Stuck { n: usize, tool: String },
+}
+
+/// Identical calls in a row that make a notice.
+pub const STUCK_SAME: usize = 8;
+/// Calls alternating between the same two identical calls that make a notice.
+pub const STUCK_ALTERNATING: usize = 12;
+/// A second notice in the same answer needs this many calls more.
+pub const STUCK_AGAIN: usize = 10;
+
+/// Counts the tool calls of one answer and notices when the agent goes round in circles (pure: no clock, no I/O).
+#[derive(Default)]
+pub struct StepWatch {
+    n: usize,
+    /// hashes of the last two calls (name + arguments)
+    last: [Option<u64>; 2],
+    /// length of the identical run (1 when the last call differs from the one before)
+    same: usize,
+    /// length of the tail that alternates between two different calls (0 when there is none)
+    alt: usize,
+    warned_at: Option<usize>,
+}
+
+fn call_hash(name: &str, args: &Value) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    name.hash(&mut h);
+    args.to_string().hash(&mut h);
+    h.finish()
+}
+
+impl StepWatch {
+    pub fn steps(&self) -> usize {
+        self.n
+    }
+
+    /// Notes one tool call; returns the number of calls in the repeating pattern when a notice is due now.
+    pub fn note(&mut self, name: &str, args: &Value) -> Option<usize> {
+        let h = call_hash(name, args);
+        self.n += 1;
+        let [prev, prev2] = self.last;
+        if prev == Some(h) {
+            self.same += 1;
+            self.alt = 0;
+        } else {
+            self.same = 1;
+            self.alt = if prev.is_none() {
+                0
+            } else if prev2 == Some(h) && self.alt >= 2 {
+                self.alt + 1
+            } else {
+                2
+            };
+        }
+        self.last = [Some(h), prev];
+        let pattern = if self.same >= STUCK_SAME {
+            Some(self.same)
+        } else if self.alt >= STUCK_ALTERNATING {
+            Some(self.alt)
+        } else {
+            None
+        }?;
+        if self.warned_at.is_some_and(|w| self.n < w + STUCK_AGAIN) {
+            return None;
+        }
+        self.warned_at = Some(self.n);
+        Some(pattern)
+    }
+
+    /// The events for one tool call that is about to start: the step number, and the notice when it is due.
+    pub fn events(&mut self, name: &str, args: &Value) -> Vec<Event> {
+        let stuck = self.note(name, args);
+        let mut v = vec![Event::Steps(self.n)];
+        if let Some(n) = stuck {
+            v.push(Event::Stuck { n, tool: name.to_string() });
+        }
+        v
+    }
 }
 
 /// What a restricted tenant may reach: no Claude Code, and only a model server with a public https address.
@@ -417,6 +499,7 @@ pub fn run_with(cfg: &Config, history: &mut Vec<Turn>, user: &str, extra: Extra,
     let _scope = crate::activity::RunScope::enter(cancel);
     // at most one question card per answer (INTERACTION.md section 1)
     let mut asked = false;
+    let mut watch = StepWatch::default();
     for step in 0..max_steps {
         if cancel.load(Ordering::Relaxed) {
             return Err(STOPPED.into());
@@ -468,6 +551,9 @@ pub fn run_with(cfg: &Config, history: &mut Vec<Turn>, user: &str, extra: Extra,
                 return Err(STOPPED.into());
             }
             on_event(Event::ToolStart { name: call.name.clone(), summary: mcp::summarize(&call.name, &call.args) });
+            for e in watch.events(&call.name, &call.args) {
+                on_event(e);
+            }
             let outcome = if restricted && !crate::tools::allowed_for_restricted(&call.name) {
                 Err(crate::tools::refusal(&call.name))
             } else if call.name == "zohara_ask_user" {
@@ -699,6 +785,91 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
+    fn feed(w: &mut StepWatch, calls: &[(&str, &str)]) -> Vec<Option<usize>> {
+        calls.iter().map(|(n, a)| w.note(n, &json!({"a": a}))).collect()
+    }
+
+    #[test]
+    fn eight_identical_calls_in_a_row_make_one_notice() {
+        let mut w = StepWatch::default();
+        let r = feed(&mut w, &[("zohara_shell", "ls"); 8]);
+        assert!(r[..7].iter().all(Option::is_none), "{r:?}");
+        assert_eq!(r[7], Some(8));
+        assert_eq!(w.steps(), 8);
+        // not again for the next nine calls, then again at ten more
+        let r = feed(&mut w, &[("zohara_shell", "ls"); 10]);
+        assert!(r[..9].iter().all(Option::is_none), "{r:?}");
+        assert_eq!(r[9], Some(18));
+    }
+
+    #[test]
+    fn seven_identical_calls_or_different_arguments_make_no_notice() {
+        let mut w = StepWatch::default();
+        assert!(feed(&mut w, &[("zohara_shell", "ls"); 7]).iter().all(Option::is_none));
+        assert!(feed(&mut w, &[("zohara_shell", "pwd")]).iter().all(Option::is_none)); // different arguments break the run
+        let mut w = StepWatch::default();
+        let calls: Vec<(&str, &str)> = (0..40).map(|i| ("zohara_shell", ["a", "b", "c"][i % 3])).collect();
+        assert!(feed(&mut w, &calls).iter().all(Option::is_none)); // three different calls going round is not the pattern
+    }
+
+    #[test]
+    fn two_calls_alternating_for_twelve_calls_make_a_notice() {
+        let mut w = StepWatch::default();
+        let calls: Vec<(&str, &str)> = (0..12).map(|i| ("zohara_read", ["a", "b"][i % 2])).collect();
+        let r = feed(&mut w, &calls);
+        assert!(r[..11].iter().all(Option::is_none), "{r:?}");
+        assert_eq!(r[11], Some(12));
+        // a break in the pattern starts over
+        let mut w = StepWatch::default();
+        let mut calls: Vec<(&str, &str)> = (0..11).map(|i| ("zohara_read", ["a", "b"][i % 2])).collect();
+        calls.push(("zohara_read", "c"));
+        calls.extend((0..11).map(|i| ("zohara_read", ["a", "b"][i % 2])));
+        assert!(feed(&mut w, &calls).iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn the_tool_name_is_part_of_the_call() {
+        let mut w = StepWatch::default();
+        let calls: Vec<(&str, &str)> = (0..16).map(|i| (["zohara_a", "zohara_b", "zohara_c", "zohara_d"][i % 4], "x")).collect();
+        assert!(feed(&mut w, &calls).iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn events_carry_the_step_number_and_the_notice() {
+        let mut w = StepWatch::default();
+        let mut all = Vec::new();
+        for _ in 0..9 {
+            all.extend(w.events("zohara_shell", &json!({"cmd": "ls"})).into_iter().map(|e| match e {
+                Event::Steps(n) => format!("steps:{n}"),
+                Event::Stuck { n, tool } => format!("stuck:{n}:{tool}"),
+                _ => "?".into(),
+            }));
+        }
+        assert_eq!(all, ["steps:1", "steps:2", "steps:3", "steps:4", "steps:5", "steps:6", "steps:7", "steps:8", "stuck:8:zohara_shell", "steps:9"]);
+    }
+
+    #[test]
+    fn a_looping_model_gets_steps_and_one_notice_and_is_never_stopped() {
+        let _g = crate::store::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let call = |i: usize| json!({"choices":[{"message":{"tool_calls":[{"id":format!("c{i}"),"function":{"name":"zohara_shell","arguments":json!({"cmd":"echo same"}).to_string()}}]}}]});
+        let mut answers: Vec<Value> = (0..9).map(call).collect();
+        answers.push(json!({"choices":[{"message":{"content":"Done."}}]}));
+        let (url, server) = mock(answers);
+        let mut history = Vec::new();
+        let mut events = Vec::new();
+        let r = run(&cfg(url, "openai"), &mut history, "loop", Mode::Auto, &Deny, &AtomicBool::new(false), &mut |e| match e {
+            Event::Steps(n) => events.push(format!("steps:{n}")),
+            Event::Stuck { n, tool } => events.push(format!("stuck:{n}:{tool}")),
+            _ => {}
+        });
+        server.join().unwrap();
+        assert!(r.is_ok(), "{r:?}");
+        let stucks: Vec<&String> = events.iter().filter(|e| e.starts_with("stuck")).collect();
+        assert_eq!(stucks, ["stuck:8:zohara_shell"], "{events:?}");
+        assert_eq!(events.iter().filter(|e| e.starts_with("steps")).count(), 9);
+        assert_eq!(events.last().unwrap(), "steps:9");
+    }
+
     fn run(cfg: &Config, history: &mut Vec<Turn>, user: &str, mode: Mode, approver: &dyn Approver, cancel: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<(), String> {
         super::run(cfg, history, user, mode, approver, &NoQuestions, cancel, on_event)
     }
@@ -911,8 +1082,10 @@ mod tests {
             Event::ToolStart { name, .. } => format!("start:{name}"),
             Event::ToolDone { ok, output, .. } => format!("done:{ok}:{output}"),
             Event::Usage(_) => "usage".to_string(),
+            Event::Steps(n) => format!("steps:{n}"),
+            Event::Stuck { n, .. } => format!("stuck:{n}"),
         })).unwrap();
-        assert_eq!(events, ["text:Checking.", "start:zohara_shell", "done:true:zo-loop-ok", "text:It printed zo-loop-ok."]);
+        assert_eq!(events, ["text:Checking.", "start:zohara_shell", "steps:1", "done:true:zo-loop-ok", "text:It printed zo-loop-ok."]);
         assert_eq!(history.len(), 4);
         let seen = server.join().unwrap();
         assert_eq!(seen[1]["messages"].as_array().unwrap().last().unwrap()["content"], "zo-loop-ok");
@@ -999,8 +1172,10 @@ mod tests {
             Event::ToolStart { name, .. } => format!("start:{name}"),
             Event::ToolDone { ok, output, .. } => format!("done:{ok}:{output}"),
             Event::Usage(_) => "usage".to_string(),
+            Event::Steps(n) => format!("steps:{n}"),
+            Event::Stuck { n, .. } => format!("stuck:{n}"),
         })).unwrap();
-        assert_eq!(events, ["delta:Checking ", "delta:now.", "text:Checking now.", "start:zohara_shell", "done:true:stream-ok", "delta:It said ", "delta:stream-ok.", "text:It said stream-ok."]);
+        assert_eq!(events, ["delta:Checking ", "delta:now.", "text:Checking now.", "start:zohara_shell", "steps:1", "done:true:stream-ok", "delta:It said ", "delta:stream-ok.", "text:It said stream-ok."]);
         let seen = server.join().unwrap();
         assert_eq!(seen[0]["stream"], true);
     }

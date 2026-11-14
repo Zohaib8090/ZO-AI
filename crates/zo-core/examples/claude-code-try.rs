@@ -11,7 +11,7 @@ fn main() {
         Event::Text(t) => println!("AI: {t}"),
         Event::ToolStart { name, .. } => println!("-> {name}"),
         Event::ToolDone { ok, output, .. } => println!("   {} {}", if ok { "ok" } else { "FAILED" }, output.lines().next().unwrap_or("")),
-        Event::Usage(_) => {}
+        Event::Usage(_) | Event::Steps(_) | Event::Stuck { .. } => {}
     });
     println!("result: {r:?}  session: {session:?}");
 }
