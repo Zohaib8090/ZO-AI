@@ -1,30 +1,28 @@
-name: Release Zohara Agent
+name: Release
 
-# Builds the release files and publishes a GitHub Release when a version tag is pushed (docs/UPDATES.md):
-#   * the Arch package (zohara-agent-<version>-1-x86_64.pkg.tar.zst),
-#   * the signed Android APK and the signed Android App Bundle (.aab, for Google Play) - only when the signing secrets exist,
-#   * latest.json (version, date, notes, file names, sha256s): the file the update check of every client reads.
-# Nothing is released by a push to main (build.yml and publish-alpha.yml do the alpha channel). The tag must equal the Cargo workspace
-# version ("v0.2.0" needs `version = "0.2.0"` in Cargo.toml): there is ONE source of the version.
-# A tag with a dash (v0.2.0-rc.1) is a pre-release: GitHub does not offer it as "latest", so no client announces it.
+# Cuts a GitHub Release when a version tag is pushed (v1.2.3, or v1.2.3-alpha.1 / -beta.N / -rc.N for a pre-release).
+# Run by hand (Actions > Release > Run workflow) it only builds and keeps the files as a workflow artifact: it never publishes
+# unless the workflow is run from a tag AND "dry run" is switched off. See docs/RELEASING.md.
 #
-# Secrets the owner adds (Settings > Secrets and variables > Actions); none is needed for the Arch package and latest.json:
-#   ANDROID_KEYSTORE_BASE64     the release keystore, base64 (base64 -w0 release.jks)
-#   ANDROID_STORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
-#   GOOGLE_SERVICES_JSON_BASE64 apps/android-native/app/google-services.json of the Firebase project, base64 (it is not in the repository)
-# Variable: ZO_WEB_CLIENT_ID (the Web client id for Google sign-in; not secret).
+# Builds: the Arch package, a Linux tarball (zo, zo-server, zohara-agent, zo-mcp), the Android APK and AAB (signed when the
+# four signing secrets exist, otherwise named *-unsigned), then SHA256SUMS, latest.json and the release with generated notes.
 
 on:
   push:
-    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
-  workflow_dispatch:   # run it on a tag (choose the tag as the branch/tag in the dialog); a branch is refused
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: build everything, publish nothing"
+        type: boolean
+        default: true
+      version:
+        description: "Version to build when not started from a tag (for example 0.2.0-beta.1)"
+        type: string
+        default: "0.0.0-alpha.1"
 
 permissions:
   contents: read
-
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,47 +32,66 @@ jobs:
     name: Version
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
       prerelease: ${{ steps.v.outputs.prerelease }}
+      version_code: ${{ steps.v.outputs.version_code }}
+      pkgver: ${{ steps.v.outputs.pkgver }}
+      publish: ${{ steps.p.outputs.publish }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Read the tag and check it against Cargo.toml
-        id: v
-        run: |
-          REF="${GITHUB_REF}"
-          case "$REF" in refs/tags/v*) ;; *) echo "::error::run this workflow on a version tag (vX.Y.Z), not on $REF"; exit 1;; esac
-          TAG="${REF#refs/tags/}"
-          VERSION="${TAG#v}"
-          CARGO=$(awk '/^\[workspace.package\]/{f=1;next} /^\[/{f=0} f && /^version *=/{gsub(/.*= *"|".*/,""); print; exit}' Cargo.toml)
-          [ "$CARGO" = "$VERSION" ] || { echo "::error::tag $TAG does not match the Cargo workspace version $CARGO. Change version in Cargo.toml first (one source of the version)."; exit 1; }
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          case "$VERSION" in *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT";; *) echo "prerelease=false" >> "$GITHUB_OUTPUT";; esac
-          # a release that exists already is never overwritten
-          if gh release view "$TAG" >/dev/null 2>&1; then echo "::error::the release $TAG exists already"; exit 1; fi
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-  arch:
-    name: Arch package
+      - name: Work out the version from the tag
+        id: v
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$REF_TYPE" = "tag" ]; then TAG="$REF_NAME"; else TAG="$INPUT_VERSION"; fi
+          python3 packaging/release/version.py "$TAG" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Decide whether this run publishes
+        id: p
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          IS_FORK: ${{ github.event.repository.fork }}
+        run: |
+          # only a tag, in the real repository (not a fork), and never when "dry run" is on
+          if [ "$REF_TYPE" = "tag" ] && [ "$IS_FORK" != "true" ] && [ "$DRY_RUN" != "true" ]; then P=true; else P=false; fi
+          echo "publish=$P" >> "$GITHUB_OUTPUT"
+          echo "This run publishes: $P"
+
+  linux:
+    name: Arch package + Linux tarball
     needs: meta
     runs-on: ubuntu-latest
     container:
-      image: mirror.gcr.io/library/archlinux:latest
+      image: mirror.gcr.io/library/archlinux:latest  # same image as build.yml (Docker Hub rate-limits the shared runners)
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      PKGVER: ${{ needs.meta.outputs.pkgver }}
     steps:
       - name: Install Arch build dependencies
         run: |
+          # Build against the same Arch day users are pinned to (as build.yml does), so the binaries link against the libraries users have.
           D=$(curl -fsSL https://raw.githubusercontent.com/Zohaib8090/zohara-pipeline/main/manifest.json | sed -n 's/.*"approved_date": *"\([0-9/]*\)".*/\1/p')
           [ -n "$D" ] || { echo "::error::could not read approved_date from zohara-pipeline"; exit 1; }
           echo "Building against Arch as of $D"
           echo "Server = https://archive.archlinux.org/repos/$D/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
           pacman -Syuu --noconfirm
-          pacman -S --noconfirm --needed base-devel git rust gtk4 libadwaita libsecret webkitgtk-6.0 pkgconf sudo
+          pacman -S --noconfirm --needed base-devel git rust gtk4 libadwaita libsecret webkitgtk-6.0 pkgconf sudo python
           useradd -m -G wheel builder || true
           echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
 
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Put the release version into the crates
+        run: python3 packaging/release/set-version.py "$VERSION"
 
       - name: Test
         run: |
@@ -82,147 +99,219 @@ jobs:
           sudo -u builder env CARGO_TARGET_DIR=/home/builder/target cargo test --locked -p zo-core -p zo-cli
 
       - name: Build release binaries
-        run: sudo -u builder env CARGO_TARGET_DIR=/home/builder/target cargo build --release --locked -p zohara-agent -p zo-mcp -p zo-cli
+        run: sudo -u builder env CARGO_TARGET_DIR=/home/builder/target cargo build --release --locked -p zohara-agent -p zo-mcp -p zo-cli -p zo-server
 
       - name: Run makepkg
-        env:
-          VERSION: ${{ needs.meta.outputs.version }}
         run: |
           cp packaging/PKGBUILD PKGBUILD
           rm -rf target
           ln -s /home/builder/target target
           chown -R builder:builder .
           chown -h builder:builder target
-          # pacman versions may not contain a dash
-          sudo -u builder env _PKGVER="${VERSION//-/_}" makepkg --nocheck --skippgpcheck --nodeps
+          sudo -u builder env _PKGVER="$PKGVER" makepkg --nocheck --skippgpcheck --nodeps
           mkdir -p dist
-          cp zohara-agent-*.pkg.tar.zst dist/
+          cp zohara-agent-*.pkg.tar.zst "dist/zohara-agent-${VERSION}-x86_64.pkg.tar.zst"
+
+      - name: Make the Linux tarball
+        run: |
+          T="zohara-agent-${VERSION}-linux-x86_64"
+          mkdir -p "stage/$T"
+          for b in zo zo-server zohara-agent zo-mcp; do install -m755 "/home/builder/target/release/$b" "stage/$T/$b"; done
+          cp README.md "stage/$T/README.md"
+          cat > "stage/$T/INSTALL.txt" <<EOF
+          Zohara Agent ${VERSION} (Linux x86_64)
+          zo            terminal client
+          zo-server     the web server (needs the web app built in; see docs/DEPLOY.md)
+          zohara-agent  the desktop app (needs gtk4, libadwaita, libsecret, webkitgtk-6.0)
+          zo-mcp        the MCP server
+          Copy the files to a folder on your PATH, for example ~/.local/bin. On Arch Linux the .pkg.tar.zst is the better way to install.
+          EOF
+          tar -C stage -czf "dist/${T}.tar.gz" "$T"
           ls -lh dist
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Linux files
+        uses: actions/upload-artifact@v4
         with:
-          name: dist-arch
-          path: dist/*.pkg.tar.zst
+          name: release-linux
+          path: dist/*
           if-no-files-found: error
 
   android:
-    name: Android APK and bundle
+    name: Android APK + AAB
     needs: meta
     runs-on: ubuntu-latest
     env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      ZO_VERSION_CODE: ${{ needs.meta.outputs.version_code }}
       ZO_VERSION_NAME: ${{ needs.meta.outputs.version }}
-      ZO_VERSION_CODE: ${{ github.run_number }}   # grows with every run; Google Play needs a higher code for every upload
-      ZO_WEB_CLIENT_ID: ${{ vars.ZO_WEB_CLIENT_ID }}
+      # secrets cannot be tested in an `if`, so the jobs look at these flags instead; the values themselves are only read in the steps that need them
+      HAVE_KEYSTORE: ${{ secrets.ZO_STORE_BASE64 != '' && secrets.ZO_STORE_PASSWORD != '' && secrets.ZO_KEY_ALIAS != '' && secrets.ZO_KEY_PASSWORD != '' }}
+      HAVE_FIREBASE: ${{ secrets.ZO_GOOGLE_SERVICES_JSON_BASE64 != '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+          java-version: "17"
+          cache: gradle
 
-      - name: Accept the Android SDK licences
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
-
-      - name: Firebase file and signing key (from secrets; never committed)
-        id: files
-        env:
-          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - name: Install the Android platform
         run: |
-          if [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
-            echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > apps/android-native/app/google-services.json
+          # the runner image ships the SDK; compileSdk 36.1 may be newer than the image
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36.1" "build-tools;36.0.0" || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Firebase settings (optional secrets)
+        env:
+          GOOGLE_SERVICES_B64: ${{ secrets.ZO_GOOGLE_SERVICES_JSON_BASE64 }}
+          WEB_CLIENT_ID: ${{ secrets.ZO_WEB_CLIENT_ID }}
+        run: |
+          if [ "$HAVE_FIREBASE" = "true" ]; then
+            printf '%s' "$GOOGLE_SERVICES_B64" | base64 -d > apps/android-native/app/google-services.json
           else
-            echo "::warning::GOOGLE_SERVICES_JSON_BASE64 is not set: this build has no Firebase (sign-in and push do not work)."
+            echo "::warning::ZO_GOOGLE_SERVICES_JSON_BASE64 is not set: this build has no Firebase, so sign-in and push do not work. Fine for a dry run, not for users."
           fi
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_STORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-            {
-              echo "ZO_STORE_FILE=$RUNNER_TEMP/release.jks"
-              echo "ZO_STORE_PASSWORD=$ANDROID_STORE_PASSWORD"
-              echo "ZO_KEY_ALIAS=$ANDROID_KEY_ALIAS"
-              echo "ZO_KEY_PASSWORD=${ANDROID_KEY_PASSWORD:-$ANDROID_STORE_PASSWORD}"
-            } >> "$GITHUB_ENV"
-            echo "signed=true" >> "$GITHUB_OUTPUT"
+          # not echoed; the build reads it from the environment
+          [ -z "$WEB_CLIENT_ID" ] || echo "ZO_WEB_CLIENT_ID=$WEB_CLIENT_ID" >> "$GITHUB_ENV"
+
+      - name: Release keystore (optional secrets)
+        env:
+          STORE_B64: ${{ secrets.ZO_STORE_BASE64 }}
+        run: |
+          if [ "$HAVE_KEYSTORE" = "true" ]; then
+            KS="$RUNNER_TEMP/zohara-release.jks"
+            printf '%s' "$STORE_B64" | base64 -d > "$KS"
+            chmod 600 "$KS"
+            echo "ZO_STORE_FILE=$KS" >> "$GITHUB_ENV"
+            echo "SIGNED=true" >> "$GITHUB_ENV"
           else
-            echo "::warning::the signing secrets are not set: the APK and the bundle are NOT attached to the release (an unsigned one cannot be installed or uploaded to Google Play)."
-            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::The signing secrets are not all set: the APK and AAB are built unsigned and named *-unsigned."
+            echo "SIGNED=false" >> "$GITHUB_ENV"
           fi
 
-      - name: Tests
+      - name: Test
         working-directory: apps/android-native
         run: ./gradlew --no-daemon testDebugUnitTest
 
-      - name: Build the APK and the bundle
-        if: steps.files.outputs.signed == 'true'
+      - name: Build the APK and the AAB
         working-directory: apps/android-native
+        env:
+          ZO_STORE_PASSWORD: ${{ secrets.ZO_STORE_PASSWORD }}
+          ZO_KEY_ALIAS: ${{ secrets.ZO_KEY_ALIAS }}
+          ZO_KEY_PASSWORD: ${{ secrets.ZO_KEY_PASSWORD }}
         run: ./gradlew --no-daemon assembleRelease bundleRelease
 
-      - name: Name the files
-        if: steps.files.outputs.signed == 'true'
+      - name: Collect the files
         run: |
           mkdir -p dist
-          cp apps/android-native/app/build/outputs/apk/release/app-release.apk "dist/zohara-agent-${ZO_VERSION_NAME}.apk"
-          cp apps/android-native/app/build/outputs/bundle/release/app-release.aab "dist/zohara-agent-${ZO_VERSION_NAME}.aab"
+          APK_DIR=apps/android-native/app/build/outputs/apk/release
+          AAB_DIR=apps/android-native/app/build/outputs/bundle/release
+          if [ "$SIGNED" = "true" ]; then SUF=""; else SUF="-unsigned"; fi
+          cp "$APK_DIR"/app-release*.apk "dist/zohara-agent-${VERSION}${SUF}.apk"
+          cp "$AAB_DIR"/app-release.aab "dist/zohara-agent-${VERSION}${SUF}.aab"
+          # R8 mapping: needed to read crash stack traces from Play; kept with the release, not a download for users
+          if [ -f apps/android-native/app/build/outputs/mapping/release/mapping.txt ]; then cp apps/android-native/app/build/outputs/mapping/release/mapping.txt "dist/zohara-agent-${VERSION}-mapping.txt"; fi
           ls -lh dist
 
-      - uses: actions/upload-artifact@v4
-        if: steps.files.outputs.signed == 'true'
+      - name: Check the signature
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          if [ "$SIGNED" = "true" ]; then
+            "$APKSIGNER" verify --print-certs "dist/zohara-agent-${VERSION}.apk" | grep -E "^(Signer #1 certificate (DN|SHA-256))"
+          else
+            echo "unsigned build: nothing to verify"
+          fi
+
+      - name: Delete the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/zohara-release.jks" apps/android-native/app/google-services.json
+
+      - name: Upload Android files
+        uses: actions/upload-artifact@v4
         with:
-          name: dist-android
-          path: |
-            dist/*.apk
-            dist/*.aab
+          name: release-android
+          path: dist/*
           if-no-files-found: error
 
-  release:
-    name: GitHub Release
-    needs: [meta, arch, android]
+  publish:
+    name: Checksums, latest.json, GitHub Release
+    needs: [meta, linux, android]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write   # the only job that can write: it creates the release
     env:
-      GH_TOKEN: ${{ github.token }}
-      VERSION: ${{ needs.meta.outputs.version }}
       TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source (all history, for the notes)
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - name: Download the build files
+        uses: actions/download-artifact@v4
         with:
-          pattern: dist-*
-          path: dist
-          merge-multiple: true
+          pattern: release-*
+          path: parts
 
-      - name: Release notes
+      - name: Gather
         run: |
-          # docs/release-notes/<version>.md when the owner wrote one, else the commit subjects since the previous tag
-          if [ -f "docs/release-notes/${VERSION}.md" ]; then
-            cp "docs/release-notes/${VERSION}.md" notes.md
-          else
-            PREV=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${TAG}^" 2>/dev/null || true)
-            RANGE="${PREV:+$PREV..}${TAG}"
-            { echo "Changes in ${VERSION}:"; git log --no-merges --pretty='- %s' "$RANGE" | head -n 30; } > notes.md
-          fi
-          cat notes.md
-
-      - name: latest.json
-        env:
-          MIN_SUPPORTED: ${{ vars.ZO_MIN_SUPPORTED }}   # optional repository variable: older versions are told the update is required
-        run: |
+          mkdir -p dist
+          cp parts/*/* dist/
           ls -lh dist
-          packaging/make-latest-json.sh "$VERSION" dist notes.md > dist/latest.json
-          cat dist/latest.json
 
-      - name: Create the release
+      - name: Release notes from the commits since the last tag
         env:
+          PUBLISH: ${{ needs.meta.outputs.publish }}
           PRERELEASE: ${{ needs.meta.outputs.prerelease }}
         run: |
-          FLAGS=()
-          [ "$PRERELEASE" = "true" ] && FLAGS+=(--prerelease)
-          gh release create "$TAG" dist/* --title "Zohara Agent ${VERSION}" --notes-file notes.md --verify-tag "${FLAGS[@]}"
+          # the newest tag before this one (a tag run) or the newest tag (a dry run from a branch)
+          PREV=$(git tag --list 'v*' --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
+          if [ -n "$PREV" ]; then RANGE="$PREV..HEAD"; else RANGE="HEAD"; fi
+          {
+            echo "## Zohara Agent $VERSION"
+            [ "$PRERELEASE" != "true" ] || echo "This is a pre-release. It is for testing and may change."
+            echo
+            if [ -n "$PREV" ]; then echo "Changes since $PREV:"; else echo "First release. Changes:"; fi
+            echo
+            git log --no-merges --format='* %s (%h)' "$RANGE" | head -150
+            echo
+            echo "### Files"
+            echo "* \`zohara-agent-$VERSION-x86_64.pkg.tar.zst\`: Arch Linux package (pacman -U)"
+            echo "* \`zohara-agent-$VERSION-linux-x86_64.tar.gz\`: the programs zo, zo-server, zohara-agent, zo-mcp"
+            echo "* \`zohara-agent-$VERSION*.apk\` / \`.aab\`: Android (\`-unsigned\` means no release key was available for this build)"
+            echo "* \`SHA256SUMS\`, \`latest.json\`: checksums and the file the update checkers read"
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Checksums and latest.json
+        run: |
+          # latest.json has the shape the clients parse (docs/UPDATES.md); the notes are the release notes without the file list
+          MIN=$(tr -d ' \n' < packaging/release/MIN_SUPPORTED)
+          sed '/^### Files/,$d' release-notes.md > notes-short.md
+          MIN_SUPPORTED="$MIN" packaging/make-latest-json.sh "$VERSION" dist notes-short.md > latest.json
+          mv latest.json dist/latest.json
+          python3 -c "import json; d=json.load(open('dist/latest.json')); print(d['version'], d['assets'])"
+          (cd dist && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS && sha256sum -c SHA256SUMS)
+
+      - name: Keep the files (always, so a dry run can be inspected)
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-all
+          path: |
+            dist/*
+            release-notes.md
+
+      - name: Create the GitHub Release
+        if: needs.meta.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+        run: |
+          FLAGS=""
+          [ "$PRERELEASE" != "true" ] || FLAGS="--prerelease"
+          # the mapping file is kept on the release too; it holds no secrets
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "Zohara Agent $VERSION" --notes-file release-notes.md --verify-tag $FLAGS

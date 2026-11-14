@@ -1,0 +1,32 @@
+Zohara Agent is an AI agent you can talk to from your phone, your computer and the web, with your chats in sync everywhere. It answers, searches the web, reads pages, remembers what matters to you and, when you allow it, does work on your own computer. You stay in control: it asks before it acts.
+
+CHAT YOUR WAY
+- Streaming answers with clean formatting, code blocks and tool steps you can open to see what happened
+- Pick the model and the provider you want, from the big providers to your own. You bring your own API key; it is stored encrypted and used only for your requests
+- Projects, artifacts, scheduled tasks and search across all your chats
+- Choose a personality, from plain and direct to warm and chatty, and pin your favourite models
+
+IT ASKS BEFORE IT ACTS
+- Question cards: when the agent needs a decision it shows choices you can tap, or lets you type your own answer
+- Approval cards for anything with side effects: you allow or deny, one time or for the session
+- "Needs you" notifications when an answer is waiting for you, with Allow and Deny buttons right in the notification
+
+YOUR COMPUTER, FROM YOUR PHONE
+- Run a chat on your own computer through the Zohara Agent desktop app. It is off until you turn it on, and approvals are asked on the computer
+- Start something on the phone and let the desktop do the heavy work
+
+MADE FOR THE PHONE
+- Dictate with your voice and have answers read aloud
+- Share text, links, pictures, PDFs and files from any app into a new message
+- Take a photo from inside the app
+- Light and dark themes, large text and right-to-left languages, works on phones and tablets
+- Memory you can review and clear
+
+YOUR DATA
+- No ads and no tracking
+- Export everything as one file, or delete your account and all your data from Settings > Account at any time
+- The code is open source: github.com/Zohaib8090/zohara-agent
+
+You need a free account (Google or e-mail) and an API key from the model provider you choose. Zohara Agent can make mistakes; check what it did before you rely on it.
+
+Also available for Linux (the Zohara Agent desktop app and the zo terminal client) and on the web at zohara-agent.duckdns.org.

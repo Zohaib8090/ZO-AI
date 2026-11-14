@@ -1,8 +1,9 @@
-//! The two plain pages /privacy and /terms (the Markdown files in docs/ wrapped in a little HTML), and the security headers.
+//! The plain pages /privacy, /terms and /delete-account (the Markdown files in docs/ wrapped in a little HTML), and the security headers.
 //! Everything from the Markdown is escaped before any markup is added, so the text can never inject HTML or script.
 
 pub const PRIVACY_MD: &str = include_str!("../../../docs/PRIVACY.md");
 pub const TERMS_MD: &str = include_str!("../../../docs/TERMS.md");
+pub const DELETE_MD: &str = include_str!("../../../docs/DELETE-ACCOUNT.md");
 
 /// The version of the privacy notice and the terms (their "Last updated" date). A person accepts a version; the server records it.
 pub const TERMS_VERSION: &str = "2026-11-12";
@@ -168,7 +169,7 @@ pub fn markdown(md: &str) -> String {
 /// A whole page.
 pub fn page(title: &str, md: &str) -> String {
     format!(
-        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<style>\n:root{{color-scheme:light dark}}body{{font:16px/1.6 system-ui,sans-serif;max-width:46rem;margin:0 auto;padding:1.5rem 1rem 4rem}}\ntable{{border-collapse:collapse;width:100%;font-size:.92rem}}td,th{{border:1px solid #8884;padding:.4rem .6rem;text-align:left;vertical-align:top}}blockquote{{margin:1rem 0;padding:.1rem 1rem;border-left:4px solid #8886}}code{{background:#8882;padding:.05rem .3rem;border-radius:4px}}nav{{margin-bottom:1.5rem}}\n</style></head><body>\n<nav><a href=\"/\">Zohara Agent</a> &middot; <a href=\"/privacy\">Privacy</a> &middot; <a href=\"/terms\">Terms</a></nav>\n{}</body></html>\n",
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<style>\n:root{{color-scheme:light dark}}body{{font:16px/1.6 system-ui,sans-serif;max-width:46rem;margin:0 auto;padding:1.5rem 1rem 4rem}}\ntable{{border-collapse:collapse;width:100%;font-size:.92rem}}td,th{{border:1px solid #8884;padding:.4rem .6rem;text-align:left;vertical-align:top}}blockquote{{margin:1rem 0;padding:.1rem 1rem;border-left:4px solid #8886}}code{{background:#8882;padding:.05rem .3rem;border-radius:4px}}nav{{margin-bottom:1.5rem}}\n</style></head><body>\n<nav><a href=\"/\">Zohara Agent</a> &middot; <a href=\"/privacy\">Privacy</a> &middot; <a href=\"/terms\">Terms</a> &middot; <a href=\"/delete-account\">Delete account</a></nav>\n{}</body></html>\n",
         esc(title),
         markdown(md)
     )
@@ -200,7 +201,7 @@ mod tests {
     #[test]
     fn the_real_pages_render() {
         let legal = Legal { contact: "me@example.org".into(), region: "Frankfurt, Germany".into(), country: "Germany".into() };
-        for (t, md) in [("Privacy", PRIVACY_MD), ("Terms", TERMS_MD)] {
+        for (t, md) in [("Privacy", PRIVACY_MD), ("Terms", TERMS_MD), ("Delete", DELETE_MD)] {
             let p = page(t, &fill(md, &legal));
             assert!(p.contains("<h1>") && p.len() > 2000 && !p.contains("<script"), "{t}");
             // nothing is left to fill in: no placeholder, no template banner

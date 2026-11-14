@@ -1,0 +1,9 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+  <!-- themed icon (Android 13+): the same mark as ic_launcher_foreground in one colour; the system tints it -->
+  <group android:scaleX="0.5" android:scaleY="0.5" android:translateX="24" android:translateY="24">
+    <path android:strokeColor="#FF000000" android:strokeWidth="8" android:pathData="M103.2,38.4 A48,48 0 1 1 81.0,16.7" />
+    <path android:fillColor="#FF000000" android:pathData="M60,30 Q60,60 90,60 Q60,60 60,90 Q60,60 30,60 Q60,60 60,30Z" />
+    <path android:fillColor="#FF000000" android:pathData="M94,14 Q94,26 106,26 Q94,26 94,38 Q94,26 82,26 Q94,26 94,14Z" />
+  </group>
+</vector>

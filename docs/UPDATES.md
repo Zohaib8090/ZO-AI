@@ -52,7 +52,7 @@ Public (no sign-in, no cookie, any origin), read-only, answers JSON:
   source at a mirror (tests use it); leave it unset.
 * **One source of the version:** the Cargo workspace version (`Cargo.toml`, `[workspace.package]`). The server reports it as `server_version`; `zo version`, the desktop About
   page and the web About page show it; the Android `versionName` is that same value for a local build and the release tag in CI (`ZO_VERSION_NAME`).
-  The release workflow refuses a tag that differs from `Cargo.toml`.
+  The release workflow takes the version from the tag and writes it into the crates on its own checkout (`packaging/release/set-version.py`); keep `Cargo.toml` at the last release so local builds show a sensible version.
 
 ### Comparing versions
 
@@ -112,17 +112,10 @@ build metadata (`+abc`) ignored. A version that cannot be read is never "newer":
 
 ## 7. The release workflow (`.github/workflows/release.yml`)
 
-Pushing a tag `vX.Y.Z` (the tag must equal the Cargo workspace version) builds and publishes the release:
-
-1. **meta**: reads the tag, checks it against `Cargo.toml`, refuses a tag whose release already exists.
-2. **arch**: tests, builds, `makepkg` (the same steps as `build.yml`, pinned to the approved Arch day), uploads the package.
-3. **android**: unit tests, then `assembleRelease` and `bundleRelease` with the version from the tag, the Firebase file and the signing key from secrets; if the signing secrets are missing the
-   APK and bundle are **not** built or attached (an unsigned one cannot be installed or uploaded) and a warning says so.
-4. **release**: notes, `packaging/make-latest-json.sh` (file names and sha256 sums into `latest.json`), `gh release create` with every file (a tag with a dash becomes a pre-release).
-
-Owner steps: add the secrets `ANDROID_KEYSTORE_BASE64` (`base64 -w0 release.jks`), `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` and `GOOGLE_SERVICES_JSON_BASE64`, and the
-variable `ZO_WEB_CLIENT_ID`; optionally the variable `ZO_MIN_SUPPORTED`. Never commit the keystore or `google-services.json`. To release: raise `version` in `Cargo.toml`, commit,
-`git tag v0.2.0 && git push origin v0.2.0`. For Google Play, download the `.aab` from the release and upload it in the Play Console (`docs/ANDROID.md`).
+The workflow is `.github/workflows/release.yml`; the full release procedure, the secrets and the versioning rules are in `docs/RELEASING.md`. In short, pushing a tag
+`vX.Y.Z` (or `vX.Y.Z-beta.N`, a pre-release that clients do not announce) builds the Arch package, a Linux tarball and the Android APK and AAB, then writes `SHA256SUMS` and
+`latest.json` and creates the GitHub Release. `latest.json` is made by `packaging/make-latest-json.sh` (file names and sha256 sums, `min_supported` from
+`packaging/release/MIN_SUPPORTED`); a test in zo-core checks that its output is accepted by the parser the clients use. Run by hand, the workflow is a dry run and publishes nothing.
 
 ## 8. What was verified, and what was not
 

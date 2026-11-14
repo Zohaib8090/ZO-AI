@@ -1,0 +1,1 @@
+First public release of Zohara Agent for Android: chat with the model you choose, question and approval cards, notifications when the agent needs you, voice, sharing into the app and running chats on your own computer.

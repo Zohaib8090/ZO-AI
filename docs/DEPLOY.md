@@ -147,3 +147,8 @@ The service answers at **https://zohara-agent.duckdns.org** (a free DuckDNS name
 - Add `zohara-agent.duckdns.org` to Firebase Authorized domains (host only).
 - The DuckDNS token is a secret: keep it in Render's environment, never in the repository.
 - A DuckDNS name is not owned by us: log in to DuckDNS now and then so the name is not released, and move to a real domain before promoting the service widely (point the new domain at Render, add it to Firebase, then change the defaults again).
+
+## Pages Google Play needs from the server
+
+The Play listing links to `https://zohara-agent.duckdns.org/privacy` (privacy policy) and `https://zohara-agent.duckdns.org/delete-account` (account deletion page). Both are served without sign-in
+and their contact line comes from `ZO_CONTACT_EMAIL`, so that variable must be a real, read inbox before Play review. See `docs/PLAY-STORE.md`.

@@ -29,6 +29,7 @@ fn sitemap(base: &str) -> String {
   <url><loc>{base}/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
   <url><loc>{base}/privacy</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
   <url><loc>{base}/terms</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
+  <url><loc>{base}/delete-account</loc><changefreq>monthly</changefreq><priority>0.4</priority></url>
 </urlset>
 "#
     )

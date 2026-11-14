@@ -118,6 +118,7 @@ fun SettingsAccountScreen() {
         onDelete = { deleteSheet = true },
         onApprove = { nav.settings(Routes.SETTINGS_APPROVE) },
         onAdvanced = { nav.settings(Routes.SETTINGS_ADVANCED) },
+        onDeletionPage = { openInBrowser(context, legalUrl(container.serverUrl, "delete-account")) },
       )
     }
   }
@@ -137,7 +138,7 @@ fun SettingsAccountScreen() {
 @Composable
 fun AccountContent(
   a: AccountData, exporting: Boolean, onPrivacy: () -> Unit, onTerms: () -> Unit, onRevoke: (AccountDevice) -> Unit, onExport: () -> Unit,
-  onDelete: () -> Unit, onApprove: () -> Unit, onAdvanced: () -> Unit,
+  onDelete: () -> Unit, onApprove: () -> Unit, onAdvanced: () -> Unit, onDeletionPage: () -> Unit = {},
 ) {
   val me = a.me
   SectionHeader("You")
@@ -170,7 +171,7 @@ fun AccountContent(
     ActionRow("Export my data", "A JSON file with your chats, memory and personalities. API keys are never included.", actions = { SecondaryButton("Export my data", onExport, loading = exporting) })
     ActionRow(
       "Delete my account and all data", "Removes every chat, memory, file, device and your saved API keys from the server. This cannot be undone.", divider = false,
-      actions = { DangerButton("Delete my account and all data…", onDelete, outlined = true) },
+      actions = { PillButton("How deletion works", onDeletionPage); DangerButton("Delete my account and all data…", onDelete, outlined = true) },
     )
   }
   SectionHeader("Advanced")

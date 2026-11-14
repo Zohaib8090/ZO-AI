@@ -163,7 +163,7 @@ private copy: changing it makes every stored API key unreadable and users must e
 `ZO_TENANT_ROOT`, `ZO_PUBLIC_URL` (the Render address, `https://...`, for the sign-in approval link; `RENDER_EXTERNAL_URL` is the fallback), `ZO_CONTACT_EMAIL`, `ZO_OPERATOR_COUNTRY`, `ZO_HOSTING_REGION`, optional `ZO_BLOCKED_EMAILS`, optional admin-only `CLAUDE_CODE_OAUTH_TOKEN`. `ZO_ACCESS_TOKEN` is gone.
 
 Before launch: set `ZO_CONTACT_EMAIL`, `ZO_OPERATOR_COUNTRY` and `ZO_HOSTING_REGION` (the pages are filled from them and the server does not start without them; `TERMS_VERSION` in `pages.rs` is the pages' date, change it when the texts change), have them reviewed, check the pages are
-served at `/privacy` and `/terms`; sign in with a second, non-admin Google account and with an e-mail and password account (verification e-mail arrives, sign-in works only after the click) and confirm it is restricted (no shell, no files, no MCP,
+served at `/privacy` and `/terms` (and the deletion page `/delete-account`); sign in with a second, non-admin Google account and with an e-mail and password account (verification e-mail arrives, sign-in works only after the click) and confirm it is restricted (no shell, no files, no MCP,
 no machines); try to read the first account's chats from it; check limits return 429; try an export and a delete.
 
 Incident handling: (1) stop the bleeding: set `ZO_BLOCKED_EMAILS`, or suspend the service in Render. (2) Rotate: new `FIREBASE_SERVICE_ACCOUNT` key

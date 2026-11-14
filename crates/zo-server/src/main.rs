@@ -643,6 +643,7 @@ fn route(app: Arc<App>, mut req: Request) {
         }
         (Method::Get, "/privacy") => return html(&app, req, pages::page("Zohara Agent privacy notice", &pages::fill(pages::PRIVACY_MD, &app.legal)), pages::PLAIN_CSP),
         (Method::Get, "/terms") => return html(&app, req, pages::page("Zohara Agent terms of use", &pages::fill(pages::TERMS_MD, &app.legal)), pages::PLAIN_CSP),
+        (Method::Get, "/delete-account") => return html(&app, req, pages::page("Zohara Agent: delete your account", &pages::fill(pages::DELETE_MD, &app.legal)), pages::PLAIN_CSP),
         _ => {}
     }
     let Some(r) = route_of(&method, &path) else { return text(&app, req, 404, "not found") };
